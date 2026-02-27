@@ -1,0 +1,274 @@
+---
+source: src/engine/partitioner.rs
+expression: format_chunks(&chunks)
+---
+=== CHUNK 1 ===
+Breadcrumb: JsonFile.ts.JsonSyntax
+Type: enum
+Symbol: Some("JsonSyntax")
+Lines: 47-101
+Size: 2420 chars
+
+enum JsonSyntax {
+  /**
+   * Specifies the exact RFC 8259 format as implemented by the `JSON.parse()` system API.
+   * This format was designed for machine generated inputs such as an HTTP payload.
+   * It is not a recommend choice for human-authored files, because it does not support
+
+=== CHUNK 2 ===
+Breadcrumb: JsonFile.ts
+Type: code
+Symbol: None
+Lines: 103-118
+Size: 421 chars
+
+/**
+ * Options for {@link JsonFile.parseString}, {@link JsonFile.load}, and {@link JsonFile.loadAsync}.
+ *
+ * @public
+ */
+
+=== CHUNK 3 ===
+Breadcrumb: JsonFile.ts
+Type: code
+Symbol: None
+Lines: 120-125
+Size: 232 chars
+
+/**
+ * Options for {@link JsonFile.loadAndValidate} and {@link JsonFile.loadAndValidateAsync}
+ *
+ * @public
+ */
+
+=== CHUNK 4 ===
+Breadcrumb: JsonFile.ts
+Type: code
+Symbol: None
+Lines: 173-198
+Size: 883 chars
+
+/**
+ * Options for {@link JsonFile.save} and {@link JsonFile.saveAsync}.
+ *
+ * @public
+ */
+
+=== CHUNK 5 ===
+Breadcrumb: JsonFile.ts._formatPathForError
+Type: field
+Symbol: Some("_formatPathForError")
+Lines: 207-210
+Size: 142 chars
+
+/**
+   * @internal
+   */
+  public static _formatPathForError: (path: string) => string = (path: string) => path
+
+=== CHUNK 6 ===
+Breadcrumb: JsonFile.ts.load
+Type: method
+Symbol: Some("load")
+Lines: 212-231
+Size: 659 chars
+
+/**
+   * Loads a JSON file.
+   */
+  public static load(jsonFilename: string, options?: IJsonFileParseOptions): JsonObject {
+    try {
+
+=== CHUNK 7 ===
+Breadcrumb: JsonFile.ts.loadAsync
+Type: method
+Symbol: Some("loadAsync")
+Lines: 233-252
+Size: 719 chars
+
+/**
+   * An async version of {@link JsonFile.load}.
+   */
+  public static async loadAsync(jsonFilename: string, options?: IJsonFileParseOptions): Promise<JsonObject> {
+    try {
+
+=== CHUNK 8 ===
+Breadcrumb: JsonFile.ts.parseString
+Type: method
+Symbol: Some("parseString")
+Lines: 254-260
+Size: 303 chars
+
+/**
+   * Parses a JSON file's contents.
+   */
+  public static parseString(jsonContents: string, options?: IJsonFileParseOptions): JsonObject {
+    const parseOptions: jju.ParseOptions = JsonFile._buildJjuParseOptions(options);
+
+=== CHUNK 9 ===
+Breadcrumb: JsonFile.ts.loadAndValidate
+Type: method
+Symbol: Some("loadAndValidate")
+Lines: 262-274
+Size: 402 chars
+
+/**
+   * Loads a JSON file and validate its schema.
+   */
+  public static loadAndValidate(
+    jsonFilename: string,
+
+=== CHUNK 10 ===
+Breadcrumb: JsonFile.ts.loadAndValidateAsync
+Type: method
+Symbol: Some("loadAndValidateAsync")
+Lines: 276-288
+Size: 449 chars
+
+/**
+   * An async version of {@link JsonFile.loadAndValidate}.
+   */
+  public static async loadAndValidateAsync(
+    jsonFilename: string,
+
+=== CHUNK 11 ===
+Breadcrumb: JsonFile.ts.loadAndValidateWithCallback
+Type: method
+Symbol: Some("loadAndValidateWithCallback")
+Lines: 290-305
+Size: 604 chars
+
+/**
+   * Loads a JSON file and validate its schema, reporting errors using a callback
+   * @remarks
+   * See JsonSchema.validateObjectWithCallback() for more info.
+   */
+
+=== CHUNK 12 ===
+Breadcrumb: JsonFile.ts.loadAndValidateWithCallbackAsync
+Type: method
+Symbol: Some("loadAndValidateWithCallbackAsync")
+Lines: 307-320
+Size: 551 chars
+
+/**
+   * An async version of {@link JsonFile.loadAndValidateWithCallback}.
+   */
+  public static async loadAndValidateWithCallbackAsync(
+    jsonFilename: string,
+
+=== CHUNK 13 ===
+Breadcrumb: JsonFile.ts.stringify
+Type: method
+Symbol: Some("stringify")
+Lines: 322-330
+Size: 442 chars
+
+/**
+   * Serializes the specified JSON object to a string buffer.
+   * @param jsonObject - the object to be serialized
+   * @param options - other settings that control serialization
+   * @returns a JSON string, with newlines, and indented with two spaces
+
+=== CHUNK 14 ===
+Breadcrumb: JsonFile.ts.updateString
+Type: method
+Symbol: Some("updateString")
+Lines: 332-395
+Size: 2136 chars
+
+/**
+   * Serializes the specified JSON object to a string buffer.
+   * @param previousJson - the previous JSON string, which will be updated
+   * @param newJsonObject - the object to be serialized
+   * @param options - other settings that control serialization
+
+=== CHUNK 15 ===
+Breadcrumb: JsonFile.ts.save
+Type: method
+Symbol: Some("save")
+Lines: 397-453
+Size: 1980 chars
+
+/**
+   * Saves the file to disk.  Returns false if nothing was written due to options.onlyIfChanged.
+   * @param jsonObject - the object to be saved
+   * @param jsonFilename - the file path to write
+   * @param options - other settings that control how the file is saved
+
+=== CHUNK 16 ===
+Breadcrumb: JsonFile.ts.saveAsync
+Type: method
+Symbol: Some("saveAsync")
+Lines: 455-507
+Size: 1724 chars
+
+/**
+   * An async version of {@link JsonFile.save}.
+   */
+  public static async saveAsync(
+    jsonObject: JsonObject,
+
+=== CHUNK 17 ===
+Breadcrumb: JsonFile.ts.validateNoUndefinedMembers
+Type: method
+Symbol: Some("validateNoUndefinedMembers")
+Lines: 509-515
+Size: 305 chars
+
+/**
+   * Used to validate a data structure before writing.  Reports an error if there
+   * are any undefined members.
+   */
+  public static validateNoUndefinedMembers(jsonObject: JsonObject): void {
+
+=== CHUNK 18 ===
+Breadcrumb: JsonFile.ts._validateNoUndefinedMembers
+Type: method
+Symbol: Some("_validateNoUndefinedMembers")
+Lines: 518-537
+Size: 733 chars
+
+private static _validateNoUndefinedMembers(jsonObject: JsonObject, keyPath: string[]): void {
+    if (!jsonObject) {
+      return;
+    }
+    if (typeof jsonObject === 'object') {
+
+=== CHUNK 19 ===
+Breadcrumb: JsonFile.ts._formatKeyPath
+Type: method
+Symbol: Some("_formatKeyPath")
+Lines: 541-566
+Size: 916 chars
+
+private static _formatKeyPath(keyPath: string[]): string {
+    let result: string = '';
+
+    for (const key of keyPath) {
+      if (/^[0-9]+$/.test(key)) {
+
+=== CHUNK 20 ===
+Breadcrumb: JsonFile.ts._formatJsonHeaderComment
+Type: method
+Symbol: Some("_formatJsonHeaderComment")
+Lines: 568-585
+Size: 631 chars
+
+private static _formatJsonHeaderComment(headerComment: string): string {
+    if (headerComment === '') {
+      return '';
+    }
+    const lines: string[] = headerComment.split('\n');
+
+=== CHUNK 21 ===
+Breadcrumb: JsonFile.ts._buildJjuParseOptions
+Type: method
+Symbol: Some("_buildJjuParseOptions")
+Lines: 587-606
+Size: 549 chars
+
+private static _buildJjuParseOptions(options: IJsonFileParseOptions = {}): jju.ParseOptions {
+    const parseOptions: jju.ParseOptions = {
+      reserved_keys: 'replace'
+    };

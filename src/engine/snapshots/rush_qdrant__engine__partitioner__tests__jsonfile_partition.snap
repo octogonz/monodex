@@ -1,0 +1,345 @@
+---
+source: src/engine/partitioner.rs
+expression: format_chunks(&chunks)
+---
+=== CHUNK 1 ===
+Breadcrumb: @rushstack/node-core-library:JsonFile.ts
+Type: code
+Symbol: None
+Lines: 8-8
+Size: 137 chars
+Text preview (5 lines):
+import type { JsonSchema, IJsonSchemaErrorInfo, IJsonSchemaValidateOptions } from './JsonSchema';
+
+=== CHUNK 2 ===
+Breadcrumb: @rushstack/node-core-library:JsonFile.ts (part 1/2)
+Type: code
+Symbol: None
+Lines: 47-89
+Size: 1842 chars
+Text preview (5 lines):
+{
+  /**
+   * Specifies the exact RFC 8259 format as implemented by the `JSON.parse()` system API.
+   * This format was designed for machine generated inputs such as an HTTP payload.
+   * It is not a recommend choice for human-authored files, because it does not support
+
+=== CHUNK 3 ===
+Breadcrumb: @rushstack/node-core-library:JsonFile.ts (part 2/2)
+Type: code
+Symbol: None
+Lines: 90-101
+Size: 641 chars
+Text preview (5 lines):
+   * @remarks
+   * Files using this format should use the `.json5` file extension instead of `.json`.
+   *
+   * JSON5 has substantial differences from JSON: object keys may be unquoted, trailing commas
+   * are allowed, and strings may span multiple lines.  Whereas {@link JsonSyntax.JsonWithComments} can
+
+=== CHUNK 4 ===
+Breadcrumb: @rushstack/node-core-library:JsonFile.ts
+Type: code
+Symbol: None
+Lines: 103-118
+Size: 450 chars
+Text preview (5 lines):
+/**
+ * Options for {@link JsonFile.parseString}, {@link JsonFile.load}, and {@link JsonFile.loadAsync}.
+ *
+ * @public
+ */
+
+=== CHUNK 5 ===
+Breadcrumb: @rushstack/node-core-library:JsonFile.ts
+Type: code
+Symbol: None
+Lines: 120-125
+Size: 261 chars
+Text preview (5 lines):
+/**
+ * Options for {@link JsonFile.loadAndValidate} and {@link JsonFile.loadAndValidateAsync}
+ *
+ * @public
+ */
+
+=== CHUNK 6 ===
+Breadcrumb: @rushstack/node-core-library:JsonFile.ts
+Type: code
+Symbol: None
+Lines: 133-135
+Size: 138 chars
+Text preview (5 lines):
+/**
+   * If provided, the specified newline type will be used instead of the default `\r\n`.
+   */
+
+=== CHUNK 7 ===
+Breadcrumb: @rushstack/node-core-library:JsonFile.ts
+Type: code
+Symbol: None
+Lines: 138-154
+Size: 1116 chars
+Text preview (5 lines):
+/**
+   * By default, {@link JsonFile.stringify} validates that the object does not contain any
+   * keys whose value is `undefined`.  To disable this validation, set
+   * {@link IJsonFileStringifyOptions.ignoreUndefinedValues} to `true`
+   * which causes such keys to be silently discarded, consistent with the system `JSON.stringify()`.
+
+=== CHUNK 8 ===
+Breadcrumb: @rushstack/node-core-library:JsonFile.ts
+Type: code
+Symbol: None
+Lines: 157-160
+Size: 219 chars
+Text preview (5 lines):
+/**
+   * If true, then the "jju" library will be used to improve the text formatting.
+   * Note that this is slightly slower than the native JSON.stringify() implementation.
+   */
+
+=== CHUNK 9 ===
+Breadcrumb: @rushstack/node-core-library:JsonFile.ts
+Type: code
+Symbol: None
+Lines: 163-169
+Size: 369 chars
+Text preview (5 lines):
+/**
+   * If specified, this header will be prepended to the start of the file.  The header must consist
+   * of lines prefixed by "//" characters.
+   * @remarks
+   * When used with {@link IJsonFileSaveOptions.updateExistingFile}
+
+=== CHUNK 10 ===
+Breadcrumb: @rushstack/node-core-library:JsonFile.ts
+Type: code
+Symbol: None
+Lines: 173-198
+Size: 912 chars
+Text preview (5 lines):
+/**
+ * Options for {@link JsonFile.save} and {@link JsonFile.saveAsync}.
+ *
+ * @public
+ */
+
+=== CHUNK 11 ===
+Breadcrumb: @rushstack/node-core-library:JsonFile.ts:JsonFile:_formatPathForError
+Type: field
+Symbol: Some("_formatPathForError")
+Lines: 207-210
+Size: 180 chars
+Text preview (5 lines):
+/**
+   * @internal
+   */
+  public static _formatPathForError: (path: string) => string = (path: string) => path
+
+=== CHUNK 12 ===
+Breadcrumb: @rushstack/node-core-library:JsonFile.ts:JsonFile:load
+Type: function
+Symbol: Some("load")
+Lines: 212-231
+Size: 697 chars
+Text preview (5 lines):
+/**
+   * Loads a JSON file.
+   */
+  public static load(jsonFilename: string, options?: IJsonFileParseOptions): JsonObject {
+    try {
+
+=== CHUNK 13 ===
+Breadcrumb: @rushstack/node-core-library:JsonFile.ts:JsonFile:loadAsync
+Type: function
+Symbol: Some("loadAsync")
+Lines: 233-252
+Size: 757 chars
+Text preview (5 lines):
+/**
+   * An async version of {@link JsonFile.load}.
+   */
+  public static async loadAsync(jsonFilename: string, options?: IJsonFileParseOptions): Promise<JsonObject> {
+    try {
+
+=== CHUNK 14 ===
+Breadcrumb: @rushstack/node-core-library:JsonFile.ts:JsonFile:parseString
+Type: function
+Symbol: Some("parseString")
+Lines: 254-260
+Size: 341 chars
+Text preview (5 lines):
+/**
+   * Parses a JSON file's contents.
+   */
+  public static parseString(jsonContents: string, options?: IJsonFileParseOptions): JsonObject {
+    const parseOptions: jju.ParseOptions = JsonFile._buildJjuParseOptions(options);
+
+=== CHUNK 15 ===
+Breadcrumb: @rushstack/node-core-library:JsonFile.ts:JsonFile:loadAndValidate
+Type: function
+Symbol: Some("loadAndValidate")
+Lines: 262-274
+Size: 440 chars
+Text preview (5 lines):
+/**
+   * Loads a JSON file and validate its schema.
+   */
+  public static loadAndValidate(
+    jsonFilename: string,
+
+=== CHUNK 16 ===
+Breadcrumb: @rushstack/node-core-library:JsonFile.ts:JsonFile:loadAndValidateAsync
+Type: function
+Symbol: Some("loadAndValidateAsync")
+Lines: 276-288
+Size: 487 chars
+Text preview (5 lines):
+/**
+   * An async version of {@link JsonFile.loadAndValidate}.
+   */
+  public static async loadAndValidateAsync(
+    jsonFilename: string,
+
+=== CHUNK 17 ===
+Breadcrumb: @rushstack/node-core-library:JsonFile.ts:JsonFile:loadAndValidateWithCallback
+Type: function
+Symbol: Some("loadAndValidateWithCallback")
+Lines: 290-305
+Size: 642 chars
+Text preview (5 lines):
+/**
+   * Loads a JSON file and validate its schema, reporting errors using a callback
+   * @remarks
+   * See JsonSchema.validateObjectWithCallback() for more info.
+   */
+
+=== CHUNK 18 ===
+Breadcrumb: @rushstack/node-core-library:JsonFile.ts:JsonFile:loadAndValidateWithCallbackAsync
+Type: function
+Symbol: Some("loadAndValidateWithCallbackAsync")
+Lines: 307-320
+Size: 589 chars
+Text preview (5 lines):
+/**
+   * An async version of {@link JsonFile.loadAndValidateWithCallback}.
+   */
+  public static async loadAndValidateWithCallbackAsync(
+    jsonFilename: string,
+
+=== CHUNK 19 ===
+Breadcrumb: @rushstack/node-core-library:JsonFile.ts:JsonFile:stringify
+Type: function
+Symbol: Some("stringify")
+Lines: 322-330
+Size: 480 chars
+Text preview (5 lines):
+/**
+   * Serializes the specified JSON object to a string buffer.
+   * @param jsonObject - the object to be serialized
+   * @param options - other settings that control serialization
+   * @returns a JSON string, with newlines, and indented with two spaces
+
+=== CHUNK 20 ===
+Breadcrumb: @rushstack/node-core-library:JsonFile.ts:JsonFile:updateString
+Type: function
+Symbol: Some("updateString")
+Lines: 332-395
+Size: 2174 chars
+Text preview (5 lines):
+/**
+   * Serializes the specified JSON object to a string buffer.
+   * @param previousJson - the previous JSON string, which will be updated
+   * @param newJsonObject - the object to be serialized
+   * @param options - other settings that control serialization
+
+=== CHUNK 21 ===
+Breadcrumb: @rushstack/node-core-library:JsonFile.ts:JsonFile:save
+Type: function
+Symbol: Some("save")
+Lines: 397-453
+Size: 2018 chars
+Text preview (5 lines):
+/**
+   * Saves the file to disk.  Returns false if nothing was written due to options.onlyIfChanged.
+   * @param jsonObject - the object to be saved
+   * @param jsonFilename - the file path to write
+   * @param options - other settings that control how the file is saved
+
+=== CHUNK 22 ===
+Breadcrumb: @rushstack/node-core-library:JsonFile.ts:JsonFile:saveAsync
+Type: function
+Symbol: Some("saveAsync")
+Lines: 455-507
+Size: 1762 chars
+Text preview (5 lines):
+/**
+   * An async version of {@link JsonFile.save}.
+   */
+  public static async saveAsync(
+    jsonObject: JsonObject,
+
+=== CHUNK 23 ===
+Breadcrumb: @rushstack/node-core-library:JsonFile.ts:JsonFile:validateNoUndefinedMembers
+Type: function
+Symbol: Some("validateNoUndefinedMembers")
+Lines: 509-515
+Size: 343 chars
+Text preview (5 lines):
+/**
+   * Used to validate a data structure before writing.  Reports an error if there
+   * are any undefined members.
+   */
+  public static validateNoUndefinedMembers(jsonObject: JsonObject): void {
+
+=== CHUNK 24 ===
+Breadcrumb: @rushstack/node-core-library:JsonFile.ts:JsonFile:_validateNoUndefinedMembers
+Type: function
+Symbol: Some("_validateNoUndefinedMembers")
+Lines: 518-537
+Size: 771 chars
+Text preview (5 lines):
+private static _validateNoUndefinedMembers(jsonObject: JsonObject, keyPath: string[]): void {
+    if (!jsonObject) {
+      return;
+    }
+    if (typeof jsonObject === 'object') {
+
+=== CHUNK 25 ===
+Breadcrumb: @rushstack/node-core-library:JsonFile.ts:JsonFile:_formatKeyPath
+Type: function
+Symbol: Some("_formatKeyPath")
+Lines: 541-566
+Size: 954 chars
+Text preview (5 lines):
+private static _formatKeyPath(keyPath: string[]): string {
+    let result: string = '';
+
+    for (const key of keyPath) {
+      if (/^[0-9]+$/.test(key)) {
+
+=== CHUNK 26 ===
+Breadcrumb: @rushstack/node-core-library:JsonFile.ts:JsonFile:_formatJsonHeaderComment
+Type: function
+Symbol: Some("_formatJsonHeaderComment")
+Lines: 568-585
+Size: 669 chars
+Text preview (5 lines):
+private static _formatJsonHeaderComment(headerComment: string): string {
+    if (headerComment === '') {
+      return '';
+    }
+    const lines: string[] = headerComment.split('\n');
+
+=== CHUNK 27 ===
+Breadcrumb: @rushstack/node-core-library:JsonFile.ts:JsonFile:_buildJjuParseOptions
+Type: function
+Symbol: Some("_buildJjuParseOptions")
+Lines: 587-606
+Size: 587 chars
+Text preview (5 lines):
+private static _buildJjuParseOptions(options: IJsonFileParseOptions = {}): jju.ParseOptions {
+    const parseOptions: jju.ParseOptions = {
+      reserved_keys: 'replace'
+    };

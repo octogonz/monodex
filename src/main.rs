@@ -13,6 +13,7 @@ use engine::{
     config::should_skip_path,
     chunker::chunk_file,
     embedder::EmbeddingGenerator,
+    partitioner::{partition_typescript, PartitionConfig, PartitionedChunk},
     uploader::QdrantUploader,
 };
 
@@ -66,6 +67,21 @@ enum Commands {
         chunk_lines: Option<usize>,
     },
     
+    /// Dump chunks for a TypeScript file (for debugging chunking algorithm)
+    DumpChunks {
+        /// TypeScript file path
+        #[arg(long)]
+        file: PathBuf,
+        
+        /// Target chunk size in chars
+        #[arg(long, default_value = "1800")]
+        target_size: usize,
+        
+        /// Package name for breadcrumb
+        #[arg(long, default_value = "")]
+        package: String,
+    },
+    
     /// Query the semantic search database
     Query {
         /// Search query text
@@ -98,6 +114,9 @@ fn main() -> anyhow::Result<()> {
     match cli.command {
         Commands::Crawl { catalog, chunk_lines } => {
             run_crawl(&config, &catalog, chunk_lines)?;
+        }
+        Commands::DumpChunks { file, target_size, package } => {
+            run_dump_chunks(&file, target_size, &package)?;
         }
         Commands::Query { text, limit, catalog } => {
             run_query(&config, &text, limit, catalog.as_deref())?;
@@ -360,4 +379,90 @@ fn is_text_file(path: &str) -> bool {
 
     let path_lower = path.to_lowercase();
     extensions.iter().any(|ext| path_lower.ends_with(&format!(".{}", ext)))
+}
+
+/// Run chunking diagnostics on a TypeScript file
+fn run_dump_chunks(file: &PathBuf, target_size: usize, package: &str) -> anyhow::Result<()> {
+    println!("📦 Chunks for: {}", file.display());
+    println!();
+    
+    // Read file
+    let source = std::fs::read_to_string(file)
+        .map_err(|e| anyhow::anyhow!("Failed to read file: {}", e))?;
+    
+    // Determine file name and package name
+    let file_name = file.file_name()
+        .and_then(|n| n.to_str())
+        .unwrap_or("unknown.ts");
+    
+    let package_name = if package.is_empty() {
+        "unknown".to_string()
+    } else {
+        package.to_string()
+    };
+    
+    // Create config
+    let config = PartitionConfig {
+        target_size,
+        max_breadcrumb_depth: 4,
+        file_name: file_name.to_string(),
+        package_name,
+    };
+    
+    // Partition
+    let chunks = partition_typescript(&source, &config);
+    
+    // Display results
+    println!("Total chunks: {}", chunks.len());
+    println!("Target size: {} chars", target_size);
+    println!();
+    
+    let mut total_chars = 0;
+    let mut oversized = 0;
+    let mut undersized = 0;
+    
+    for (i, chunk) in chunks.iter().enumerate() {
+        let text_size = chunk.text.len();
+        let total_size = chunk.breadcrumb.len() + chunk.text.len();
+        total_chars += total_size;
+        
+        if text_size > target_size {
+            oversized += 1;
+        } else if text_size < 200 {
+            undersized += 1;
+        }
+        
+        println!("━━━━━ Chunk {} ━━━━━", i + 1);
+        println!("Breadcrumb: {}", chunk.breadcrumb);
+        println!("Type: {}", chunk.chunk_type);
+        if let Some(symbol) = &chunk.symbol_name {
+            println!("Symbol: {}", symbol);
+        }
+        println!("Lines: {}-{}", chunk.start_line, chunk.end_line);
+        println!("Size: {} chars (text: {}, breadcrumb: {})", 
+            total_size, text_size, chunk.breadcrumb.len());
+        if text_size > target_size {
+            println!("⚠️  OVERSIZED (target: {}, actual: {})", target_size, text_size);
+        } else if text_size < 200 {
+            println!("⚡ Small chunk");
+        }
+        println!();
+        println!("Preview (first 8 lines):");
+        for line in chunk.text.lines().take(8) {
+            println!("  {}", line);
+        }
+        if chunk.text.lines().count() > 8 {
+            println!("  ... ({} more lines)", chunk.text.lines().count() - 8);
+        }
+        println!();
+    }
+    
+    println!("━━━━━ Summary ━━━━━");
+    println!("Total chunks: {}", chunks.len());
+    println!("Total chars: {}", total_chars);
+    println!("Average size: {:.0} chars", total_chars as f64 / chunks.len() as f64);
+    println!("Oversized chunks (>{}): {}", target_size, oversized);
+    println!("Small chunks (<200): {}", undersized);
+    
+    Ok(())
 }

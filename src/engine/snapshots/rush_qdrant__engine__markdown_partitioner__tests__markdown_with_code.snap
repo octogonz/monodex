@@ -1,0 +1,140 @@
+---
+source: src/engine/markdown_partitioner.rs
+expression: format_chunks(&chunks)
+---
+=== CHUNK 1 ===
+Breadcrumb: rush-qdrant:API.md:API Documentation
+Type: section
+Lines: 1-4
+Size: 88 chars
+Preview:
+# API Documentation
+
+This document describes the core APIs for the rush-qdrant project.
+
+=== CHUNK 2 ===
+Breadcrumb: rush-qdrant:API.md:Installation
+Type: section
+Lines: 5-14
+Size: 157 chars
+Preview:
+## Installation
+
+To install rush-qdrant, run the following command:
+
+```bash
+cargo install rush-qdrant
+
+=== CHUNK 3 ===
+Breadcrumb: rush-qdrant:API.md:Configuration
+Type: section
+Lines: 15-33
+Size: 333 chars
+Preview:
+## Configuration
+
+Create a configuration file at `~/.config/rush-qdrant/config.json`:
+
+```json
+{
+
+=== CHUNK 4 ===
+Breadcrumb: rush-qdrant:API.md:Environment Variables
+Type: section
+Lines: 34-40
+Size: 143 chars
+Preview:
+### Environment Variables
+
+You can also use environment variables:
+
+- `QDRANT_URL` - Qdrant server URL
+- `QDRANT_COLLECTION` - Collection name
+
+=== CHUNK 5 ===
+Breadcrumb: rush-qdrant:API.md:Usage
+Type: section
+Lines: 41-42
+Size: 9 chars
+Preview:
+## Usage
+
+=== CHUNK 6 ===
+Breadcrumb: rush-qdrant:API.md:Indexing
+Type: section
+Lines: 43-55
+Size: 177 chars
+Preview:
+### Indexing
+
+To index a catalog:
+
+```bash
+rush-qdrant crawl --catalog node-core-library
+
+=== CHUNK 7 ===
+Breadcrumb: rush-qdrant:API.md:Querying
+Type: section
+Lines: 56-68
+Size: 175 chars
+Preview:
+### Querying
+
+To search the index:
+
+```bash
+rush-qdrant query --text "how to read a JSON file"
+
+=== CHUNK 8 ===
+Breadcrumb: rush-qdrant:API.md:Advanced Topics
+Type: section
+Lines: 69-70
+Size: 19 chars
+Preview:
+## Advanced Topics
+
+=== CHUNK 9 ===
+Breadcrumb: rush-qdrant:API.md:Custom Chunking
+Type: section
+Lines: 71-78
+Size: 208 chars
+Preview:
+### Custom Chunking
+
+The partition algorithm splits code at AST boundaries:
+
+1. **Functions** - Split at statement blocks
+2. **Classes** - Split at method boundaries
+
+=== CHUNK 10 ===
+Breadcrumb: rush-qdrant:API.md:Embedding Model
+Type: section
+Lines: 79-85
+Size: 146 chars
+Preview:
+### Embedding Model
+
+We use `BAAI/bge-small-en-v1.5` which provides:
+- 384-dimensional vectors
+- 512 token maximum
+- Good semantic search quality
+
+=== CHUNK 11 ===
+Breadcrumb: rush-qdrant:API.md:Troubleshooting
+Type: section
+Lines: 86-87
+Size: 19 chars
+Preview:
+## Troubleshooting
+
+=== CHUNK 12 ===
+Breadcrumb: rush-qdrant:API.md:Common Issues
+Type: section
+Lines: 88-100
+Size: 270 chars
+Preview:
+### Common Issues
+
+**Q: Embeddings are slow**
+
+A: The first run downloads the model (~50MB). Subsequent runs are faster.

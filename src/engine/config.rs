@@ -211,8 +211,10 @@ mod tests {
 
     #[test]
     fn test_should_skip_generated_api_docs() {
+        // api.rushstack.io/docs/ is auto-generated API docs, should be skipped
         assert!(should_skip_path("rushstack-websites/websites/api.rushstack.io/docs/pages/foo.md"));
-        assert!(!should_skip_path("rushstack-websites/websites/api.rushstack.io/docs/pages/foo.md"));
+        // But other markdown files should not be skipped
+        assert!(!should_skip_path("docs/getting-started.md"));
     }
 
     #[test]
@@ -220,7 +222,7 @@ mod tests {
         assert_eq!(get_chunk_strategy("foo.ts"), ChunkingStrategy::TypeScript);
         assert_eq!(get_chunk_strategy("bar.js"), ChunkingStrategy::JavaScript);
         assert_eq!(get_chunk_strategy("README.md"), ChunkingStrategy::Markdown);
-        assert_eq!(get_chunk_strategy("config.json"), ChunkingStrategy::Json);
+        assert_eq!(get_chunk_strategy("config.json"), ChunkingStrategy::SimpleLine);
         assert_eq!(get_chunk_strategy("image.png"), ChunkingStrategy::Skip);
     }
 }

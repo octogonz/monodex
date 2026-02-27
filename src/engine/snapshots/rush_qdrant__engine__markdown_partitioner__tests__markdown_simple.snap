@@ -1,0 +1,43 @@
+---
+source: src/engine/markdown_partitioner.rs
+expression: format_chunks(&chunks)
+---
+=== CHUNK 1 ===
+Breadcrumb: @test/docs:test.md:Main Title
+Type: section
+Lines: 1-4
+Size: 39 chars
+Preview:
+# Main Title
+
+This is intro paragraph.
+
+=== CHUNK 2 ===
+Breadcrumb: @test/docs:test.md:Section 1
+Type: section
+Lines: 5-8
+Size: 30 chars
+Preview:
+## Section 1
+
+Some text here.
+
+=== CHUNK 3 ===
+Breadcrumb: @test/docs:test.md:Subsection
+Type: section
+Lines: 9-12
+Size: 30 chars
+Preview:
+### Subsection
+
+More content.
+
+=== CHUNK 4 ===
+Breadcrumb: @test/docs:test.md:Section 2
+Type: section
+Lines: 13-15
+Size: 30 chars
+Preview:
+## Section 2
+
+Final paragraph.

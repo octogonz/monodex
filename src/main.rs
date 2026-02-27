@@ -42,6 +42,10 @@ enum Commands {
         /// Purge collection before indexing (delete all existing points)
         #[arg(long)]
         purge: bool,
+        
+        /// Dry-run: count chunks and report without embedding or uploading
+        #[arg(long)]
+        dry_run: bool,
     },
     
     /// Query the semantic search database
@@ -67,8 +71,8 @@ fn main() -> anyhow::Result<()> {
     let cli = Cli::parse();
 
     match cli.command {
-        Commands::Index { directory, collection, chunk_lines, purge } => {
-            run_index(&directory, &collection, chunk_lines, purge)?;
+        Commands::Index { directory, collection, chunk_lines, purge, dry_run } => {
+            run_index(&directory, &collection, chunk_lines, purge, dry_run)?;
         }
         Commands::Query { text, collection, limit } => {
             run_query(&text, &collection, limit)?;
@@ -79,25 +83,39 @@ fn main() -> anyhow::Result<()> {
 }
 
 /// Run indexing
-fn run_index(directory: &str, collection: &str, chunk_lines: usize, purge: bool) -> anyhow::Result<()> {
+fn run_index(directory: &str, collection: &str, chunk_lines: usize, purge: bool, dry_run: bool) -> anyhow::Result<()> {
     println!("🔍 Starting indexing...");
     println!("Directory: {}", directory);
     println!("Collection: {}", collection);
     println!("Chunk lines: {}", chunk_lines);
+    if dry_run {
+        println!("Mode: DRY-RUN (no changes will be made)");
+    }
     println!();
 
     // Initialize components
-    println!("⚙️  Loading embedding model...");
-    let generator = EmbeddingGenerator::new(MODEL_ID)?;
-    println!("✅ Model loaded");
-    println!();
+    let generator = if !dry_run {
+        println!("⚙️  Loading embedding model...");
+        let g = EmbeddingGenerator::new(MODEL_ID)?;
+        println!("✅ Model loaded");
+        println!();
+        Some(g)
+    } else {
+        None
+    };
 
-    let uploader = QdrantUploader::new(collection, None)?;
+    let uploader = if !dry_run {
+        Some(QdrantUploader::new(collection, None)?)
+    } else {
+        None
+    };
 
     // Purge collection if requested
-    if purge {
+    if purge && !dry_run {
         println!("🗑️  Purging collection...");
-        uploader.purge()?;
+        if let Some(ref uploader) = uploader {
+            uploader.purge()?;
+        }
         println!("✅ Collection purged");
         println!();
     }
@@ -118,38 +136,54 @@ fn run_index(directory: &str, collection: &str, chunk_lines: usize, purge: bool)
         }
     }
 
-    println!("✅ Found {} files to index", files_to_index.len());
+    let total_files = files_to_index.len();
+    println!("✅ Found {} files to index", total_files);
     println!();
 
     // Process files
     let mut total_chunks = 0;
     let mut batch: Vec<(engine::Chunk, Vec<f32>)> = Vec::new();
+    let mut chunks_by_type: std::collections::HashMap<String, usize> = std::collections::HashMap::new();
 
     for (idx, file_path) in files_to_index.iter().enumerate() {
-        if idx % 100 == 0 {
-            println!("  Processing file {} / {}", idx, files_to_index.len());
-        }
+        // Progress indicator
+        print!("\r  Processing file {}/{} ({:.0}%)   ", 
+            idx + 1, total_files, 
+            ((idx + 1) as f64 / total_files as f64) * 100.0);
+        std::io::Write::flush(&mut std::io::stdout())?;
 
         // Chunk the file
         match chunk_file(file_path, chunk_lines) {
             Ok(chunks) => {
                 for chunk in chunks {
-                    // Generate embedding
-                    match generator.encode(&chunk.text) {
-                        Ok(embedding) => {
-                            batch.push((chunk, embedding));
-                            total_chunks += 1;
+                    // Track chunk types for reporting
+                    *chunks_by_type.entry(chunk.chunk_type.clone()).or_insert(0) += 1;
+                    
+                    if dry_run {
+                        // Just count, don't embed
+                        total_chunks += 1;
+                    } else {
+                        // Generate embedding
+                        if let Some(ref generator) = generator {
+                            match generator.encode(&chunk.text) {
+                                Ok(embedding) => {
+                                    batch.push((chunk, embedding));
+                                    total_chunks += 1;
 
-                            // Upload batch if full
-                            if batch.len() >= BATCH_SIZE {
-                                uploader.upload_batch(&batch)?;
-                                print!("\r  Uploaded {} chunks...   ", total_chunks);
-                                std::io::stdout().flush()?;
-                                batch.clear();
+                                    // Upload batch if full
+                                    if batch.len() >= BATCH_SIZE {
+                                        if let Some(ref uploader) = uploader {
+                                            uploader.upload_batch(&batch)?;
+                                        }
+                                        print!("\r  Uploaded {} chunks...   ", total_chunks);
+                                        std::io::Write::flush(&mut std::io::stdout())?;
+                                        batch.clear();
+                                    }
+                                }
+                                Err(e) => {
+                                    eprintln!("\n  ⚠️  Failed to embed chunk in {}: {}", file_path, e);
+                                }
                             }
-                        }
-                        Err(e) => {
-                            eprintln!("\n  ⚠️  Failed to embed chunk in {}: {}", file_path, e);
                         }
                     }
                 }
@@ -161,16 +195,38 @@ fn run_index(directory: &str, collection: &str, chunk_lines: usize, purge: bool)
     }
 
     // Upload remaining batch
-    if !batch.is_empty() {
-        uploader.upload_batch(&batch)?;
+    if !dry_run && !batch.is_empty() {
+        if let Some(ref uploader) = uploader {
+            uploader.upload_batch(&batch)?;
+        }
         print!("\r  Uploaded {} chunks...   ", total_chunks);
-        std::io::stdout().flush()?;
+        std::io::Write::flush(&mut std::io::stdout())?;
     }
 
     println!();
     println!();
-    println!("✅ Indexing complete!");
-    println!("Total chunks indexed: {}", total_chunks);
+    
+    if dry_run {
+        println!("📋 DRY-RUN REPORT");
+        println!("================");
+        println!("Files scanned: {}", total_files);
+        println!("Total chunks that would be created: {}", total_chunks);
+        println!();
+        println!("Chunks by type:");
+        for (chunk_type, count) in chunks_by_type.iter() {
+            println!("  {}: {}", chunk_type, count);
+        }
+        println!();
+        
+        // Estimate time
+        let estimated_seconds = total_chunks as f64 * 1.5; // ~1.5s per chunk
+        let estimated_hours = (estimated_seconds / 3600.0).floor() as i32;
+        let estimated_minutes = ((estimated_seconds % 3600.0) / 60.0).floor() as i32;
+        println!("Estimated indexing time: {}h {}m", estimated_hours, estimated_minutes);
+    } else {
+        println!("✅ Indexing complete!");
+        println!("Total chunks indexed: {}", total_chunks);
+    }
     println!();
 
     Ok(())

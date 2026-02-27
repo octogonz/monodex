@@ -6,6 +6,7 @@
 use anyhow::Result;
 use std::fs;
 use tree_sitter::{Node, Parser};
+use sha2::{Sha256, Digest};
 use super::config::{ChunkingStrategy, get_chunk_strategy};
 
 /// Represents a chunk of code or documentation
@@ -16,6 +17,12 @@ pub struct Chunk {
     
     /// Source file path
     pub file: String,
+    
+    /// Catalog name (for multi-source partitioning)
+    pub catalog: String,
+    
+    /// Content hash (SHA256) for incremental sync
+    pub content_hash: String,
     
     /// Starting line number (1-indexed)
     pub start_line: usize,
@@ -35,17 +42,20 @@ pub struct Chunk {
 /// # Arguments
 /// 
 /// * `file_path` - Path to the file to chunk
+/// * `catalog` - Catalog name for this file
 /// * `max_lines` - Maximum lines per chunk (for fallback line-based chunking)
 /// 
 /// # Returns
 /// 
 /// Vector of chunks or an error
-pub fn chunk_file(file_path: &str, max_lines: usize) -> Result<Vec<Chunk>> {
+pub fn chunk_file(file_path: &str, catalog: &str, max_lines: usize) -> Result<Vec<Chunk>> {
     let strategy = get_chunk_strategy(file_path);
+    let content = fs::read_to_string(file_path)?;
+    let content_hash = compute_hash(&content);
     
     match strategy {
         ChunkingStrategy::TypeScript => {
-            chunk_typescript(file_path, max_lines)
+            chunk_typescript(file_path, catalog, &content_hash, max_lines)
         }
         ChunkingStrategy::JavaScript => {
             // Skip .js files for now (per todo plan)
@@ -53,22 +63,30 @@ pub fn chunk_file(file_path: &str, max_lines: usize) -> Result<Vec<Chunk>> {
         }
         ChunkingStrategy::Markdown => {
             // TODO: Implement heading-based splitting
-            chunk_by_lines(file_path, max_lines, "markdown")
+            chunk_by_lines(file_path, catalog, &content_hash, max_lines, "markdown")
         }
         ChunkingStrategy::Json => {
             // TODO: Implement schema-based splitting
             Ok(Vec::new())
         }
         ChunkingStrategy::YamlSimple => {
-            chunk_by_lines(file_path, max_lines, "yaml")
+            chunk_by_lines(file_path, catalog, &content_hash, max_lines, "yaml")
         }
         ChunkingStrategy::SimpleLine => {
-            chunk_by_lines(file_path, max_lines, "text")
+            chunk_by_lines(file_path, catalog, &content_hash, max_lines, "text")
         }
         ChunkingStrategy::Skip => {
             Ok(Vec::new())
         }
     }
+}
+
+/// Compute SHA256 hash of content
+fn compute_hash(content: &str) -> String {
+    let mut hasher = Sha256::new();
+    hasher.update(content.as_bytes());
+    let result = hasher.finalize();
+    format!("sha256:{:x}", result)
 }
 
 /// Chunk TypeScript/TSX files using tree-sitter AST parsing
@@ -80,7 +98,7 @@ pub fn chunk_file(file_path: &str, max_lines: usize) -> Result<Vec<Chunk>> {
 /// - Type aliases (type alias declarations)
 /// - Enums (enum declarations)
 /// - Variables with initializers (const/let with function values)
-fn chunk_typescript(file_path: &str, max_lines: usize) -> Result<Vec<Chunk>> {
+fn chunk_typescript(file_path: &str, catalog: &str, content_hash: &str, max_lines: usize) -> Result<Vec<Chunk>> {
     let content = fs::read_to_string(file_path)?;
     let source = content.as_bytes();
 
@@ -96,11 +114,11 @@ fn chunk_typescript(file_path: &str, max_lines: usize) -> Result<Vec<Chunk>> {
     let mut chunks = Vec::new();
 
     // Extract semantic units from the AST
-    extract_semantic_units(&root, source, file_path, &mut chunks);
+    extract_semantic_units(&root, source, file_path, catalog, content_hash, &mut chunks);
 
     // If no semantic units found, fall back to line-based chunking
     if chunks.is_empty() {
-        return chunk_by_lines(file_path, max_lines, "code");
+        return chunk_by_lines(file_path, catalog, content_hash, max_lines, "code");
     }
 
     Ok(chunks)
@@ -111,6 +129,8 @@ fn extract_semantic_units<'a>(
     node: &Node<'a>,
     source: &[u8],
     file_path: &str,
+    catalog: &str,
+    content_hash: &str,
     chunks: &mut Vec<Chunk>,
 ) {
     let node_kind = node.kind();
@@ -118,7 +138,7 @@ fn extract_semantic_units<'a>(
     match node_kind {
         // Function declarations
         "function_declaration" => {
-            if let Some(chunk) = create_chunk_from_node(node, source, file_path, "function") {
+            if let Some(chunk) = create_chunk_from_node(node, source, file_path, catalog, content_hash, "function") {
                 chunks.push(chunk);
             }
         }
@@ -126,7 +146,7 @@ fn extract_semantic_units<'a>(
         // Class declarations
         "class_declaration" => {
             // Extract the whole class
-            if let Some(chunk) = create_chunk_from_node(node, source, file_path, "class") {
+            if let Some(chunk) = create_chunk_from_node(node, source, file_path, catalog, content_hash, "class") {
                 chunks.push(chunk);
             }
             
@@ -135,7 +155,7 @@ fn extract_semantic_units<'a>(
                 if child.kind() == "class_body" {
                     for method in child.children(&mut child.walk()) {
                         if method.kind() == "method_definition" {
-                            if let Some(chunk) = create_chunk_from_node(&method, source, file_path, "method") {
+                            if let Some(chunk) = create_chunk_from_node(&method, source, file_path, catalog, content_hash, "method") {
                                 chunks.push(chunk);
                             }
                         }
@@ -146,21 +166,21 @@ fn extract_semantic_units<'a>(
         
         // Interface declarations
         "interface_declaration" => {
-            if let Some(chunk) = create_chunk_from_node(node, source, file_path, "interface") {
+            if let Some(chunk) = create_chunk_from_node(node, source, file_path, catalog, content_hash, "interface") {
                 chunks.push(chunk);
             }
         }
         
         // Type alias declarations
         "type_alias_declaration" => {
-            if let Some(chunk) = create_chunk_from_node(node, source, file_path, "type") {
+            if let Some(chunk) = create_chunk_from_node(node, source, file_path, catalog, content_hash, "type") {
                 chunks.push(chunk);
             }
         }
         
         // Enum declarations
         "enum_declaration" => {
-            if let Some(chunk) = create_chunk_from_node(node, source, file_path, "enum") {
+            if let Some(chunk) = create_chunk_from_node(node, source, file_path, catalog, content_hash, "enum") {
                 chunks.push(chunk);
             }
         }
@@ -168,7 +188,7 @@ fn extract_semantic_units<'a>(
         // Export statements - recurse into them
         "export_statement" => {
             for child in node.children(&mut node.walk()) {
-                extract_semantic_units(&child, source, file_path, chunks);
+                extract_semantic_units(&child, source, file_path, catalog, content_hash, chunks);
             }
         }
         
@@ -179,7 +199,7 @@ fn extract_semantic_units<'a>(
                 if child.kind() == "variable_declarator" {
                     if let Some(value_node) = child.child_by_field_name("value") {
                         if value_node.kind() == "arrow_function" || value_node.kind() == "function_expression" {
-                            if let Some(chunk) = create_chunk_from_node(node, source, file_path, "function") {
+                            if let Some(chunk) = create_chunk_from_node(node, source, file_path, catalog, content_hash, "function") {
                                 chunks.push(chunk);
                             }
                             break;
@@ -193,7 +213,7 @@ fn extract_semantic_units<'a>(
         "ambient_declaration" => {
             for child in node.children(&mut node.walk()) {
                 if matches!(child.kind(), "module" | "function_declaration" | "variable_declaration") {
-                    if let Some(chunk) = create_chunk_from_node(node, source, file_path, "ambient") {
+                    if let Some(chunk) = create_chunk_from_node(node, source, file_path, catalog, content_hash, "ambient") {
                         chunks.push(chunk);
                     }
                 }
@@ -207,7 +227,7 @@ fn extract_semantic_units<'a>(
     for child in node.children(&mut node.walk()) {
         // Skip recursing into class bodies (we already handled methods)
         if child.kind() != "class_body" {
-            extract_semantic_units(&child, source, file_path, chunks);
+            extract_semantic_units(&child, source, file_path, catalog, content_hash, chunks);
         }
     }
 }
@@ -215,16 +235,20 @@ fn extract_semantic_units<'a>(
 /// Create a Chunk from a tree-sitter node
 /// 
 /// Includes preceding JSDoc/TSDoc comments if they exist.
-fn create_chunk_from_node(node: &Node, source: &[u8], file_path: &str, chunk_type: &str) -> Option<Chunk> {
-    let start_byte = node.start_byte();
+fn create_chunk_from_node(
+    node: &Node, 
+    source: &[u8], 
+    file_path: &str, 
+    catalog: &str,
+    content_hash: &str,
+    chunk_type: &str,
+) -> Option<Chunk> {
+    let (start_with_comments, start_line) = find_including_preceding_comment(node, source);
     let end_byte = node.end_byte();
     
-    if end_byte <= start_byte {
+    if end_byte <= start_with_comments {
         return None;
     }
-
-    // Look for preceding JSDoc/TSDoc comments
-    let (start_with_comments, start_line) = find_including_preceding_comment(node, source);
 
     let text = String::from_utf8_lossy(&source[start_with_comments..end_byte]).to_string();
     
@@ -242,6 +266,8 @@ fn create_chunk_from_node(node: &Node, source: &[u8], file_path: &str, chunk_typ
     Some(Chunk {
         text,
         file: file_path.to_string(),
+        catalog: catalog.to_string(),
+        content_hash: content_hash.to_string(),
         start_line,
         end_line: node.end_position().row + 1,
         symbol_name,
@@ -250,9 +276,6 @@ fn create_chunk_from_node(node: &Node, source: &[u8], file_path: &str, chunk_typ
 }
 
 /// Find the start position including any preceding JSDoc/TSDoc comments
-/// 
-/// JSDoc comments are comment nodes that immediately precede the target node.
-/// They are siblings in the AST, not children.
 fn find_including_preceding_comment(node: &Node, source: &[u8]) -> (usize, usize) {
     let start = node.start_byte();
     let start_line = node.start_position().row + 1;
@@ -321,7 +344,13 @@ fn is_jsdoc_comment(node: &Node, source: &[u8]) -> bool {
 }
 
 /// Simple line-based chunking
-fn chunk_by_lines(file_path: &str, max_lines: usize, chunk_type: &str) -> Result<Vec<Chunk>> {
+fn chunk_by_lines(
+    file_path: &str, 
+    catalog: &str,
+    content_hash: &str,
+    max_lines: usize, 
+    chunk_type: &str,
+) -> Result<Vec<Chunk>> {
     let content = fs::read_to_string(file_path)?;
     let lines: Vec<&str> = content.lines().collect();
     
@@ -337,6 +366,8 @@ fn chunk_by_lines(file_path: &str, max_lines: usize, chunk_type: &str) -> Result
             chunks.push(Chunk {
                 text: chunk_text,
                 file: file_path.to_string(),
+                catalog: catalog.to_string(),
+                content_hash: content_hash.to_string(),
                 start_line: start + 1,
                 end_line: end,
                 symbol_name: None,

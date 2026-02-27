@@ -11,24 +11,6 @@ use std::hash::{Hash, Hasher};
 
 const DEFAULT_QDRANT_URL: &str = "http://localhost:6333";
 
-/// Generates a deterministic UUID from a string
-fn string_to_uuid(s: &str) -> uuid::Uuid {
-    let mut hasher = XxHash64::default();
-    s.hash(&mut hasher);
-    let hash = hasher.finish();
-    
-    // Convert to UUID v4 format (using hash as bytes)
-    let bytes = hash.to_be_bytes();
-    let mut uuid_bytes = [0u8; 16];
-    
-    // Copy hash bytes into UUID (truncate/extend as needed)
-    let hash_slice: [u8; 8] = hash.to_be_bytes();
-    uuid_bytes[0..8].copy_from_slice(&hash_slice);
-    uuid_bytes[8..16].copy_from_slice(&hash_slice);
-    
-    uuid::Uuid::from_bytes(uuid_bytes)
-}
-
 /// Qdrant client for uploading embeddings
 pub struct QdrantUploader {
     client: Client,
@@ -55,6 +37,8 @@ struct Point {
 pub struct PointPayload {
     pub text: String,
     pub file: String,
+    pub catalog: String,
+    pub content_hash: String,
     pub start_line: usize,
     pub end_line: usize,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -72,6 +56,76 @@ struct UpsertResponse {
 #[derive(Debug, Deserialize)]
 struct UpsertResult {
     operation_id: u64,
+}
+
+/// Request for filtering points
+#[derive(Debug, Serialize)]
+struct FilterRequest {
+    filter: Filter,
+}
+
+#[derive(Debug, Serialize)]
+struct Filter {
+    must: Vec<Condition>,
+}
+
+#[derive(Debug, Serialize)]
+struct Condition {
+    key: String,
+    r#match: MatchValue,
+}
+
+#[derive(Debug, Serialize)]
+struct MatchValue {
+    value: String,
+}
+
+/// Response from scroll (list points)
+#[derive(Debug, Deserialize)]
+struct ScrollResponse {
+    result: ScrollResult,
+    status: String,
+}
+
+#[derive(Debug, Deserialize)]
+struct ScrollResult {
+    points: Vec<ScrollPoint>,
+    #[serde(default)]
+    next_page_offset: Option<String>,
+}
+
+/// Scroll point from Qdrant
+#[derive(Debug, Deserialize)]
+struct ScrollPoint {
+    id: String,
+    payload: PointPayload,
+}
+
+/// Response from delete
+#[derive(Debug, Deserialize)]
+struct DeleteResponse {
+    result: DeleteResult,
+    status: String,
+}
+
+#[derive(Debug, Deserialize)]
+struct DeleteResult {
+    operation_id: u64,
+}
+
+/// Response from Qdrant search
+#[derive(Debug, Deserialize)]
+struct SearchResponse {
+    result: Vec<SearchResult>,
+    status: String,
+}
+
+/// Search result from Qdrant
+#[derive(Debug, Deserialize)]
+pub struct SearchResult {
+    pub id: String,
+    pub score: f32,
+    pub payload: PointPayload,
 }
 
 impl QdrantUploader {
@@ -95,30 +149,135 @@ impl QdrantUploader {
         })
     }
 
-    /// Purges all points from the collection
+    /// Delete all points for a specific catalog
     ///
-    /// Deletes all existing points from the collection. This is useful
-    /// for full re-indexing.
-    pub fn purge(&self) -> Result<()> {
+    /// # Arguments
+    ///
+    /// * `catalog` - Catalog name to delete
+    pub fn delete_catalog(&self, catalog: &str) -> Result<u64> {
         let endpoint = format!("{}/collections/{}/points/delete", self.url, self.collection);
 
-        // Delete with empty filter = delete all points
         #[derive(Debug, Serialize)]
         struct DeleteRequest {
-            filter: serde_json::Value,
+            filter: Filter,
         }
 
         let request_body = DeleteRequest {
-            filter: serde_json::json!({}),  // Empty filter matches all
+            filter: Filter {
+                must: vec![
+                    Condition {
+                        key: "catalog".to_string(),
+                        r#match: MatchValue { value: catalog.to_string() },
+                    }
+                ],
+            },
         };
 
         let response = self.client.post(&endpoint).json(&request_body).send()?;
 
         if !response.status().is_success() {
-            return Err(anyhow!("Failed to purge collection: HTTP {}", response.status()));
+            return Err(anyhow!("Failed to delete catalog: HTTP {}", response.status()));
         }
 
-        Ok(())
+        let delete_response: DeleteResponse = response.json()?;
+        Ok(delete_response.result.operation_id)
+    }
+
+    /// Delete all points for a specific file
+    ///
+    /// # Arguments
+    ///
+    /// * `file_path` - File path to delete
+    /// * `catalog` - Catalog containing the file
+    pub fn delete_file(&self, file_path: &str, catalog: &str) -> Result<u64> {
+        let endpoint = format!("{}/collections/{}/points/delete", self.url, self.collection);
+
+        #[derive(Debug, Serialize)]
+        struct DeleteRequest {
+            filter: Filter,
+        }
+
+        let request_body = DeleteRequest {
+            filter: Filter {
+                must: vec![
+                    Condition {
+                        key: "catalog".to_string(),
+                        r#match: MatchValue { value: catalog.to_string() },
+                    },
+                    Condition {
+                        key: "file".to_string(),
+                        r#match: MatchValue { value: file_path.to_string() },
+                    },
+                ],
+            },
+        };
+
+        let response = self.client.post(&endpoint).json(&request_body).send()?;
+
+        if !response.status().is_success() {
+            return Err(anyhow!("Failed to delete file: HTTP {}", response.status()));
+        }
+
+        let delete_response: DeleteResponse = response.json()?;
+        Ok(delete_response.result.operation_id)
+    }
+
+    /// Get all points for a specific catalog
+    ///
+    /// Returns a map of file path → content hash
+    pub fn get_catalog_files(&self, catalog: &str) -> Result<std::collections::HashMap<String, String>> {
+        let mut files = std::collections::HashMap::new();
+        let mut offset: Option<String> = None;
+        const LIMIT: u32 = 1000;
+
+        loop {
+            let endpoint = format!(
+                "{}/collections/{}/points/scroll?limit={}",
+                self.url, self.collection, LIMIT
+            );
+
+            #[derive(Debug, Serialize)]
+            struct ScrollRequest {
+                filter: Filter,
+                with_payload: bool,
+                #[serde(skip_serializing_if = "Option::is_none")]
+                offset: Option<String>,
+            }
+
+            let request_body = ScrollRequest {
+                filter: Filter {
+                    must: vec![Condition {
+                        key: "catalog".to_string(),
+                        r#match: MatchValue { value: catalog.to_string() },
+                    }],
+                },
+                with_payload: true,
+                offset: offset.clone(),
+            };
+
+            let response = self.client.post(&endpoint).json(&request_body).send()?;
+
+            if !response.status().is_success() {
+                return Err(anyhow!("Failed to scroll catalog: HTTP {}", response.status()));
+            }
+
+            let scroll_response: ScrollResponse = response.json()?;
+
+            if scroll_response.result.points.is_empty() {
+                break;
+            }
+
+            for point in scroll_response.result.points {
+                files.insert(point.payload.file.clone(), point.payload.content_hash.clone());
+            }
+
+            offset = scroll_response.result.next_page_offset;
+            if offset.is_none() {
+                break;
+            }
+        }
+
+        Ok(files)
     }
 
     /// Uploads a batch of chunks with their embeddings
@@ -138,13 +297,14 @@ impl QdrantUploader {
         let points: Vec<Point> = chunks
             .iter()
             .map(|(chunk, embedding)| {
-                let id_string = format!("{}:{}-{}", chunk.file, chunk.start_line, chunk.end_line);
                 Point {
-                    id: string_to_uuid(&id_string),
+                    id: uuid::Uuid::new_v4(), // Use random UUID (dedup via content_hash)
                     vector: embedding.clone(),
                     payload: PointPayload {
                         text: chunk.text.clone(),
                         file: chunk.file.clone(),
+                        catalog: chunk.catalog.clone(),
+                        content_hash: chunk.content_hash.clone(),
                         start_line: chunk.start_line,
                         end_line: chunk.end_line,
                         symbol_name: chunk.symbol_name.clone(),
@@ -178,22 +338,32 @@ impl QdrantUploader {
     ///
     /// * `embedding` - Query embedding vector
     /// * `limit` - Maximum number of results
+    /// * `catalog` - Optional catalog filter
     ///
     /// # Returns
     ///
     /// Vector of search results with scores and payloads
-    pub fn query(&self, embedding: &[f32], limit: usize) -> Result<Vec<SearchResult>> {
+    pub fn query(&self, embedding: &[f32], limit: usize, catalog: Option<&str>) -> Result<Vec<SearchResult>> {
         #[derive(Debug, Serialize)]
         struct SearchRequest {
             vector: Vec<f32>,
             limit: usize,
             with_payload: bool,
+            filter: Option<Filter>,
         }
+
+        let filter = catalog.map(|cat| Filter {
+            must: vec![Condition {
+                key: "catalog".to_string(),
+                r#match: MatchValue { value: cat.to_string() },
+            }],
+        });
 
         let request_body = SearchRequest {
             vector: embedding.to_vec(),
             limit,
             with_payload: true,
+            filter,
         };
 
         let endpoint = format!("{}/collections/{}/points/search", self.url, self.collection);
@@ -207,19 +377,4 @@ impl QdrantUploader {
 
         Ok(response.result)
     }
-}
-
-/// Response from Qdrant search
-#[derive(Debug, Deserialize)]
-struct SearchResponse {
-    result: Vec<SearchResult>,
-    status: String,
-}
-
-/// Search result from Qdrant
-#[derive(Debug, Deserialize)]
-pub struct SearchResult {
-    pub id: String,
-    pub score: f32,
-    pub payload: PointPayload,
 }

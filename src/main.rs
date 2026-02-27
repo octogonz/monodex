@@ -7,6 +7,8 @@ mod engine;
 
 use clap::{Parser, Subcommand};
 use std::io::Write;
+use std::collections::HashMap;
+use std::path::PathBuf;
 use engine::{
     config::should_skip_path,
     chunker::chunk_file,
@@ -14,10 +16,38 @@ use engine::{
     uploader::QdrantUploader,
 };
 
+/// Qdrant configuration
+#[derive(Debug, serde::Deserialize)]
+struct QdrantConfig {
+    url: Option<String>,
+    collection: String,
+}
+
+/// Catalog configuration
+#[derive(Debug, serde::Deserialize, Clone)]
+struct CatalogConfig {
+    r#type: String,
+    path: Option<String>,
+    chunk_lines: Option<usize>,
+    #[serde(default)]
+    exclude: Vec<String>,
+}
+
+/// Main configuration file
+#[derive(Debug, serde::Deserialize)]
+struct Config {
+    qdrant: QdrantConfig,
+    catalogs: HashMap<String, CatalogConfig>,
+}
+
 /// CLI structure
 #[derive(Parser)]
 #[command(name = "rush-qdrant", version, about)]
 struct Cli {
+    /// Config file path (default: ~/.config/rush-qdrant/config.jsonc)
+    #[arg(long)]
+    config: Option<PathBuf>,
+    
     #[command(subcommand)]
     command: Commands,
 }
@@ -25,27 +55,15 @@ struct Cli {
 /// Available commands
 #[derive(Subcommand)]
 enum Commands {
-    /// Index repository code and docs into Qdrant
-    Index {
-        /// Directory to index
+    /// Crawl source and index into Qdrant (incremental sync)
+    Crawl {
+        /// Catalog name (from config file)
         #[arg(long)]
-        directory: String,
+        catalog: String,
         
-        /// Qdrant collection name
-        #[arg(long, default_value = "rushstack-ai")]
-        collection: String,
-        
-        /// Chunk size in lines
-        #[arg(long, default_value = "100")]
-        chunk_lines: usize,
-        
-        /// Purge collection before indexing (delete all existing points)
+        /// Chunk size in lines (overrides config)
         #[arg(long)]
-        purge: bool,
-        
-        /// Dry-run: count chunks and report without embedding or uploading
-        #[arg(long)]
-        dry_run: bool,
+        chunk_lines: Option<usize>,
     },
     
     /// Query the semantic search database
@@ -54,75 +72,89 @@ enum Commands {
         #[arg(long)]
         text: String,
         
-        /// Qdrant collection name
-        #[arg(long, default_value = "rushstack-ai")]
-        collection: String,
-        
         /// Number of results
         #[arg(long, default_value = "5")]
         limit: usize,
+        
+        /// Filter by catalog (optional - searches all if omitted)
+        #[arg(long)]
+        catalog: Option<String>,
     },
 }
 
+const DEFAULT_CONFIG_PATH: &str = "~/.config/rush-qdrant/config.json";
 const BATCH_SIZE: usize = 32;
 const MODEL_ID: &str = "BAAI/bge-small-en-v1.5";
 
 fn main() -> anyhow::Result<()> {
     let cli = Cli::parse();
+    
+    // Load config
+    let config_path = cli.config.unwrap_or_else(|| {
+        PathBuf::from(shellexpand::tilde(DEFAULT_CONFIG_PATH).as_ref())
+    });
+    let config = load_config(&config_path)?;
 
     match cli.command {
-        Commands::Index { directory, collection, chunk_lines, purge, dry_run } => {
-            run_index(&directory, &collection, chunk_lines, purge, dry_run)?;
+        Commands::Crawl { catalog, chunk_lines } => {
+            run_crawl(&config, &catalog, chunk_lines)?;
         }
-        Commands::Query { text, collection, limit } => {
-            run_query(&text, &collection, limit)?;
+        Commands::Query { text, limit, catalog } => {
+            run_query(&config, &text, limit, catalog.as_deref())?;
         }
     }
 
     Ok(())
 }
 
-/// Run indexing
-fn run_index(directory: &str, collection: &str, chunk_lines: usize, purge: bool, dry_run: bool) -> anyhow::Result<()> {
-    println!("🔍 Starting indexing...");
+fn load_config(path: &PathBuf) -> anyhow::Result<Config> {
+    let content = std::fs::read_to_string(path)
+        .map_err(|e| anyhow::anyhow!("Failed to read config file {}: {}", path.display(), e))?;
+    
+    // Parse JSON (for now - will add JSONC support later)
+    let config: Config = serde_json::from_str(&content)
+        .map_err(|e| anyhow::anyhow!("Failed to parse config file: {}", e))?;
+    
+    Ok(config)
+}
+
+/// Run crawl (incremental sync)
+fn run_crawl(config: &Config, catalog_name: &str, chunk_lines_override: Option<usize>) -> anyhow::Result<()> {
+    println!("🔍 Starting crawl...");
+    println!("Catalog: {}", catalog_name);
+    
+    // Get catalog config
+    let catalog_config = config.catalogs.get(catalog_name)
+        .ok_or_else(|| anyhow::anyhow!("Catalog '{}' not found in config", catalog_name))?;
+    
+    let directory = catalog_config.path.as_ref()
+        .ok_or_else(|| anyhow::anyhow!("Catalog '{}' has no path configured", catalog_name))?;
+    
+    let chunk_lines = chunk_lines_override.unwrap_or(
+        catalog_config.chunk_lines.unwrap_or(100)
+    );
+    
     println!("Directory: {}", directory);
-    println!("Collection: {}", collection);
-    println!("Chunk lines: {}", chunk_lines);
-    if dry_run {
-        println!("Mode: DRY-RUN (no changes will be made)");
-    }
+    println!("Collection: {}", config.qdrant.collection);
     println!();
 
     // Initialize components
-    let generator = if !dry_run {
-        println!("⚙️  Loading embedding model...");
-        let g = EmbeddingGenerator::new(MODEL_ID)?;
-        println!("✅ Model loaded");
-        println!();
-        Some(g)
-    } else {
-        None
-    };
+    println!("⚙️  Loading embedding model...");
+    let generator = EmbeddingGenerator::new(MODEL_ID)?;
+    println!("✅ Model loaded");
+    println!();
 
-    let uploader = if !dry_run {
-        Some(QdrantUploader::new(collection, None)?)
-    } else {
-        None
-    };
+    let uploader = QdrantUploader::new(&config.qdrant.collection, config.qdrant.url.as_deref())?;
 
-    // Purge collection if requested
-    if purge && !dry_run {
-        println!("🗑️  Purging collection...");
-        if let Some(ref uploader) = uploader {
-            uploader.purge()?;
-        }
-        println!("✅ Collection purged");
-        println!();
-    }
+    // Get existing files from DB for this catalog
+    println!("📂 Checking existing index...");
+    let existing_files = uploader.get_catalog_files(catalog_name)?;
+    println!("Found {} files already indexed", existing_files.len());
+    println!();
 
-    // Collect files
+    // Scan directory
     println!("📂 Scanning directory...");
-    let mut files_to_index: Vec<String> = Vec::new();
+    let mut files_to_process: Vec<String> = Vec::new();
 
     for entry in walkdir::WalkDir::new(directory)
         .into_iter()
@@ -132,58 +164,93 @@ fn run_index(directory: &str, collection: &str, chunk_lines: usize, purge: bool,
         let path = entry.path().to_string_lossy().to_string();
         
         if !should_skip_path(&path) && is_text_file(&path) {
-            files_to_index.push(path);
+            files_to_process.push(path);
         }
     }
 
-    let total_files = files_to_index.len();
-    println!("✅ Found {} files to index", total_files);
+    let total_files = files_to_process.len();
+    println!("Found {} files in directory", total_files);
     println!();
+
+    // Categorize files
+    let mut new_count = 0;
+    let mut changed_count = 0;
+    let mut unchanged_count = 0;
+    let mut orphaned_count = 0;
+    
+    // Find orphaned files (in DB but not on disk)
+    let files_set: std::collections::HashSet<String> = files_to_process.iter().cloned().collect();
+    for (file_path, _) in existing_files.iter() {
+        if !files_set.contains(file_path) {
+            orphaned_count += 1;
+        }
+    }
 
     // Process files
     let mut total_chunks = 0;
     let mut batch: Vec<(engine::Chunk, Vec<f32>)> = Vec::new();
-    let mut chunks_by_type: std::collections::HashMap<String, usize> = std::collections::HashMap::new();
+    let mut chunks_by_type: HashMap<String, usize> = HashMap::new();
+    let mut files_deleted = 0;
 
-    for (idx, file_path) in files_to_index.iter().enumerate() {
+    for (idx, file_path) in files_to_process.iter().enumerate() {
         // Progress indicator
         print!("\r  Processing file {}/{} ({:.0}%)   ", 
             idx + 1, total_files, 
             ((idx + 1) as f64 / total_files as f64) * 100.0);
         std::io::Write::flush(&mut std::io::stdout())?;
 
+        // Read file and compute hash
+        let content = match std::fs::read_to_string(file_path) {
+            Ok(c) => c,
+            Err(e) => {
+                eprintln!("\n  ⚠️  Failed to read {}: {}", file_path, e);
+                continue;
+            }
+        };
+        
+        use sha2::{Sha256, Digest};
+        let mut hasher = Sha256::new();
+        hasher.update(content.as_bytes());
+        let current_hash = format!("sha256:{:x}", hasher.finalize());
+
+        // Check if file changed
+        if let Some(existing_hash) = existing_files.get(file_path) {
+            if existing_hash == &current_hash {
+                unchanged_count += 1;
+                continue; // Skip unchanged file
+            }
+            
+            // File changed - delete old chunks
+            uploader.delete_file(file_path, catalog_name)?;
+            files_deleted += 1;
+            changed_count += 1;
+        } else {
+            new_count += 1;
+        }
+
         // Chunk the file
-        match chunk_file(file_path, chunk_lines) {
+        match chunk_file(file_path, catalog_name, chunk_lines) {
             Ok(chunks) => {
                 for chunk in chunks {
                     // Track chunk types for reporting
                     *chunks_by_type.entry(chunk.chunk_type.clone()).or_insert(0) += 1;
                     
-                    if dry_run {
-                        // Just count, don't embed
-                        total_chunks += 1;
-                    } else {
-                        // Generate embedding
-                        if let Some(ref generator) = generator {
-                            match generator.encode(&chunk.text) {
-                                Ok(embedding) => {
-                                    batch.push((chunk, embedding));
-                                    total_chunks += 1;
+                    // Generate embedding
+                    match generator.encode(&chunk.text) {
+                        Ok(embedding) => {
+                            batch.push((chunk, embedding));
+                            total_chunks += 1;
 
-                                    // Upload batch if full
-                                    if batch.len() >= BATCH_SIZE {
-                                        if let Some(ref uploader) = uploader {
-                                            uploader.upload_batch(&batch)?;
-                                        }
-                                        print!("\r  Uploaded {} chunks...   ", total_chunks);
-                                        std::io::Write::flush(&mut std::io::stdout())?;
-                                        batch.clear();
-                                    }
-                                }
-                                Err(e) => {
-                                    eprintln!("\n  ⚠️  Failed to embed chunk in {}: {}", file_path, e);
-                                }
+                            // Upload batch if full
+                            if batch.len() >= BATCH_SIZE {
+                                uploader.upload_batch(&batch)?;
+                                print!("\r  Uploaded {} chunks...   ", total_chunks);
+                                std::io::Write::flush(&mut std::io::stdout())?;
+                                batch.clear();
                             }
+                        }
+                        Err(e) => {
+                            eprintln!("\n  ⚠️  Failed to embed chunk in {}: {}", file_path, e);
                         }
                     }
                 }
@@ -195,48 +262,44 @@ fn run_index(directory: &str, collection: &str, chunk_lines: usize, purge: bool,
     }
 
     // Upload remaining batch
-    if !dry_run && !batch.is_empty() {
-        if let Some(ref uploader) = uploader {
-            uploader.upload_batch(&batch)?;
-        }
+    if !batch.is_empty() {
+        uploader.upload_batch(&batch)?;
         print!("\r  Uploaded {} chunks...   ", total_chunks);
         std::io::Write::flush(&mut std::io::stdout())?;
     }
 
-    println!();
-    println!();
-    
-    if dry_run {
-        println!("📋 DRY-RUN REPORT");
-        println!("================");
-        println!("Files scanned: {}", total_files);
-        println!("Total chunks that would be created: {}", total_chunks);
-        println!();
-        println!("Chunks by type:");
-        for (chunk_type, count) in chunks_by_type.iter() {
-            println!("  {}: {}", chunk_type, count);
+    // Delete orphaned files
+    for (file_path, _) in existing_files.iter() {
+        if !files_set.contains(file_path) {
+            uploader.delete_file(file_path, catalog_name)?;
+            files_deleted += 1;
         }
-        println!();
-        
-        // Estimate time
-        let estimated_seconds = total_chunks as f64 * 1.5; // ~1.5s per chunk
-        let estimated_hours = (estimated_seconds / 3600.0).floor() as i32;
-        let estimated_minutes = ((estimated_seconds % 3600.0) / 60.0).floor() as i32;
-        println!("Estimated indexing time: {}h {}m", estimated_hours, estimated_minutes);
-    } else {
-        println!("✅ Indexing complete!");
-        println!("Total chunks indexed: {}", total_chunks);
     }
+
+    println!();
+    println!();
+    println!("✅ Crawl complete!");
+    println!();
+    println!("📊 Summary:");
+    println!("  New files indexed: {}", new_count);
+    println!("  Changed files re-indexed: {}", changed_count);
+    println!("  Unchanged files skipped: {}", unchanged_count);
+    println!("  Orphaned files deleted: {}", orphaned_count);
+    println!();
+    println!("Total chunks indexed: {}", total_chunks);
+    println!("Files deleted from DB: {}", files_deleted);
     println!();
 
     Ok(())
 }
 
 /// Run query
-fn run_query(text: &str, collection: &str, limit: usize) -> anyhow::Result<()> {
+fn run_query(config: &Config, text: &str, limit: usize, catalog: Option<&str>) -> anyhow::Result<()> {
     println!("🔍 Querying Qdrant...");
     println!("Query: \"{}\"", text);
-    println!("Collection: {}", collection);
+    if let Some(cat) = catalog {
+        println!("Catalog filter: {}", cat);
+    }
     println!("Limit: {}", limit);
     println!();
 
@@ -249,8 +312,8 @@ fn run_query(text: &str, collection: &str, limit: usize) -> anyhow::Result<()> {
 
     // Query Qdrant
     println!("🔎 Searching...");
-    let uploader = QdrantUploader::new(collection, None)?;
-    let results = uploader.query(&embedding, limit)?;
+    let uploader = QdrantUploader::new(&config.qdrant.collection, config.qdrant.url.as_deref())?;
+    let results = uploader.query(&embedding, limit, catalog)?;
 
     // Display results
     println!();
@@ -259,6 +322,7 @@ fn run_query(text: &str, collection: &str, limit: usize) -> anyhow::Result<()> {
 
     for (idx, result) in results.iter().enumerate() {
         println!("{}. Score: {:.3}", idx + 1, result.score);
+        println!("   Catalog: {}", result.payload.catalog);
         println!("   File: {}", result.payload.file);
         println!("   Lines: {}-{}", result.payload.start_line, result.payload.end_line);
         println!("   Type: {}", result.payload.chunk_type);

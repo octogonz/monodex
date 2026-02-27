@@ -79,8 +79,26 @@ pub fn should_skip_path(path: &str) -> bool {
         return true;
     }
     
-    // Test snapshots (not useful for semantic search)
-    if path.ends_with(".snap") {
+    // Test files and snapshots (not useful for semantic search)
+    if path.ends_with(".snap")
+        || path.ends_with(".test.ts")
+        || path.ends_with(".spec.ts")
+        || path.ends_with(".test.tsx")
+        || path.ends_with(".spec.tsx")
+    {
+        return true;
+    }
+
+    // Skip test directories
+    if path.contains("/test/")
+        || path.contains("/tests/")
+        || path.contains("/__tests__/")
+    {
+        return true;
+    }
+
+    // Skip .js files initially (RushStack rarely uses .js for important code)
+    if path.ends_with(".js") || path.ends_with(".jsx") || path.ends_with(".cjs") || path.ends_with(".mjs") {
         return true;
     }
     

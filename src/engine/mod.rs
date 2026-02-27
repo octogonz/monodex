@@ -8,7 +8,9 @@
 pub mod config;
 pub mod embedder;
 pub mod chunker;
+pub mod uploader;
 
 pub use config::{should_skip_path, get_chunk_strategy, ChunkingStrategy};
 pub use embedder::EmbeddingGenerator;
 pub use chunker::{Chunk, chunk_file};
+pub use uploader::{QdrantUploader, SearchResult};

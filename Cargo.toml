@@ -22,8 +22,10 @@ serde = { version = "1.0.215", features = ["derive"] }
 serde_json = "1.0.133"
 
 # HTTP
-ureq = "2.10.1"
+reqwest = { version = "0.12", features = ["json", "blocking"] }
 
 # Utilities
 anyhow = "1.0.93"
 uuid = { version = "1.11.0", features = ["v4", "serde"] }
+twox-hash = "1.6"
+serde_bytes = "0.11"

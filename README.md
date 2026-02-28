@@ -116,6 +116,31 @@ rush-qdrant/
 - **Rust**: 1.91+ (for edition 2024)
 - **Model**: BAAI/bge-small-en-v1.5 (auto-downloaded from HuggingFace to `models/`)
 
+## Qdrant Setup
+
+Create the collection before first use:
+
+```bash
+curl -X PUT "http://localhost:6333/collections/rushstack" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "vectors": {
+      "size": 384,
+      "distance": "Cosine"
+    }
+  }'
+```
+
+Verify the collection exists:
+
+```bash
+curl http://localhost:6333/collections/rushstack | jq '.result.status'
+```
+
+The collection uses:
+- **384 dimensions** (bge-small-en-v1.5 output size)
+- **Cosine distance** (best for semantic similarity)
+
 ## Development
 
 ```bash

@@ -25,15 +25,12 @@ struct QdrantConfig {
 
 /// Catalog configuration
 #[derive(Debug, serde::Deserialize, Clone)]
-#[allow(dead_code)]
+#[serde(deny_unknown_fields)]
 struct CatalogConfig {
-    #[serde(default)]
+    /// Catalog type: "monorepo" or "folder"
     r#type: String,
-    path: Option<String>,
-    /// Package name for breadcrumbs (e.g., "@rushstack/node-core-library")
-    package_name: Option<String>,
-    #[serde(default)]
-    exclude: Vec<String>,
+    /// Path to scan
+    path: String,
 }
 
 /// Main configuration file
@@ -43,7 +40,8 @@ struct Config {
     catalogs: HashMap<String, CatalogConfig>,
 }
 
-/// CLI structure
+/// Rush semantic search crawler for Qdrant
+/// https://www.rushstack.io
 #[derive(Parser)]
 #[command(name = "rush-qdrant", version, about)]
 struct Cli {
@@ -158,10 +156,10 @@ fn run_crawl(config: &Config, catalog_name: &str) -> anyhow::Result<()> {
     let catalog_config = config.catalogs.get(catalog_name)
         .ok_or_else(|| anyhow::anyhow!("Catalog '{}' not found in config", catalog_name))?;
     
-    let directory = catalog_config.path.as_ref()
-        .ok_or_else(|| anyhow::anyhow!("Catalog '{}' has no path configured", catalog_name))?;
+    let directory = &catalog_config.path;
     
     println!("Directory: {}", directory);
+    println!("Type: {}", catalog_config.r#type);
     println!("Collection: {}", config.qdrant.collection);
     println!();
 
@@ -256,8 +254,20 @@ fn run_crawl(config: &Config, catalog_name: &str) -> anyhow::Result<()> {
         }
 
         // Chunk the file
-        let package_name = catalog_config.package_name.as_deref().unwrap_or(catalog_name);
-        match chunk_file(file_path, catalog_name, package_name, 1800) {
+        let repo_root = &catalog_config.path;
+        let package_name_or_folder = if catalog_config.r#type == "monorepo" {
+            engine::package_lookup::find_package_name(file_path, repo_root)
+        } else {
+            // For folder type, use the folder name
+            std::path::Path::new(file_path)
+                .parent()
+                .and_then(|p| p.file_name())
+                .and_then(|n| n.to_str())
+                .unwrap_or(catalog_name)
+                .to_string()
+        };
+        
+        match chunk_file(file_path, catalog_name, &package_name_or_folder, 1800) {
             Ok(chunks) => {
                 for chunk in chunks {
                     // Track chunk types for reporting

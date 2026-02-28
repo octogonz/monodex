@@ -6,10 +6,40 @@
 use anyhow::{anyhow, Result};
 use reqwest::blocking::Client;
 use serde::{Deserialize, Serialize};
-use twox_hash::XxHash64;
-use std::hash::{Hash, Hasher};
 
 const DEFAULT_QDRANT_URL: &str = "http://localhost:6333";
+
+/// Qdrant filter for queries
+#[derive(Debug, Serialize)]
+struct Filter {
+    must: Vec<Condition>,
+}
+
+#[derive(Debug, Serialize)]
+struct Condition {
+    key: String,
+    r#match: MatchValue,
+}
+
+#[derive(Debug, Serialize)]
+struct MatchValue {
+    value: String,
+}
+
+/// Request body for filter-based operations (delete, etc.)
+#[derive(Debug, Serialize)]
+struct FilterRequest {
+    filter: Filter,
+}
+
+/// Request body for scroll operations
+#[derive(Debug, Serialize)]
+struct ScrollRequest {
+    filter: Filter,
+    with_payload: bool,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    offset: Option<String>,
+}
 
 /// Qdrant client for uploading embeddings
 pub struct QdrantUploader {
@@ -44,6 +74,8 @@ pub struct PointPayload {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub symbol_name: Option<String>,
     pub chunk_type: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub breadcrumb: Option<String>,
 }
 
 /// Response from Qdrant upsert
@@ -58,32 +90,11 @@ struct UpsertResult {
     operation_id: u64,
 }
 
-/// Request for filtering points
-#[derive(Debug, Serialize)]
-struct FilterRequest {
-    filter: Filter,
-}
-
-#[derive(Debug, Serialize)]
-struct Filter {
-    must: Vec<Condition>,
-}
-
-#[derive(Debug, Serialize)]
-struct Condition {
-    key: String,
-    r#match: MatchValue,
-}
-
-#[derive(Debug, Serialize)]
-struct MatchValue {
-    value: String,
-}
-
 /// Response from scroll (list points)
 #[derive(Debug, Deserialize)]
 struct ScrollResponse {
     result: ScrollResult,
+    #[allow(dead_code)]
     status: String,
 }
 
@@ -97,6 +108,7 @@ struct ScrollResult {
 /// Scroll point from Qdrant
 #[derive(Debug, Deserialize)]
 struct ScrollPoint {
+    #[allow(dead_code)]
     id: String,
     payload: PointPayload,
 }
@@ -105,6 +117,7 @@ struct ScrollPoint {
 #[derive(Debug, Deserialize)]
 struct DeleteResponse {
     result: DeleteResult,
+    #[allow(dead_code)]
     status: String,
 }
 
@@ -115,6 +128,7 @@ struct DeleteResult {
 
 /// Response from Qdrant search
 #[derive(Debug, Deserialize)]
+#[allow(dead_code)]
 struct SearchResponse {
     result: Vec<SearchResult>,
     status: String,
@@ -122,6 +136,7 @@ struct SearchResponse {
 
 /// Search result from Qdrant
 #[derive(Debug, Deserialize)]
+#[allow(dead_code)]
 pub struct SearchResult {
     pub id: String,
     pub score: f32,
@@ -154,15 +169,11 @@ impl QdrantUploader {
     /// # Arguments
     ///
     /// * `catalog` - Catalog name to delete
+    #[allow(dead_code)]
     pub fn delete_catalog(&self, catalog: &str) -> Result<u64> {
         let endpoint = format!("{}/collections/{}/points/delete", self.url, self.collection);
 
-        #[derive(Debug, Serialize)]
-        struct DeleteRequest {
-            filter: Filter,
-        }
-
-        let request_body = DeleteRequest {
+        let request_body = FilterRequest {
             filter: Filter {
                 must: vec![
                     Condition {
@@ -192,12 +203,7 @@ impl QdrantUploader {
     pub fn delete_file(&self, file_path: &str, catalog: &str) -> Result<u64> {
         let endpoint = format!("{}/collections/{}/points/delete", self.url, self.collection);
 
-        #[derive(Debug, Serialize)]
-        struct DeleteRequest {
-            filter: Filter,
-        }
-
-        let request_body = DeleteRequest {
+        let request_body = FilterRequest {
             filter: Filter {
                 must: vec![
                     Condition {
@@ -235,14 +241,6 @@ impl QdrantUploader {
                 "{}/collections/{}/points/scroll?limit={}",
                 self.url, self.collection, LIMIT
             );
-
-            #[derive(Debug, Serialize)]
-            struct ScrollRequest {
-                filter: Filter,
-                with_payload: bool,
-                #[serde(skip_serializing_if = "Option::is_none")]
-                offset: Option<String>,
-            }
 
             let request_body = ScrollRequest {
                 filter: Filter {
@@ -309,6 +307,7 @@ impl QdrantUploader {
                         end_line: chunk.end_line,
                         symbol_name: chunk.symbol_name.clone(),
                         chunk_type: chunk.chunk_type.clone(),
+                        breadcrumb: Some(chunk.breadcrumb.clone()),
                     },
                 }
             })

@@ -8,11 +8,13 @@
 
 ### Features
 
-- **Intelligent chunking**: Different strategies for TypeScript, JavaScript, Markdown, JSON, YAML
+- **AST-based chunking**: Tree-sitter powered intelligent splitting for TypeScript/TSX files
+- **Breadcrumb context**: Full symbol paths like `@rushstack/node-core-library:JsonFile.ts:JsonFile.load`
+- **Oversized chunk handling**: Functions split at natural AST boundaries (statement blocks, if/else, try/catch)
 - **Local embeddings**: Uses BAAI/bge-small-en-v1.5 model with Candle ML (no external APIs)
 - **Qdrant integration**: Direct batch uploads to Qdrant vector database
-- **Rush-optimized**: Configurable exclusion rules for Rush monorepo patterns
-- **Production-ready**: Single Rust binary, no Python runtime required
+- **Incremental sync**: Content-hash based change detection for fast re-indexing
+- **Rush-optimized**: Smart exclusion rules for Rush monorepo patterns
 
 ## Installation
 
@@ -25,24 +27,51 @@ cargo build --release
 
 ## Usage
 
+### Configuration
+
+Create `~/.config/rush-qdrant/config.jsonc`:
+
+```json
+{
+  "qdrant": {
+    "url": "http://localhost:6333",
+    "collection": "rushstack"
+  },
+  "catalogs": {
+    "rushstack": {
+      "type": "monorepo",
+      "path": "/path/to/rushstack",
+      "package_name": "@rushstack"
+    }
+  }
+}
+```
+
 ### Index a repository
 
 ```bash
-# Index RushStack monorepo
-rush-qdrant index --directory ./rushstack --collection rushstack-ai
+# Index using config file
+rush-qdrant crawl --catalog rushstack
 
-# With custom chunk size
-rush-qdrant index --directory ./rushstack --collection rushstack-ai --chunk-lines 100
+# With custom config path
+rush-qdrant --config /path/to/config.jsonc crawl --catalog rushstack
 ```
 
 ### Query the database
 
 ```bash
 # Semantic search
-rush-qdrant query --text "how to read JSON files" --collection rushstack-ai
+rush-qdrant query --text "how to read JSON files"
 
-# With custom limit
-rush-qdrant query --text "API Extractor" --collection rushstack-ai --limit 10
+# With catalog filter
+rush-qdrant query --text "API Extractor" --catalog rushstack --limit 10
+```
+
+### Debug chunking algorithm
+
+```bash
+# See how a file gets chunked
+rush-qdrant dump-chunks --file ./src/JsonFile.ts --package "@rushstack/node-core-library"
 ```
 
 ## Architecture
@@ -53,42 +82,39 @@ rush-qdrant/
 │   ├── main.rs                    # CLI entry point
 │   └── engine/                    # Reusable indexing engine
 │       ├── mod.rs                 # Module exports
-│       ├── config.rs              # Repository-specific rules (EDIT THIS)
-│       ├── chunker.rs             # File chunking logic
-│       └── embedder.rs            # Embedding generation (Candle)
+│       ├── config.rs              # File exclusion rules
+│       ├── chunker.rs             # File chunking dispatcher
+│       ├── partitioner.rs         # AST-based TypeScript chunking
+│       ├── markdown_partitioner.rs # Markdown heading-based chunking
+│       ├── embedder.rs            # Embedding generation (Candle)
+│       └── uploader.rs            # Qdrant HTTP client
 ├── Cargo.toml                     # Dependencies
 └── README.md
 ```
 
-### Configuration
+### Chunking Strategy
 
-Edit `src/engine/config.rs` to customize:
-- File exclusion rules (`should_skip_path`)
-- Chunking strategies (`get_chunk_strategy`)
-- Repository-specific patterns
+**TypeScript/TSX files** are chunked using AST-aware partitioning:
+- Splits at semantic boundaries (functions, classes, methods, enums)
+- Includes preceding JSDoc/TSDoc comments with each symbol
+- Handles oversized functions by splitting at statement blocks
+- Full breadcrumb context: `package:file:Class.method`
 
-Future: Will support `.rush-qdrant/config.jsonc` for easier configuration.
+**Markdown files** are split by heading hierarchy.
 
-## Current Status
+**JSON files** are skipped (low value for semantic search).
 
-**Phase 1**: ✅ Complete - Qdrant setup and basic CLI structure
+## Chunk Size Target
 
-**Phase 2**: 🚧 In Progress - Intelligent chunking and indexing
-
-**TODO**:
-- [ ] Tree-sitter integration for TypeScript/JavaScript AST-based chunking
-- [ ] Markdown heading-based splitting
-- [ ] JSON 2-level key splitting
-- [ ] Qdrant batch upload implementation
-- [ ] Query command implementation
-- [ ] Snapshot export/import
-- [ ] Configuration file support (.jsonc)
+- **Target**: 1800 characters (text only)
+- **Fits**: 512-token embedding model limit (BAAI/bge-small-en-v1.5)
+- **Breadcrumb**: Extra overhead for navigation context
 
 ## Prerequisites
 
 - **Qdrant**: Vector database running on localhost:6333
 - **Rust**: 1.91+ (for edition 2024)
-- **Model**: BAAI/bge-small-en-v1.5 (auto-downloaded from HuggingFace)
+- **Model**: BAAI/bge-small-en-v1.5 (auto-downloaded from HuggingFace to `models/`)
 
 ## Development
 
@@ -99,8 +125,8 @@ cargo build --release
 # Test
 cargo test
 
-# Run
-./target/release/rush-qdrant --help
+# Run with logging
+RUST_LOG=debug ./target/release/rush-qdrant crawl --catalog rushstack
 ```
 
 ## License

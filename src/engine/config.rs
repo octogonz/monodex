@@ -33,7 +33,16 @@ use std::path::Path;
 /// 
 /// `true` if is file should be skipped, `false` if it should be indexed
 pub fn should_skip_path(path: &str) -> bool {
-    // === RushStack-specific exclusions ===
+    use std::path::Path;
+    
+    // === NEVER INDEX THESE (absolute exclusions) ===
+    
+    // Dependencies - always skip node_modules regardless of location
+    if path.contains("/node_modules/") {
+        return true;
+    }
+    
+    // RushStack-specific exclusions
     // Skip auto-generated API documentation (duplicates TypeScript source)
     if path.contains("api.rushstack.io/docs/") {
         return true;
@@ -43,8 +52,7 @@ pub fn should_skip_path(path: &str) -> bool {
     
     // Build outputs and compiled code (except in src/ and test/ for examples)
     if !path.contains("/src/") && !path.contains("/test/") {
-        if path.contains("/node_modules/")
-            || path.contains("/lib/")
+        if path.contains("/lib/")
             || path.contains("/lib-commonjs/")
             || path.contains("/lib-esm/")
             || path.contains("/lib-esnext/")

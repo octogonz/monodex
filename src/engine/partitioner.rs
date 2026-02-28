@@ -4,6 +4,7 @@
 //! into chunks of roughly equal size, where each chunk includes breadcrumb context.
 
 use tree_sitter::{Node, Parser};
+use super::util::compute_hash;
 
 /// Configuration for partition chunking
 pub struct PartitionConfig {
@@ -34,6 +35,15 @@ impl Default for PartitionConfig {
 /// A chunk of code with breadcrumb context
 #[derive(Debug, Clone)]
 pub struct PartitionedChunk {
+    /// Source file path
+    pub file: String,
+    
+    /// Catalog name (for multi-source partitioning)
+    pub catalog: String,
+    
+    /// Content hash (SHA256) for incremental sync
+    pub content_hash: String,
+    
     /// Breadcrumb path (e.g., "@rushstack/node-core-library:JsonFile.ts:JsonFile.load")
     pub breadcrumb: String,
     
@@ -54,7 +64,14 @@ pub struct PartitionedChunk {
 }
 
 /// Partition a TypeScript/TSX file into chunks
-pub fn partition_typescript(source: &str, config: &PartitionConfig) -> Vec<PartitionedChunk> {
+pub fn partition_typescript(
+    source: &str, 
+    config: &PartitionConfig,
+    file_path: &str,
+    catalog: &str,
+) -> Vec<PartitionedChunk> {
+    let content_hash = compute_hash(source);
+    
     let mut parser = Parser::new();
     parser.set_language(&tree_sitter_typescript::language_typescript())
         .expect("Failed to set TypeScript language");
@@ -79,6 +96,9 @@ pub fn partition_typescript(source: &str, config: &PartitionConfig) -> Vec<Parti
         &base_breadcrumb,
         "",  // class_context (will be detected)
         0,  // depth
+        file_path,
+        catalog,
+        &content_hash,
         &mut chunks,
     );
     
@@ -93,6 +113,9 @@ fn partition_node(
     breadcrumb_prefix: &str,
     class_context: &str,
     depth: usize,
+    file_path: &str,
+    catalog: &str,
+    content_hash: &str,
     chunks: &mut Vec<PartitionedChunk>,
 ) {
     // Build the full text for this node (including preceding comments)
@@ -120,6 +143,9 @@ fn partition_node(
             let symbol_name = get_symbol_name(node, source);
             
             chunks.push(PartitionedChunk {
+                file: file_path.to_string(),
+                catalog: catalog.to_string(),
+                content_hash: content_hash.to_string(),
                 breadcrumb,
                 text,
                 start_line,
@@ -133,7 +159,7 @@ fn partition_node(
     
     // If we're at max depth but still oversized, we still need to split
     if depth >= config.max_breadcrumb_depth {
-        split_oversized_leaf(node, source, config, &breadcrumb, start_line, chunks);
+        split_oversized_leaf(node, source, config, &breadcrumb, start_line, file_path, catalog, content_hash, chunks);
         return;
     }
     
@@ -146,11 +172,11 @@ fn partition_node(
     
     if partitionable_children.is_empty() || (is_function_like && text.len() > config.target_size) {
         // Leaf node OR oversized function/method - try AST-based splitting
-        split_oversized_leaf(node, source, config, &breadcrumb, start_line, chunks);
+        split_oversized_leaf(node, source, config, &breadcrumb, start_line, file_path, catalog, content_hash, chunks);
         return;
     }
     
-    // We have children to partition
+    // If we have children to partition
     // Calculate cumulative text sizes
     let child_sizes: Vec<(Node, usize, usize)> = partitionable_children
         .iter()
@@ -173,14 +199,14 @@ fn partition_node(
     // Check if this node itself is too big
     if total_size > config.target_size && partitionable_children.len() == 1 {
         // Single child that makes us too big - try to split the child
-        partition_node(partitionable_children[0], source, config, breadcrumb_prefix, &new_class_context, depth + 1, chunks);
+        partition_node(partitionable_children[0], source, config, breadcrumb_prefix, &new_class_context, depth + 1, file_path, catalog, content_hash, chunks);
         return;
     }
     
     // If total content is small enough per-child, just partition all children
     if total_content_size <= config.target_size * partitionable_children.len() {
         for child in partitionable_children {
-            partition_node(child, source, config, breadcrumb_prefix, &new_class_context, depth + 1, chunks);
+            partition_node(child, source, config, breadcrumb_prefix, &new_class_context, depth + 1, file_path, catalog, content_hash, chunks);
         }
         return;
     }
@@ -189,7 +215,7 @@ fn partition_node(
     let mut current_group_start = 0;
     let mut current_group_size = 0;
     
-    for (i, (child, size, _)) in children_with_cumulative.iter().enumerate() {
+    for (i, (_child, size, _)) in children_with_cumulative.iter().enumerate() {
         current_group_size += size;
         
         if current_group_size >= config.target_size {
@@ -201,6 +227,9 @@ fn partition_node(
                     breadcrumb_prefix,
                     &new_class_context,
                     depth + 1,
+                    file_path,
+                    catalog,
+                    content_hash,
                     chunks,
                 );
             }
@@ -219,6 +248,9 @@ fn partition_node(
             breadcrumb_prefix,
             &new_class_context,
             depth + 1,
+            file_path,
+            catalog,
+            content_hash,
             chunks,
         );
     }
@@ -232,6 +264,9 @@ fn split_oversized_leaf(
     config: &PartitionConfig,
     breadcrumb: &str,
     start_line_base: usize,
+    file_path: &str,
+    catalog: &str,
+    content_hash: &str,
     chunks: &mut Vec<PartitionedChunk>,
 ) {
     let start_byte = node.start_byte();
@@ -245,7 +280,7 @@ fn split_oversized_leaf(
     
     if split_points.is_empty() {
         // No natural split points found - fall back to line-based splitting
-        split_by_lines(&text, start_line_base, config, breadcrumb, chunk_type, chunks);
+        split_by_lines(&text, start_line_base, config, breadcrumb, chunk_type, file_path, catalog, content_hash, chunks);
         return;
     }
     
@@ -260,9 +295,12 @@ fn split_oversized_leaf(
         
         // If this chunk is still oversized, try line-based splitting
         if part_size > config.target_size {
-            split_by_lines(&part_text, start_line, config, breadcrumb, chunk_type.clone(), chunks);
+            split_by_lines(&part_text, start_line, config, breadcrumb, chunk_type.clone(), file_path, catalog, content_hash, chunks);
         } else {
             chunks.push(PartitionedChunk {
+                file: file_path.to_string(),
+                catalog: catalog.to_string(),
+                content_hash: content_hash.to_string(),
                 breadcrumb: format!("{} (part {}/{})", breadcrumb, i + 1, split_points.len()),
                 text: part_text,
                 start_line,
@@ -302,7 +340,6 @@ fn find_ast_split_points(node: Node, source: &[u8], target_size: usize) -> Vec<(
     // Build chunks by walking through lines and splitting at candidates when size exceeds target
     let mut split_points = Vec::new();
     let mut chunk_start = 0;
-    let mut chunk_size = 0;
     
     // Add 0 as implicit first candidate, and lines_vec.len() as last
     let mut all_candidates = vec![0];
@@ -326,10 +363,7 @@ fn find_ast_split_points(node: Node, source: &[u8], target_size: usize) -> Vec<(
             // Split at previous candidate
             split_points.push((chunk_start, prev_candidate));
             chunk_start = prev_candidate;
-            chunk_size = 0;
         }
-        
-        chunk_size = lines_vec[chunk_start..curr_candidate].join("\n").len();
     }
     
     // Add final chunk
@@ -364,7 +398,7 @@ fn find_split_candidates(node: Node, source: &[u8], line_offset: usize, candidat
     }
 }
 
-/// Check if a node is a good split point
+/// Check if this node is a good split point
 fn is_good_split_point(node: Node, _source: &[u8]) -> bool {
     match node.kind() {
         // Statement-level structures are good split points
@@ -412,6 +446,9 @@ fn split_by_lines(
     config: &PartitionConfig,
     breadcrumb: &str,
     chunk_type: String,
+    file_path: &str,
+    catalog: &str,
+    content_hash: &str,
     chunks: &mut Vec<PartitionedChunk>,
 ) {
     let lines_vec: Vec<&str> = text.lines().collect();
@@ -439,6 +476,9 @@ fn split_by_lines(
         let end_line = start_line_base + end_idx.saturating_sub(1);
         
         chunks.push(PartitionedChunk {
+            file: file_path.to_string(),
+            catalog: catalog.to_string(),
+            content_hash: content_hash.to_string(),
             breadcrumb: format!("{} (part {}/{})", breadcrumb, part_num + 1, split_points.len()),
             text: part_text,
             start_line,
@@ -621,7 +661,7 @@ export function add(a: number, b: number): number {
             package_name: "@test/package".to_string(),
             ..Default::default()
         };
-        let chunks = partition_typescript(source, &config);
+        let chunks = partition_typescript(source, &config, "test.ts", "test");
         assert_snapshot!(chunks.len());
         assert_snapshot!(format_chunks(&chunks));
     }
@@ -660,7 +700,7 @@ export class Calculator {
             package_name: "@math/package".to_string(),
             ..Default::default()
         };
-        let chunks = partition_typescript(source, &config);
+        let chunks = partition_typescript(source, &config, "Calculator.ts", "math");
         assert_snapshot!(format_chunks(&chunks));
     }
     
@@ -672,7 +712,7 @@ export class Calculator {
             package_name: "@rushstack/node-core-library".to_string(),
             ..Default::default()
         };
-        let chunks = partition_typescript(source, &config);
+        let chunks = partition_typescript(source, &config, "JsonFile.ts", "node-core-library");
         
         println!("\n=== PARTITION RESULTS ===");
         println!("Total chunks: {}", chunks.len());
@@ -711,7 +751,7 @@ export class Calculator {
             package_name: "@rushstack/node-core-library".to_string(),
             ..Default::default()
         };
-        let chunks = partition_typescript(source, &config);
+        let chunks = partition_typescript(source, &config, "JsonFile.ts", "node-core-library");
         
         println!("\n=== TOKEN COUNT CHECK ===");
         println!("Checking chunks that exceed 512 tokens...");

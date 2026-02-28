@@ -6,14 +6,13 @@
 mod engine;
 
 use clap::{Parser, Subcommand};
-use std::io::Write;
 use std::collections::HashMap;
 use std::path::PathBuf;
 use engine::{
     config::should_skip_path,
     chunker::chunk_file,
     embedder::EmbeddingGenerator,
-    partitioner::{partition_typescript, PartitionConfig, PartitionedChunk},
+    partitioner::{partition_typescript, PartitionConfig},
     uploader::QdrantUploader,
 };
 
@@ -26,10 +25,13 @@ struct QdrantConfig {
 
 /// Catalog configuration
 #[derive(Debug, serde::Deserialize, Clone)]
+#[allow(dead_code)]
 struct CatalogConfig {
+    #[serde(default)]
     r#type: String,
     path: Option<String>,
-    chunk_lines: Option<usize>,
+    /// Package name for breadcrumbs (e.g., "@rushstack/node-core-library")
+    package_name: Option<String>,
     #[serde(default)]
     exclude: Vec<String>,
 }
@@ -61,10 +63,6 @@ enum Commands {
         /// Catalog name (from config file)
         #[arg(long)]
         catalog: String,
-        
-        /// Chunk size in lines (overrides config)
-        #[arg(long)]
-        chunk_lines: Option<usize>,
     },
     
     /// Dump chunks for a TypeScript file (for debugging chunking algorithm)
@@ -112,8 +110,8 @@ fn main() -> anyhow::Result<()> {
     let config = load_config(&config_path)?;
 
     match cli.command {
-        Commands::Crawl { catalog, chunk_lines } => {
-            run_crawl(&config, &catalog, chunk_lines)?;
+        Commands::Crawl { catalog } => {
+            run_crawl(&config, &catalog)?;
         }
         Commands::DumpChunks { file, target_size, package } => {
             run_dump_chunks(&file, target_size, &package)?;
@@ -138,7 +136,7 @@ fn load_config(path: &PathBuf) -> anyhow::Result<Config> {
 }
 
 /// Run crawl (incremental sync)
-fn run_crawl(config: &Config, catalog_name: &str, chunk_lines_override: Option<usize>) -> anyhow::Result<()> {
+fn run_crawl(config: &Config, catalog_name: &str) -> anyhow::Result<()> {
     println!("🔍 Starting crawl...");
     println!("Catalog: {}", catalog_name);
     
@@ -148,10 +146,6 @@ fn run_crawl(config: &Config, catalog_name: &str, chunk_lines_override: Option<u
     
     let directory = catalog_config.path.as_ref()
         .ok_or_else(|| anyhow::anyhow!("Catalog '{}' has no path configured", catalog_name))?;
-    
-    let chunk_lines = chunk_lines_override.unwrap_or(
-        catalog_config.chunk_lines.unwrap_or(100)
-    );
     
     println!("Directory: {}", directory);
     println!("Collection: {}", config.qdrant.collection);
@@ -248,7 +242,8 @@ fn run_crawl(config: &Config, catalog_name: &str, chunk_lines_override: Option<u
         }
 
         // Chunk the file
-        match chunk_file(file_path, catalog_name, chunk_lines) {
+        let package_name = catalog_config.package_name.as_deref().unwrap_or(catalog_name);
+        match chunk_file(file_path, catalog_name, package_name, 1800) {
             Ok(chunks) => {
                 for chunk in chunks {
                     // Track chunk types for reporting
@@ -410,7 +405,8 @@ fn run_dump_chunks(file: &PathBuf, target_size: usize, package: &str) -> anyhow:
     };
     
     // Partition
-    let chunks = partition_typescript(&source, &config);
+    let file_path = file.to_string_lossy().to_string();
+    let chunks = partition_typescript(&source, &config, &file_path, package);
     
     // Display results
     println!("Total chunks: {}", chunks.len());

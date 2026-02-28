@@ -6,12 +6,22 @@
 //! - Block quotes (>>>)
 //! - Paragraphs
 
+#![allow(dead_code)]
+
 /// Partition a Markdown file into chunks
-pub fn partition_markdown(source: &str, config: &super::partitioner::PartitionConfig) -> Vec<super::partitioner::PartitionedChunk> {
-    use super::partitioner::{PartitionConfig, PartitionedChunk};
+pub fn partition_markdown(source: &str, config: &super::partitioner::PartitionConfig, file_path: &str, catalog: &str) -> Vec<super::partitioner::PartitionedChunk> {
+    use super::partitioner::PartitionedChunk;
+    use sha2::{Sha256, Digest};
     
     let lines: Vec<&str> = source.lines().collect();
     let mut chunks = Vec::new();
+    
+    // Compute content hash
+    let content_hash = {
+        let mut hasher = Sha256::new();
+        hasher.update(source.as_bytes());
+        format!("sha256:{:x}", hasher.finalize())
+    };
     
     // Build breadcrumb prefix
     let breadcrumb_prefix = if config.package_name.is_empty() {
@@ -49,6 +59,9 @@ pub fn partition_markdown(source: &str, config: &super::partitioner::PartitionCo
         let text = lines.join("\n");
         if !text.trim().is_empty() {
             chunks.push(PartitionedChunk {
+                file: file_path.to_string(),
+                catalog: catalog.to_string(),
+                content_hash: content_hash.clone(),
                 breadcrumb: breadcrumb_prefix.clone(),
                 text,
                 start_line: 1,
@@ -92,10 +105,16 @@ pub fn partition_markdown(source: &str, config: &super::partitioner::PartitionCo
                 start_idx + 1,  // 1-indexed
                 config,
                 &breadcrumb,
+                file_path,
+                catalog,
+                &content_hash,
                 &mut chunks,
             );
         } else {
             chunks.push(PartitionedChunk {
+                file: file_path.to_string(),
+                catalog: catalog.to_string(),
+                content_hash: content_hash.clone(),
                 breadcrumb,
                 text: section_text,
                 start_line: start_idx + 1,  // 1-indexed
@@ -133,6 +152,9 @@ fn split_oversized_section(
     start_line: usize,
     config: &super::partitioner::PartitionConfig,
     breadcrumb: &str,
+    file_path: &str,
+    catalog: &str,
+    content_hash: &str,
     chunks: &mut Vec<super::partitioner::PartitionedChunk>,
 ) {
     use super::partitioner::PartitionedChunk;
@@ -177,7 +199,7 @@ fn split_oversized_section(
     
     // If we only have one chunk and it's still oversized, split by lines
     if split_points.len() == 1 && lines.join("\n").len() > config.target_size {
-        split_by_lines_fallback(lines, start_line, config, breadcrumb, chunks);
+        split_by_lines_fallback(lines, start_line, config, breadcrumb, file_path, catalog, content_hash, chunks);
         return;
     }
     
@@ -191,6 +213,9 @@ fn split_oversized_section(
         }
         
         chunks.push(PartitionedChunk {
+            file: file_path.to_string(),
+            catalog: catalog.to_string(),
+            content_hash: content_hash.to_string(),
             breadcrumb: format!("{} (part {}/{})", breadcrumb, i + 1, split_points.len()),
             text: chunk_text,
             start_line: start_line + start_idx,
@@ -207,6 +232,9 @@ fn split_by_lines_fallback(
     start_line: usize,
     config: &super::partitioner::PartitionConfig,
     breadcrumb: &str,
+    file_path: &str,
+    catalog: &str,
+    content_hash: &str,
     chunks: &mut Vec<super::partitioner::PartitionedChunk>,
 ) {
     use super::partitioner::PartitionedChunk;
@@ -221,6 +249,9 @@ fn split_by_lines_fallback(
         if current_size + line_size > config.target_size && current_size > 0 {
             let chunk_lines = &lines[current_start..i];
             chunks.push(PartitionedChunk {
+                file: file_path.to_string(),
+                catalog: catalog.to_string(),
+                content_hash: content_hash.to_string(),
                 breadcrumb: format!("{} (part {})", breadcrumb, part_num),
                 text: chunk_lines.join("\n"),
                 start_line: start_line + current_start,
@@ -241,6 +272,9 @@ fn split_by_lines_fallback(
     if current_start < lines.len() {
         let chunk_lines = &lines[current_start..];
         chunks.push(PartitionedChunk {
+            file: file_path.to_string(),
+            catalog: catalog.to_string(),
+            content_hash: content_hash.to_string(),
             breadcrumb: format!("{} (part {})", breadcrumb, part_num),
             text: chunk_lines.join("\n"),
             start_line: start_line + current_start,
@@ -299,7 +333,7 @@ Final paragraph.
             ..Default::default()
         };
         
-        let chunks = partition_markdown(source, &config);
+        let chunks = partition_markdown(source, &config, "test.md", "test");
         assert_snapshot!(format_chunks(&chunks));
     }
     
@@ -312,7 +346,7 @@ Final paragraph.
             ..Default::default()
         };
         
-        let chunks = partition_markdown(source, &config);
+        let chunks = partition_markdown(source, &config, "API.md", "test");
         assert_snapshot!(format_chunks(&chunks));
     }
 }

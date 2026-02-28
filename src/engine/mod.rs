@@ -12,6 +12,7 @@ pub mod partitioner;
 pub mod markdown_partitioner;
 pub mod uploader;
 pub mod util;
+pub mod package_lookup;
 
 // Re-export commonly used types for convenience
 pub use chunker::Chunk;

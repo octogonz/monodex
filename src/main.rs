@@ -1,6 +1,6 @@
 //! rush-qdrant: Semantic search indexer for Rush monorepos
 //! 
-//! Uses Qdrant vector database with BAAI/bge-small-en-v1.5 embeddings
+//! Uses Qdrant vector database with jina-embeddings-v2-base-code embeddings
 //! Intelligently chunks code and documentation for high-quality semantic search
 
 mod engine;
@@ -11,7 +11,7 @@ use std::path::PathBuf;
 use engine::{
     config::should_skip_path,
     chunker::chunk_file,
-    embedder::EmbeddingGenerator,
+    parallel_embedder::ParallelEmbedder,
     partitioner::{partition_typescript, PartitionConfig},
     uploader::QdrantUploader,
 };
@@ -106,9 +106,6 @@ enum Commands {
 }
 
 const DEFAULT_CONFIG_PATH: &str = "~/.config/rush-qdrant/config.jsonc";
-const EMBED_BATCH_SIZE: usize = 16;  // Collect this many chunks before batch embedding (smaller = faster response)
-const UPLOAD_BATCH_SIZE: usize = 32;  // Upload to Qdrant in batches of this size
-const MODEL_ID: &str = "BAAI/bge-small-en-v1.5";
 
 fn main() -> anyhow::Result<()> {
     let cli = Cli::parse();
@@ -150,6 +147,7 @@ fn load_config(path: &PathBuf) -> anyhow::Result<Config> {
 
 /// Run crawl (incremental sync)
 fn run_crawl(config: &Config, catalog_name: &str) -> anyhow::Result<()> {
+    let total_start = std::time::Instant::now();
     println!("🔍 Starting crawl...");
     println!("Catalog: {}", catalog_name);
     
@@ -164,10 +162,9 @@ fn run_crawl(config: &Config, catalog_name: &str) -> anyhow::Result<()> {
     println!("Collection: {}", config.qdrant.collection);
     println!();
 
-    // Initialize components
+    // Initialize parallel embedder
     println!("⚙️  Loading embedding model...");
-    let mut generator = EmbeddingGenerator::new()?;
-    println!("✅ Model loaded");
+    let embedder = ParallelEmbedder::new()?;
     println!();
 
     let uploader = QdrantUploader::new(&config.qdrant.collection, config.qdrant.url.as_deref())?;
@@ -212,30 +209,15 @@ fn run_crawl(config: &Config, catalog_name: &str) -> anyhow::Result<()> {
         }
     }
 
-    // Process files with cross-file batch embedding
-    let mut total_chunks = 0;
-    let mut upload_batch: Vec<(engine::Chunk, Vec<f32>)> = Vec::new();
-    let mut pending_chunks: Vec<engine::Chunk> = Vec::new();
+    // Phase 1: Collect all chunks (sequential - file I/O bound)
+    println!("📦 Phase 1: Chunking files...");
+    let mut all_chunks: Vec<engine::Chunk> = Vec::new();
     let mut chunks_by_type: HashMap<String, usize> = HashMap::new();
     let mut files_deleted = 0;
     
-    // Helper: embed pending chunks and add to upload batch
-    let flush_embeddings = |pending: &mut Vec<engine::Chunk>, upload: &mut Vec<(engine::Chunk, Vec<f32>)>, generator: &mut EmbeddingGenerator| -> anyhow::Result<usize> {
-        if pending.is_empty() {
-            return Ok(0);
-        }
-        let texts: Vec<&str> = pending.iter().map(|c| c.text.as_str()).collect();
-        let embeddings = generator.encode_batch(&texts)?;
-        let count = pending.len();
-        for (chunk, embedding) in pending.drain(..).zip(embeddings.into_iter()) {
-            upload.push((chunk, embedding));
-        }
-        Ok(count)
-    };
-
     for (idx, file_path) in files_to_process.iter().enumerate() {
         // Progress indicator
-        print!("\r  Processing file {}/{} ({:.0}%)   ", 
+        print!("\r  Chunking file {}/{} ({:.0}%)   ", 
             idx + 1, total_files, 
             ((idx + 1) as f64 / total_files as f64) * 100.0);
         std::io::Write::flush(&mut std::io::stdout())?;
@@ -285,23 +267,10 @@ fn run_crawl(config: &Config, catalog_name: &str) -> anyhow::Result<()> {
         
         match chunk_file(file_path, catalog_name, &package_name_or_folder, 6000) {
             Ok(chunks) => {
-                for chunk in chunks {
+                for chunk in &chunks {
                     *chunks_by_type.entry(chunk.chunk_type.clone()).or_insert(0) += 1;
-                    pending_chunks.push(chunk);
                 }
-                
-                if pending_chunks.len() >= EMBED_BATCH_SIZE {
-                    total_chunks += flush_embeddings(&mut pending_chunks, &mut upload_batch, &mut generator)?;
-                    print!("\r  Embedded {} chunks...   ", total_chunks);
-                    std::io::Write::flush(&mut std::io::stdout())?;
-                }
-                
-                if upload_batch.len() >= UPLOAD_BATCH_SIZE {
-                    uploader.upload_batch(&upload_batch)?;
-                    print!("\r  Uploaded {} chunks...   ", total_chunks);
-                    std::io::Write::flush(&mut std::io::stdout())?;
-                    upload_batch.clear();
-                }
+                all_chunks.extend(chunks);
             }
             Err(e) => {
                 eprintln!("\n  ⚠️  Failed to chunk file {}: {}", file_path, e);
@@ -309,17 +278,52 @@ fn run_crawl(config: &Config, catalog_name: &str) -> anyhow::Result<()> {
         }
     }
     
-    if !pending_chunks.is_empty() {
-        total_chunks += flush_embeddings(&mut pending_chunks, &mut upload_batch, &mut generator)?;
-    }
+    let total_chunks = all_chunks.len();
+    println!("\n  Found {} chunks to embed", total_chunks);
+    println!();
 
-    if !upload_batch.is_empty() {
-        uploader.upload_batch(&upload_batch)?;
-        print!("\r  Uploaded {} chunks...   ", total_chunks);
+    // Phase 2: Parallel embedding with rayon
+    println!("⚡ Phase 2: Embedding {} chunks with {} parallel sessions...", 
+        total_chunks, embedder.num_workers());
+    let embed_start = std::time::Instant::now();
+    
+    use rayon::prelude::*;
+    
+    let embedded: Vec<(engine::Chunk, Vec<f32>)> = all_chunks
+        .into_par_iter()
+        .enumerate()
+        .map(|(i, chunk)| {
+            let embedding = embedder.encode(&chunk.text, i)?;
+            Ok((chunk, embedding))
+        })
+        .collect::<anyhow::Result<Vec<_>>>()?;
+    
+    let embed_elapsed = embed_start.elapsed();
+    let embed_rate = if embed_elapsed.as_secs() > 0 {
+        total_chunks as f64 / embed_elapsed.as_secs_f64()
+    } else {
+        total_chunks as f64
+    };
+    println!("  Embedded {} chunks in {:?} ({:.1} chunks/sec)", 
+        total_chunks, embed_elapsed, embed_rate);
+    println!();
+    
+    // Phase 3: Upload to Qdrant in batches
+    println!("📤 Phase 3: Uploading to Qdrant...");
+    const UPLOAD_BATCH_SIZE: usize = 100;
+    let mut uploaded = 0;
+    
+    for batch in embedded.chunks(UPLOAD_BATCH_SIZE) {
+        uploader.upload_batch(batch)?;
+        uploaded += batch.len();
+        print!("\r  Uploaded {}/{} chunks ({:.0}%)   ", 
+            uploaded, total_chunks, (uploaded as f64 / total_chunks as f64) * 100.0);
         std::io::Write::flush(&mut std::io::stdout())?;
     }
+    println!();
 
-    // Delete orphaned files
+    // Delete orphaned files (files that were in DB but not on disk)
+    println!("🗑️  Cleaning up orphaned files...");
     for (file_path, _) in existing_files.iter() {
         if !files_set.contains(file_path) {
             uploader.delete_file(file_path, catalog_name)?;
@@ -329,15 +333,19 @@ fn run_crawl(config: &Config, catalog_name: &str) -> anyhow::Result<()> {
 
     println!();
     println!();
+    let total_elapsed = total_start.elapsed();
+    
     println!("✅ Crawl complete!");
     println!();
     println!("📊 Summary:");
+    println!("  Total time: {:?}", total_elapsed);
     println!("  New files indexed: {}", new_count);
     println!("  Changed files re-indexed: {}", changed_count);
     println!("  Unchanged files skipped: {}", unchanged_count);
     println!("  Orphaned files deleted: {}", orphaned_count);
     println!();
     println!("Total chunks indexed: {}", total_chunks);
+    println!("Overall rate: {:.1} chunks/sec", total_chunks as f64 / total_elapsed.as_secs_f64().max(0.001));
     println!("Files deleted from DB: {}", files_deleted);
     println!();
 
@@ -354,10 +362,10 @@ fn run_query(config: &Config, text: &str, limit: usize, catalog: Option<&str>) -
     println!("Limit: {}", limit);
     println!();
 
-    // Generate embedding for query
+    // Generate embedding for query using ParallelEmbedder
     println!("⚙️  Generating embedding for query...");
-    let mut generator = EmbeddingGenerator::new()?;
-    let embedding = generator.encode(text)?;
+    let embedder = ParallelEmbedder::new()?;
+    let embedding = embedder.encode(text, 0)?;
     println!("✅ Embedding generated");
     println!();
 

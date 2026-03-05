@@ -1738,6 +1738,7 @@ dependencies = [
  "ndarray 0.16.1",
  "num_cpus",
  "ort",
+ "rayon",
  "reqwest",
  "serde",
  "serde_bytes",

@@ -11,11 +11,10 @@ rush-qdrant is a semantic search indexer for Rush monorepos, using Qdrant vector
 ### Phase 1: Better Embedding Model
 **Goal:** Switch to a code-specific model with larger context window.
 
-1. [ ] Add optional Metal/CUDA features to Cargo.toml
-2. [ ] Implement device selection logic (Metal → CUDA → CPU fallback)
-3. [ ] Update embedder.rs to use jina-embeddings-v2-base-code
-4. [ ] Test single chunk embedding with new model
-5. [ ] Commit changes
+1. [ ] Update embedder.rs to use `jina-embeddings-v2-base-code`
+2. [ ] Update vector dimension from 384 to 768
+3. [ ] Test single chunk embedding with new model
+4. [ ] Commit changes
 
 ### Phase 2: Adjust Chunking for Larger Context
 **Goal:** Take advantage of 8192 token budget.
@@ -35,12 +34,14 @@ rush-qdrant is a semantic search indexer for Rush monorepos, using Qdrant vector
 5. [ ] Commit changes
 
 ### Phase 4: Performance Optimization
-**Goal:** Speed up crawling from hours to minutes.
+**Goal:** Speed up crawling with parallel processing.
 
-1. [ ] Implement GPU device selection (Metal/CUDA/CPU)
-2. [ ] Add rayon parallel processing for CPU fallback
-3. [ ] Benchmark improvements
-4. [ ] Commit changes
+1. [ ] Add `rayon` dependency for thread pool
+2. [ ] Create multiple ONNX sessions (one per thread)
+3. [ ] Implement parallel chunk processing
+4. [ ] Configure: 4 threads × 3 intra-op threads = 12 cores
+5. [ ] Benchmark and verify ~12ms per embedding
+6. [ ] Commit changes
 
 ### Phase 5: Rebuild Database
 **Goal:** Create new collection with improved schema.
@@ -87,7 +88,7 @@ rush-qdrant is a semantic search indexer for Rush monorepos, using Qdrant vector
 |----------|-------|
 | Max tokens | **8192** |
 | Dimensions | 768 |
-| Model size | ~161M parameters |
+| Model size | ~612MB (FP32 ONNX) |
 | License | Apache 2.0 |
 | Trained on | **Code + documentation** (github-code, 150M code-docstring pairs) |
 
@@ -96,6 +97,79 @@ rush-qdrant is a semantic search indexer for Rush monorepos, using Qdrant vector
 - 768 dimensions → more expressive embeddings
 - Code-specific training → understands TypeScript, JavaScript, Python, C++, Markdown, JSON, etc.
 - Docstring awareness → queries like "how to read JSON files" match `JsonFile.load()`
+
+---
+
+## Performance Optimization
+
+### Key Findings from Benchmark
+
+After extensive testing (see `../benchmark/README.md`), we determined:
+
+| Approach | Performance | Verdict |
+|----------|-------------|---------|
+| ONNX CPU (12 threads) | ~16ms/embedding | ✅ **Recommended** |
+| ONNX CoreML (GPU) | ~1400ms/embedding | ❌ 30x slower |
+| Candle Metal | N/A | ❌ Not supported |
+| Batching | 74% slower per item | ❌ Counterproductive |
+| Parallel sessions | ~12ms/embedding | ✅ **Best approach** |
+
+### Why GPU Didn't Help
+
+1. **Embedding models are shallow** (12 layers vs 32-96+ for LLMs)
+2. **Small tensor sizes** don't benefit from GPU parallelism
+3. **Data transfer overhead** dominates for small operations
+4. **CoreML compilation overhead** is significant
+
+### Why Batching Hurt Performance
+
+1. **Variable-length sequences** require padding to max length
+2. **Short sequences waste compute** when padded to match longer ones
+3. **Attention is O(n²)** in sequence length - padding is expensive
+4. **No GPU to amortize** kernel launch overhead
+
+### Why Not Quantized (INT8)
+
+| Model | Size | Speed | Accuracy |
+|-------|------|-------|----------|
+| FP32 | 612 MB | Baseline | 100% |
+| INT8 | 154 MB | 2x faster | 98.5-99.4% similarity |
+
+**Verdict:** The 2x speedup isn't worth 1-2% accuracy loss for semantic search.
+
+### Implementation Strategy
+
+```rust
+use rayon::prelude::*;
+use std::sync::Arc;
+
+// Configuration
+const NUM_WORKERS: usize = 4;
+const INTRA_THREADS: usize = 3; // 4 × 3 = 12 cores
+
+// Each worker gets its own ONNX session
+let sessions: Vec<Arc<Mutex<Session>>> = (0..NUM_WORKERS)
+    .map(|_| Arc::new(Mutex::new(create_session(INTRA_THREADS)?)))
+    .collect();
+
+// Process chunks in parallel
+chunks.par_iter()
+    .with_max_len(1) // One chunk per task
+    .enumerate()
+    .for_each(|(i, chunk)| {
+        let session = &sessions[i % NUM_WORKERS];
+        let mut sess = session.lock().unwrap();
+        let embedding = sess.encode(chunk);
+        // ... store embedding
+    });
+```
+
+### Expected Performance
+
+| Machine | Strategy | Time |
+|---------|----------|------|
+| M3 MacBook Pro | 4 parallel sessions | ~15-20 min for full crawl |
+| Any modern CPU | ONNX with threading | ~20-30 min |
 
 ---
 
@@ -169,43 +243,6 @@ With 32 bits (4 billion values), collisions are astronomically rare for a single
   }
 }
 ```
-
----
-
-## Performance
-
-### Problem: CPU-Only Is Slow
-
-Current crawl takes **hours**:
-- Model runs on CPU only (`Device::Cpu`)
-- ~350-500ms per chunk vs ~5-20ms with GPU
-
-### Solution: GPU with CPU Fallback
-
-```rust
-fn get_best_device() -> Result<Device> {
-    #[cfg(feature = "metal")]
-    if let Ok(device) = Device::new_metal(0) {
-        return Ok(device);
-    }
-    
-    #[cfg(feature = "cuda")]
-    if let Ok(device) = Device::new_cuda(0) {
-        return Ok(device);
-    }
-    
-    Ok(Device::Cpu)
-}
-```
-
-### Expected Times
-
-| Machine | Strategy | Time |
-|---------|----------|------|
-| M3 MacBook Pro | Metal | ~5-15 min |
-| CI with NVIDIA | CUDA | ~5-15 min |
-| CI CPU-only | Rayon (parallel) | ~30-45 min |
-| CI CPU-only (current) | Single-threaded | 2-3 hours |
 
 ---
 
@@ -356,15 +393,6 @@ rush-qdrant search --text "api design"
 3. Rename `file` to `source_uri` for generality
 4. When adding new source types, extend payload with type-specific fields
 5. Query handler dispatches on `source_type` to render appropriately
-
-### Crawl Time: Optional
-
-Considered adding `crawled_at: String` (ISO 8601 timestamp) to each chunk. 
-
-**Verdict: Optional, add later if needed.**
-- Useful for: debugging staleness, incremental sync diagnostics
-- Downside: Adds noise to every payload
-- Alternative: Track crawl metadata at catalog level, not per-chunk
 
 ---
 

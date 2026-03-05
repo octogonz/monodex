@@ -106,7 +106,8 @@ enum Commands {
 }
 
 const DEFAULT_CONFIG_PATH: &str = "~/.config/rush-qdrant/config.jsonc";
-const BATCH_SIZE: usize = 32;
+const EMBED_BATCH_SIZE: usize = 16;  // Collect this many chunks before batch embedding (smaller = faster response)
+const UPLOAD_BATCH_SIZE: usize = 32;  // Upload to Qdrant in batches of this size
 const MODEL_ID: &str = "BAAI/bge-small-en-v1.5";
 
 fn main() -> anyhow::Result<()> {
@@ -211,11 +212,26 @@ fn run_crawl(config: &Config, catalog_name: &str) -> anyhow::Result<()> {
         }
     }
 
-    // Process files
+    // Process files with cross-file batch embedding
     let mut total_chunks = 0;
-    let mut batch: Vec<(engine::Chunk, Vec<f32>)> = Vec::new();
+    let mut upload_batch: Vec<(engine::Chunk, Vec<f32>)> = Vec::new();
+    let mut pending_chunks: Vec<engine::Chunk> = Vec::new();
     let mut chunks_by_type: HashMap<String, usize> = HashMap::new();
     let mut files_deleted = 0;
+    
+    // Helper: embed pending chunks and add to upload batch
+    let flush_embeddings = |pending: &mut Vec<engine::Chunk>, upload: &mut Vec<(engine::Chunk, Vec<f32>)>, generator: &mut EmbeddingGenerator| -> anyhow::Result<usize> {
+        if pending.is_empty() {
+            return Ok(0);
+        }
+        let texts: Vec<&str> = pending.iter().map(|c| c.text.as_str()).collect();
+        let embeddings = generator.encode_batch(&texts)?;
+        let count = pending.len();
+        for (chunk, embedding) in pending.drain(..).zip(embeddings.into_iter()) {
+            upload.push((chunk, embedding));
+        }
+        Ok(count)
+    };
 
     for (idx, file_path) in files_to_process.iter().enumerate() {
         // Progress indicator
@@ -270,27 +286,21 @@ fn run_crawl(config: &Config, catalog_name: &str) -> anyhow::Result<()> {
         match chunk_file(file_path, catalog_name, &package_name_or_folder, 6000) {
             Ok(chunks) => {
                 for chunk in chunks {
-                    // Track chunk types for reporting
                     *chunks_by_type.entry(chunk.chunk_type.clone()).or_insert(0) += 1;
-                    
-                    // Generate embedding
-                    match generator.encode(&chunk.text) {
-                        Ok(embedding) => {
-                            batch.push((chunk, embedding));
-                            total_chunks += 1;
-
-                            // Upload batch if full
-                            if batch.len() >= BATCH_SIZE {
-                                uploader.upload_batch(&batch)?;
-                                print!("\r  Uploaded {} chunks...   ", total_chunks);
-                                std::io::Write::flush(&mut std::io::stdout())?;
-                                batch.clear();
-                            }
-                        }
-                        Err(e) => {
-                            eprintln!("\n  ⚠️  Failed to embed chunk in {}: {}", file_path, e);
-                        }
-                    }
+                    pending_chunks.push(chunk);
+                }
+                
+                if pending_chunks.len() >= EMBED_BATCH_SIZE {
+                    total_chunks += flush_embeddings(&mut pending_chunks, &mut upload_batch, &mut generator)?;
+                    print!("\r  Embedded {} chunks...   ", total_chunks);
+                    std::io::Write::flush(&mut std::io::stdout())?;
+                }
+                
+                if upload_batch.len() >= UPLOAD_BATCH_SIZE {
+                    uploader.upload_batch(&upload_batch)?;
+                    print!("\r  Uploaded {} chunks...   ", total_chunks);
+                    std::io::Write::flush(&mut std::io::stdout())?;
+                    upload_batch.clear();
                 }
             }
             Err(e) => {
@@ -298,10 +308,13 @@ fn run_crawl(config: &Config, catalog_name: &str) -> anyhow::Result<()> {
             }
         }
     }
+    
+    if !pending_chunks.is_empty() {
+        total_chunks += flush_embeddings(&mut pending_chunks, &mut upload_batch, &mut generator)?;
+    }
 
-    // Upload remaining batch
-    if !batch.is_empty() {
-        uploader.upload_batch(&batch)?;
+    if !upload_batch.is_empty() {
+        uploader.upload_batch(&upload_batch)?;
         print!("\r  Uploaded {} chunks...   ", total_chunks);
         std::io::Write::flush(&mut std::io::stdout())?;
     }

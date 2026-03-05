@@ -6,7 +6,9 @@
 use anyhow::Result;
 use ort::session::{Session, builder::GraphOptimizationLevel};
 use ort::value::Tensor;
+#[cfg(feature = "coreml")]
 use ort::execution_providers::CoreML;
+#[cfg(feature = "coreml")]
 use ort::ep::ExecutionProvider;
 use tokenizers::Tokenizer;
 use hf_hub::{api::sync::Api, Repo, RepoType};
@@ -39,6 +41,7 @@ impl EmbeddingGenerator {
             .map_err(|e| anyhow::anyhow!("Failed to load tokenizer: {}", e))?;
 
         // Build session with CoreML if available
+        #[allow(unused_mut)]
         let mut builder = Session::builder()?
             .with_optimization_level(GraphOptimizationLevel::All)?;
         
@@ -174,5 +177,45 @@ impl EmbeddingGenerator {
         }
 
         Ok(embeddings)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    
+    #[test]
+    fn test_encode_single() {
+        let mut emb_gen = EmbeddingGenerator::new().unwrap();
+        let result = emb_gen.encode("function test() { return 42; }");
+        assert!(result.is_ok());
+        let embedding = result.unwrap();
+        assert_eq!(embedding.len(), 768);
+    }
+    
+    #[test]
+    fn test_encode_batch_small() {
+        let mut emb_gen = EmbeddingGenerator::new().unwrap();
+        let texts: Vec<&str> = vec!["function a() {}", "function b() {}", "function c() {}"];
+        let result = emb_gen.encode_batch(&texts);
+        assert!(result.is_ok());
+        let embeddings = result.unwrap();
+        assert_eq!(embeddings.len(), 3);
+        for emb in embeddings {
+            assert_eq!(emb.len(), 768);
+        }
+    }
+    
+    #[test]
+    fn test_encode_batch_64() {
+        let mut emb_gen = EmbeddingGenerator::new().unwrap();
+        let texts: Vec<&str> = (0..64).map(|_| "function test() { return 42; }").collect();
+        let start = std::time::Instant::now();
+        let result = emb_gen.encode_batch(&texts);
+        let elapsed = start.elapsed();
+        println!("Batch of 64 took {:?}", elapsed);
+        assert!(result.is_ok());
+        let embeddings = result.unwrap();
+        assert_eq!(embeddings.len(), 64);
     }
 }

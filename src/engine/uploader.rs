@@ -111,8 +111,16 @@ struct ScrollResult {
 #[derive(Debug, Deserialize)]
 struct ScrollPoint {
     #[allow(dead_code)]
-    id: String,
+    id: QdrantId,
     payload: PointPayload,
+}
+
+/// Qdrant ID can be either a string (UUID) or integer (custom ID)
+#[derive(Debug, Deserialize)]
+#[serde(untagged)]
+enum QdrantId {
+    String(String),
+    Integer(u64),
 }
 
 /// Response from delete
@@ -246,7 +254,15 @@ impl QdrantUploader {
                 return Err(anyhow!("Failed to scroll catalog: HTTP {}", response.status()));
             }
 
-            let scroll_response: ScrollResponse = response.json()?;
+            let response_text = response.text()?;
+            let scroll_response: ScrollResponse = match serde_json::from_str(&response_text) {
+                Ok(r) => r,
+                Err(e) => {
+                    eprintln!("Failed to deserialize Qdrant response: {}", e);
+                    eprintln!("Raw response (first 2000 chars): {}", &response_text.chars().take(2000).collect::<String>());
+                    return Err(anyhow!("Deserialization error: {}", e));
+                }
+            };
 
             if scroll_response.result.points.is_empty() {
                 break;

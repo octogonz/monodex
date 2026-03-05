@@ -39,7 +39,7 @@ struct ScrollRequest {
     filter: Filter,
     with_payload: bool,
     #[serde(skip_serializing_if = "Option::is_none")]
-    offset: Option<String>,
+    offset: Option<QdrantId>,
 }
 
 /// Qdrant client for uploading embeddings
@@ -116,7 +116,7 @@ struct ScrollPoint {
 }
 
 /// Qdrant ID can be either a string (UUID) or integer (custom ID)
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Clone, Deserialize, Serialize)]
 #[serde(untagged)]
 enum QdrantId {
     String(String),
@@ -228,7 +228,7 @@ impl QdrantUploader {
     /// Returns a map of file path → content hash
     pub fn get_catalog_files(&self, catalog: &str) -> Result<std::collections::HashMap<String, String>> {
         let mut files = std::collections::HashMap::new();
-        let mut offset: Option<String> = None;
+        let mut offset: Option<QdrantId> = None;
         const LIMIT: u32 = 1000;
 
         loop {
@@ -272,10 +272,7 @@ impl QdrantUploader {
                 files.insert(point.payload.source_uri.clone(), point.payload.content_hash.clone());
             }
 
-            offset = scroll_response.result.next_page_offset.map(|id| match id {
-                QdrantId::String(s) => s,
-                QdrantId::Integer(i) => i.to_string(),
-            });
+            offset = scroll_response.result.next_page_offset;
             if offset.is_none() {
                 break;
             }

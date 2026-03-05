@@ -11,7 +11,7 @@ use std::path::PathBuf;
 use engine::{
     config::should_skip_path,
     chunker::chunk_file,
-    parallel_embedder::ParallelEmbedder,
+    ParallelEmbedder,
     partitioner::{partition_typescript, PartitionConfig},
     uploader::QdrantUploader,
 };

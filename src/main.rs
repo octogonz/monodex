@@ -165,7 +165,7 @@ fn run_crawl(config: &Config, catalog_name: &str) -> anyhow::Result<()> {
 
     // Initialize components
     println!("⚙️  Loading embedding model...");
-    let generator = EmbeddingGenerator::new(MODEL_ID)?;
+    let mut generator = EmbeddingGenerator::new()?;
     println!("✅ Model loaded");
     println!();
 
@@ -343,7 +343,7 @@ fn run_query(config: &Config, text: &str, limit: usize, catalog: Option<&str>) -
 
     // Generate embedding for query
     println!("⚙️  Generating embedding for query...");
-    let generator = EmbeddingGenerator::new(MODEL_ID)?;
+    let mut generator = EmbeddingGenerator::new()?;
     let embedding = generator.encode(text)?;
     println!("✅ Embedding generated");
     println!();

@@ -107,6 +107,18 @@ enum Commands {
 
 const DEFAULT_CONFIG_PATH: &str = "~/.config/rush-qdrant/config.jsonc";
 
+/// Get current timestamp for logging
+fn chrono_timestamp() -> String {
+    let now = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap()
+        .as_secs();
+    let h = (now / 3600) % 24;
+    let m = (now / 60) % 60;
+    let s = now % 60;
+    format!("{:02}:{:02}:{:02}", h, m, s)
+}
+
 fn main() -> anyhow::Result<()> {
     let cli = Cli::parse();
     
@@ -282,47 +294,85 @@ fn run_crawl(config: &Config, catalog_name: &str) -> anyhow::Result<()> {
     println!("\n  Found {} chunks to embed", total_chunks);
     println!();
 
-    // Phase 2: Parallel embedding with rayon
+    // Phase 2: Parallel embedding with progress and checkpoint uploads
     println!("⚡ Phase 2: Embedding {} chunks with {} parallel sessions...", 
         total_chunks, embedder.num_workers());
+    println!("  (Uploading checkpoints every 500 chunks - safe to CTRL+C)");
     let embed_start = std::time::Instant::now();
     
     use rayon::prelude::*;
+    use std::sync::atomic::{AtomicUsize, Ordering};
+    use std::sync::Arc;
     
-    let embedded: Vec<(engine::Chunk, Vec<f32>)> = all_chunks
-        .into_par_iter()
-        .enumerate()
-        .map(|(i, chunk)| {
-            let embedding = embedder.encode(&chunk.text, i)?;
-            Ok((chunk, embedding))
-        })
-        .collect::<anyhow::Result<Vec<_>>>()?;
+    const CHECKPOINT_SIZE: usize = 500;  // Upload every 500 chunks
+    const PROGRESS_INTERVAL: usize = 100;  // Print progress every 100 chunks
+    
+    let processed = Arc::new(AtomicUsize::new(0));
+    
+    // Process in batches to allow checkpoint uploads
+    let mut total_uploaded: usize = 0;
+    
+    for (batch_idx, chunk_batch) in all_chunks.chunks(CHECKPOINT_SIZE).enumerate() {
+        let batch_size = chunk_batch.len();
+        let batch_start = batch_idx * CHECKPOINT_SIZE;
+        
+        // Embed this batch in parallel
+        let embedded: Vec<(engine::Chunk, Vec<f32>)> = chunk_batch
+            .to_vec()
+            .into_par_iter()
+            .enumerate()
+            .map(|(i, chunk)| {
+                let embedding = embedder.encode(&chunk.text, batch_start + i)?;
+                
+                // Update progress counter
+                let count = processed.fetch_add(1, Ordering::Relaxed);
+                let current_count = count + 1;
+                
+                // Print progress every PROGRESS_INTERVAL chunks
+                if current_count % PROGRESS_INTERVAL == 0 || current_count == total_chunks {
+                    let elapsed = embed_start.elapsed();
+                    let rate = current_count as f64 / elapsed.as_secs_f64().max(0.001);
+                    print!("\r  Embedded {}/{} ({:.0}%) - {:.0} chunks/sec   ", 
+                        current_count, total_chunks, 
+                        (current_count as f64 / total_chunks as f64) * 100.0,
+                        rate);
+                    std::io::Write::flush(&mut std::io::stdout()).ok();
+                }
+                
+                Ok((chunk, embedding))
+            })
+            .collect::<anyhow::Result<Vec<_>>>()?;
+        
+        // Upload checkpoint immediately
+        uploader.upload_batch(&embedded)?;
+        total_uploaded += batch_size;
+        
+        // Print checkpoint message every 5 checkpoints (2500 chunks)
+        if batch_idx > 0 && batch_idx % 5 == 0 {
+            let elapsed = embed_start.elapsed();
+            let rate = total_uploaded as f64 / elapsed.as_secs_f64().max(0.001);
+            println!();
+            println!("  [{}] Checkpoint: {}/{} chunks ({:.0}%) - elapsed: {:?} - rate: {:.0} chunks/sec", 
+                chrono_timestamp(),
+                total_uploaded, total_chunks, 
+                (total_uploaded as f64 / total_chunks as f64) * 100.0,
+                elapsed,
+                rate);
+        }
+    }
     
     let embed_elapsed = embed_start.elapsed();
     let embed_rate = if embed_elapsed.as_secs() > 0 {
-        total_chunks as f64 / embed_elapsed.as_secs_f64()
+        total_uploaded as f64 / embed_elapsed.as_secs_f64()
     } else {
-        total_chunks as f64
+        total_uploaded as f64
     };
-    println!("  Embedded {} chunks in {:?} ({:.1} chunks/sec)", 
-        total_chunks, embed_elapsed, embed_rate);
+    println!();
+    println!("  ✅ Embedded & uploaded {} chunks in {:?}", total_uploaded, embed_elapsed);
+    println!("  📊 Embedding rate: {:.1} chunks/sec", embed_rate);
     println!();
     
-    // Phase 3: Upload to Qdrant in batches
-    println!("📤 Phase 3: Uploading to Qdrant...");
-    const UPLOAD_BATCH_SIZE: usize = 100;
-    let mut uploaded = 0;
-    
-    for batch in embedded.chunks(UPLOAD_BATCH_SIZE) {
-        uploader.upload_batch(batch)?;
-        uploaded += batch.len();
-        print!("\r  Uploaded {}/{} chunks ({:.0}%)   ", 
-            uploaded, total_chunks, (uploaded as f64 / total_chunks as f64) * 100.0);
-        std::io::Write::flush(&mut std::io::stdout())?;
-    }
-    println!();
-
-    // Delete orphaned files (files that were in DB but not on disk)
+    // Phase 3: Cleanup orphaned files
     println!("🗑️  Cleaning up orphaned files...");
     for (file_path, _) in existing_files.iter() {
         if !files_set.contains(file_path) {

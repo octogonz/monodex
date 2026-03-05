@@ -45,8 +45,8 @@ impl Default for ParallelConfig {
 
 /// A pool of ONNX sessions for parallel embedding generation
 pub struct ParallelEmbedder {
-    sessions: Vec<Arc<Mutex<Session>>>,
-    tokenizer: Arc<Tokenizer>,
+    // Each worker has its own session and tokenizer (both need &mut for encoding)
+    workers: Vec<Arc<Mutex<(Session, Tokenizer)>>>,
 }
 
 impl ParallelEmbedder {
@@ -65,15 +65,16 @@ impl ParallelEmbedder {
         let tokenizer_path = api.get("tokenizer.json")?;
         let onnx_path = api.get("onnx/model.onnx")?;
 
-        // Load tokenizer (shared across all sessions)
-        let tokenizer = Tokenizer::from_file(&tokenizer_path)
+        // Load base tokenizer (will be cloned for each worker)
+        let base_tokenizer = Tokenizer::from_file(&tokenizer_path)
             .map_err(|e| anyhow::anyhow!("Failed to load tokenizer: {}", e))?;
         
         println!("Creating {} ONNX sessions with {} threads each...", 
             config.num_workers, config.intra_threads);
 
-        // Create session pool
-        let sessions: Vec<Arc<Mutex<Session>>> = (0..config.num_workers)
+        // Create worker pool - each worker gets its own session AND tokenizer
+        // This avoids lock contention on the tokenizer during parallel encoding
+        let workers: Vec<Arc<Mutex<(Session, Tokenizer)>>> = (0..config.num_workers)
             .map(|i| {
                 let session = Session::builder()
                     .expect("Failed to create session builder")
@@ -84,36 +85,37 @@ impl ParallelEmbedder {
                     .commit_from_file(&onnx_path)
                     .expect("Failed to commit session");
                 
+                // Clone tokenizer for this worker
+                let tokenizer = base_tokenizer.clone();
+                
                 if i == 0 {
-                    println!("Session pool created: {} sessions × {} threads = {} total threads",
+                    println!("Worker pool created: {} workers × {} threads = {} total threads",
                         config.num_workers, config.intra_threads, 
                         config.num_workers * config.intra_threads);
                 }
                 
-                Arc::new(Mutex::new(session))
+                Arc::new(Mutex::new((session, tokenizer)))
             })
             .collect();
 
-        Ok(Self {
-            sessions,
-            tokenizer: Arc::new(tokenizer),
-        })
+        Ok(Self { workers })
     }
     
-    /// Get the number of worker sessions
+    /// Get the number of workers
     pub fn num_workers(&self) -> usize {
-        self.sessions.len()
+        self.workers.len()
     }
     
-    /// Encode a single text using a specific session (for parallel processing)
+    /// Encode a single text using a specific worker (for parallel processing)
     /// 
     /// Call this from parallel iterator, passing worker_index = chunk_index % num_workers
     pub fn encode(&self, text: &str, worker_index: usize) -> Result<Vec<f32>> {
-        let session = &self.sessions[worker_index % self.sessions.len()];
-        let mut session = session.lock().unwrap();
+        let worker = &self.workers[worker_index % self.workers.len()];
+        let mut guard = worker.lock().unwrap();
+        let (session, tokenizer) = &mut *guard;
         
-        // Tokenize
-        let encoding = self.tokenizer
+        // Tokenize with this worker's tokenizer
+        let encoding = tokenizer
             .encode(text, true)
             .map_err(|e| anyhow::anyhow!("Tokenization failed: {}", e))?;
 

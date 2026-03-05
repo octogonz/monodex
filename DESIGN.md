@@ -11,46 +11,46 @@ rush-qdrant is a semantic search indexer for Rush monorepos, using Qdrant vector
 ### Phase 1: Better Embedding Model
 **Goal:** Switch to a code-specific model with larger context window.
 
-1. [ ] Update embedder.rs to use `jina-embeddings-v2-base-code`
-2. [ ] Update vector dimension from 384 to 768
-3. [ ] Test single chunk embedding with new model
-4. [ ] Commit changes
+1. [x] Update embedder.rs to use `jina-embeddings-v2-base-code`
+2. [x] Update vector dimension from 384 to 768
+3. [x] Test single chunk embedding with new model
+4. [x] Commit changes
 
 ### Phase 2: Adjust Chunking for Larger Context
 **Goal:** Take advantage of 8192 token budget.
 
-1. [ ] Increase `target_size` in partitioner.rs (1800 → 6000 chars)
-2. [ ] Verify chunks fit within token budget
-3. [ ] Test chunking on sample files
-4. [ ] Commit changes
+1. [x] Increase `target_size` in partitioner.rs (1800 → 6000 chars)
+2. [x] Verify chunks fit within token budget
+3. [x] Test chunking on sample files
+4. [x] Commit changes
 
 ### Phase 3: Hash-Based IDs
 **Goal:** Stable IDs for search result correlation.
 
-1. [ ] Implement `compute_chunk_id(file, start_line, part) -> u64`
-2. [ ] Update uploader.rs to use hash IDs instead of UUIDs
-3. [ ] Add `part_count` field to payload
-4. [ ] Test ID determinism
-5. [ ] Commit changes
+1. [x] Implement `compute_chunk_id(file, start_line, part) -> u64`
+2. [x] Update uploader.rs to use hash IDs instead of UUIDs
+3. [x] Add `part_count` field to payload
+4. [x] Test ID determinism
+5. [x] Commit changes
 
 ### Phase 4: Performance Optimization
 **Goal:** Speed up crawling with parallel processing.
 
-1. [ ] Add `rayon` dependency for thread pool
-2. [ ] Create multiple ONNX sessions (one per thread)
-3. [ ] Implement parallel chunk processing
-4. [ ] Configure: 4 threads × 3 intra-op threads = 12 cores
-5. [ ] Benchmark and verify ~12ms per embedding
-6. [ ] Commit changes
+1. [x] Add `rayon` dependency for thread pool
+2. [x] Create multiple ONNX sessions (one per thread)
+3. [x] Implement parallel chunk processing
+4. [x] Configure: 4 threads × 3 intra-op threads = 12 cores
+5. [x] Benchmark and verify ~12ms per embedding
+6. [x] Commit changes
 
 ### Phase 5: Rebuild Database
 **Goal:** Create new collection with improved schema.
 
-1. [ ] Create new Qdrant collection (768 dims for jina)
-2. [ ] Run full crawl with new model and chunking
-3. [ ] Verify crawl completes in reasonable time
-4. [ ] Create snapshot and check file size
-5. [ ] Delete old collection after verification
+1. [x] Create new Qdrant collection (768 dims for jina)
+2. [x] Run full crawl with new model and chunking
+3. [x] Verify crawl completes in reasonable time
+4. [x] Create snapshot and check file size
+5. [x] Delete old collection after verification
 
 ### Phase 6: Query Interface
 **Goal:** Better search for AI assistants.
@@ -394,14 +394,4 @@ rush-qdrant search --text "api design"
 4. When adding new source types, extend payload with type-specific fields
 5. Query handler dispatches on `source_type` to render appropriately
 
----
 
-## Implementation Notes
-
-### Renaming `file` to `source_uri`
-
-The field currently named `file` should become `source_uri` to accommodate non-file sources:
-- Code: file path (`src/JsonFile.ts`)
-- Issue: issue reference (`owner/repo#123`)
-- Discussion: topic path (`#stream-name/topic`)
-- Document: doc identifier (`meetings/2024-01-15.md`)

@@ -11,7 +11,7 @@
 - **AST-based chunking**: Tree-sitter powered intelligent splitting for TypeScript/TSX files
 - **Breadcrumb context**: Full symbol paths like `@rushstack/node-core-library:JsonFile.ts:JsonFile.load`
 - **Oversized chunk handling**: Functions split at natural AST boundaries (statement blocks, if/else, try/catch)
-- **Local embeddings**: Uses BAAI/bge-small-en-v1.5 model with Candle ML (no external APIs)
+- **Local embeddings**: Uses jina-embeddings-v2-base-code with ONNX Runtime (no external APIs)
 - **Qdrant integration**: Direct batch uploads to Qdrant vector database
 - **Incremental sync**: Content-hash based change detection for fast re-indexing
 - **Rush-optimized**: Smart exclusion rules for Rush monorepo patterns
@@ -86,7 +86,7 @@ rush-qdrant/
 │       ├── chunker.rs             # File chunking dispatcher
 │       ├── partitioner.rs         # AST-based TypeScript chunking
 │       ├── markdown_partitioner.rs # Markdown heading-based chunking
-│       ├── embedder.rs            # Embedding generation (Candle)
+│       ├── embedder.rs            # Embedding generation (ONNX)
 │       └── uploader.rs            # Qdrant HTTP client
 ├── Cargo.toml                     # Dependencies
 └── README.md
@@ -106,15 +106,15 @@ rush-qdrant/
 
 ## Chunk Size Target
 
-- **Target**: 1800 characters (text only)
-- **Fits**: 512-token embedding model limit (BAAI/bge-small-en-v1.5)
+- **Target**: 6000 characters (text only)
+- **Fits**: 8192-token embedding model limit (jina-embeddings-v2-base-code)
 - **Breadcrumb**: Extra overhead for navigation context
 
 ## Prerequisites
 
 - **Qdrant**: Vector database running on localhost:6333
 - **Rust**: 1.91+ (for edition 2024)
-- **Model**: BAAI/bge-small-en-v1.5 (auto-downloaded from HuggingFace to `models/`)
+- **Model**: jina-embeddings-v2-base-code (auto-downloaded from HuggingFace to `models/`)
 
 ## Qdrant Setup
 
@@ -125,7 +125,7 @@ curl -X PUT "http://localhost:6333/collections/rushstack" \
   -H "Content-Type: application/json" \
   -d '{
     "vectors": {
-      "size": 384,
+      "size": 768,
       "distance": "Cosine"
     }
   }'
@@ -138,7 +138,7 @@ curl http://localhost:6333/collections/rushstack | jq '.result.status'
 ```
 
 The collection uses:
-- **384 dimensions** (bge-small-en-v1.5 output size)
+- **768 dimensions** (jina-embeddings-v2-base-code output size)
 - **Cosine distance** (best for semantic similarity)
 
 ## Development
@@ -161,5 +161,5 @@ MIT
 ## Related
 
 - [Qdrant](https://qdrant.tech/) - Vector similarity search engine
-- [Candle](https://github.com/huggingface/candle) - Minimalist ML framework for Rust
+- [ONNX Runtime](https://onnxruntime.ai/) - Cross-platform ML inference
 - [Rush Stack](https://rushstack.io/) - Monorepo toolkit for JavaScript/TypeScript

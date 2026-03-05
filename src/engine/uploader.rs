@@ -116,11 +116,43 @@ struct ScrollPoint {
 }
 
 /// Qdrant ID can be either a string (UUID) or integer (custom ID)
-#[derive(Debug, Clone, Deserialize, Serialize)]
+#[derive(Debug, Clone, PartialEq, Deserialize, Serialize)]
 #[serde(untagged)]
-enum QdrantId {
+pub enum QdrantId {
     String(String),
     Integer(u64),
+}
+
+impl QdrantId {
+    /// Returns the integer value if this is an Integer variant
+    fn as_u64(&self) -> Option<u64> {
+        match self {
+            QdrantId::Integer(n) => Some(*n),
+            QdrantId::String(_) => None,
+        }
+    }
+}
+
+impl std::ops::Shr<i32> for QdrantId {
+    type Output = u64;
+    
+    fn shr(self, rhs: i32) -> Self::Output {
+        match self {
+            QdrantId::Integer(n) => n >> rhs,
+            QdrantId::String(_) => 0,
+        }
+    }
+}
+
+impl std::ops::Shr<i32> for &QdrantId {
+    type Output = u64;
+    
+    fn shr(self, rhs: i32) -> Self::Output {
+        match self {
+            QdrantId::Integer(n) => *n >> rhs,
+            QdrantId::String(_) => 0,
+        }
+    }
 }
 
 /// Response from delete
@@ -148,7 +180,7 @@ struct SearchResponse {
 #[derive(Debug, Deserialize)]
 #[allow(dead_code)]
 pub struct SearchResult {
-    pub id: u64,
+    pub id: QdrantId,
     pub score: f32,
     pub payload: PointPayload,
 }

@@ -267,7 +267,7 @@ fn run_crawl(config: &Config, catalog_name: &str) -> anyhow::Result<()> {
                 .to_string()
         };
         
-        match chunk_file(file_path, catalog_name, &package_name_or_folder, 1800) {
+        match chunk_file(file_path, catalog_name, &package_name_or_folder, 6000) {
             Ok(chunks) => {
                 for chunk in chunks {
                     // Track chunk types for reporting

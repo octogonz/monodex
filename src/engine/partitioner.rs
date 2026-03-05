@@ -24,7 +24,7 @@ pub struct PartitionConfig {
 impl Default for PartitionConfig {
     fn default() -> Self {
         Self {
-            target_size: 1800,
+            target_size: 6000,
             max_breadcrumb_depth: 4,
             file_name: "unknown.ts".to_string(),
             package_name: "unknown".to_string(),

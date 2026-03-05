@@ -105,7 +105,7 @@ enum Commands {
     },
 }
 
-const DEFAULT_CONFIG_PATH: &str = "~/.config/rush-qdrant/config.json";
+const DEFAULT_CONFIG_PATH: &str = "~/.config/rush-qdrant/config.jsonc";
 const BATCH_SIZE: usize = 32;
 const MODEL_ID: &str = "BAAI/bge-small-en-v1.5";
 

@@ -240,3 +240,140 @@ rush-qdrant cat --file <path>
 | New fields | — | `part_number`, `part_count` |
 
 **Migration:** Create new collection (different vector size), re-crawl, delete old after verification.
+
+---
+
+## Schema Evolution: Multi-Source Support
+
+### Future Content Types
+
+Beyond source code, we will crawl:
+- **GitHub Issues**: Each comment as a chunk
+- **Zulip Discussions**: Each message as a chunk  
+- **Rush Hour Meeting Notes**: Sections/paragraphs as chunks
+
+### Design Principle: Tagged Union (Apples and Oranges in Separate Boxes)
+
+Rather than over-abstracting into a "one size fits all" schema, we use a type discriminator (`source_type`) and keep type-specific fields separate. Code that handles query results dispatches on `source_type` and knows exactly which fields to expect.
+
+### Schema Structure
+
+```rust
+// Conceptual - actual implementation may vary
+enum SourceType {
+    Code,       // source code files
+    Issue,      // GitHub issues
+    Discussion, // Zulip threads
+    Document,   // Meeting notes, etc.
+}
+
+struct CodeChunk {
+    // Common fields
+    text: String,
+    content_hash: String,
+    catalog: String,
+    breadcrumb: String,
+    chunk_type: String,
+    
+    // Code-specific
+    file_path: String,
+    start_line: usize,
+    end_line: usize,
+    symbol_name: Option<String>,
+    part_number: usize,
+    part_count: usize,
+}
+
+struct IssueChunk {
+    // Common fields
+    text: String,
+    content_hash: String,
+    catalog: String,
+    breadcrumb: String,
+    chunk_type: String,
+    
+    // Issue-specific
+    repo: String,
+    issue_number: u64,
+    comment_index: Option<usize>,  // None = original post
+    author: String,
+}
+```
+
+### Qdrant Payload
+
+Stored as JSON with a `source_type` discriminator:
+
+```json
+// Code chunk
+{
+  "source_type": "code",
+  "text": "fn load() { ... }",
+  "content_hash": "sha256:abc123",
+  "catalog": "rushstack",
+  "breadcrumb": "@rushstack/node-core-library:JsonFile.ts:load",
+  "chunk_type": "function",
+  "file_path": "src/JsonFile.ts",
+  "start_line": 10,
+  "end_line": 50,
+  "symbol_name": "load",
+  "part_number": 0,
+  "part_count": 1
+}
+
+// Issue chunk
+{
+  "source_type": "issue",
+  "text": "When I try to...",
+  "content_hash": "sha256:def456",
+  "catalog": "rushstack-issues",
+  "breadcrumb": "rushstack/rush-stack#123 > comment-2",
+  "chunk_type": "issue-comment",
+  "repo": "rushstack/rush-stack",
+  "issue_number": 123,
+  "comment_index": 2,
+  "author": "someuser"
+}
+```
+
+### Query Filtering
+
+```bash
+# Search only code
+rush-qdrant search --text "json parsing" --type code
+
+# Search only issues  
+rush-qdrant search --text "build error" --type issue
+
+# Search everything
+rush-qdrant search --text "api design"
+```
+
+### Implementation Approach
+
+1. Add `source_type: String` field now (default: `"code"`)
+2. Make type-specific fields `Option<T>` where needed
+3. Rename `file` to `source_uri` for generality
+4. When adding new source types, extend payload with type-specific fields
+5. Query handler dispatches on `source_type` to render appropriately
+
+### Crawl Time: Optional
+
+Considered adding `crawled_at: String` (ISO 8601 timestamp) to each chunk. 
+
+**Verdict: Optional, add later if needed.**
+- Useful for: debugging staleness, incremental sync diagnostics
+- Downside: Adds noise to every payload
+- Alternative: Track crawl metadata at catalog level, not per-chunk
+
+---
+
+## Implementation Notes
+
+### Renaming `file` to `source_uri`
+
+The field currently named `file` should become `source_uri` to accommodate non-file sources:
+- Code: file path (`src/JsonFile.ts`)
+- Issue: issue reference (`owner/repo#123`)
+- Discussion: topic path (`#stream-name/topic`)
+- Document: doc identifier (`meetings/2024-01-15.md`)

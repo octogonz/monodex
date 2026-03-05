@@ -100,4 +100,79 @@ impl EmbeddingGenerator {
 
         Ok(embedding)
     }
+
+    /// Generates embeddings for multiple texts in a single batch
+    /// 
+    /// More efficient than individual encode() calls due to GPU parallelism.
+    /// Texts are padded to the same length for batching.
+    pub fn encode_batch(&mut self, texts: &[&str]) -> Result<Vec<Vec<f32>>> {
+        if texts.is_empty() {
+            return Ok(Vec::new());
+        }
+
+        // Tokenize all texts
+        let encodings: Vec<_> = texts
+            .iter()
+            .map(|text| {
+                self.tokenizer
+                    .encode(*text, true)
+                    .map_err(|e| anyhow::anyhow!("Tokenization failed: {}", e))
+            })
+            .collect::<Result<Vec<_>>>()?;
+
+        // Find max length (truncate to MAX_LENGTH)
+        let max_seq_len = encodings
+            .iter()
+            .map(|e| e.get_ids().len().min(MAX_LENGTH))
+            .max()
+            .unwrap_or(1);
+
+        let batch_size = texts.len();
+        let hidden_size = 768usize;
+
+        // Create padded batch tensors
+        let mut input_ids: Vec<i64> = vec![0; batch_size * max_seq_len];
+        let mut attention_mask: Vec<i64> = vec![0; batch_size * max_seq_len];
+
+        for (i, encoding) in encodings.iter().enumerate() {
+            let ids = encoding.get_ids();
+            let mask = encoding.get_attention_mask();
+            let seq_len = ids.len().min(MAX_LENGTH);
+
+            for j in 0..seq_len {
+                input_ids[i * max_seq_len + j] = ids[j] as i64;
+                attention_mask[i * max_seq_len + j] = mask[j] as i64;
+            }
+        }
+
+        // Run batch inference
+        let outputs = self.session.run(ort::inputs![
+            "input_ids" => Tensor::from_array(([batch_size, max_seq_len], input_ids.clone()))?,
+            "attention_mask" => Tensor::from_array(([batch_size, max_seq_len], attention_mask.clone()))?,
+        ])?;
+
+        // Extract output tensor
+        let (_shape, data) = outputs[0].try_extract_tensor::<f32>()?;
+        // shape is [batch_size, max_seq_len, 768]
+
+        // Mean pooling for each sequence in batch
+        let mut embeddings = Vec::with_capacity(batch_size);
+        
+        for i in 0..batch_size {
+            let encoding = &encodings[i];
+            let seq_len = encoding.get_ids().len().min(MAX_LENGTH);
+            
+            let embedding: Vec<f32> = (0..hidden_size)
+                .map(|h| {
+                    (0..seq_len)
+                        .map(|j| data[i * max_seq_len * hidden_size + j * hidden_size + h])
+                        .sum::<f32>() / seq_len as f32
+                })
+                .collect();
+            
+            embeddings.push(embedding);
+        }
+
+        Ok(embeddings)
+    }
 }

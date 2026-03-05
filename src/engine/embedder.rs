@@ -40,10 +40,11 @@ impl EmbeddingGenerator {
         let tokenizer = Tokenizer::from_file(&tokenizer_path)
             .map_err(|e| anyhow::anyhow!("Failed to load tokenizer: {}", e))?;
 
-        // Build session with CoreML if available
+        // Build session with CPU parallelism
         #[allow(unused_mut)]
         let mut builder = Session::builder()?
-            .with_optimization_level(GraphOptimizationLevel::All)?;
+            .with_optimization_level(GraphOptimizationLevel::All)?
+            .with_intra_threads(num_cpus::get())?;  // Use all CPU cores
         
         // Try CoreML execution provider (Apple Silicon GPU)
         #[cfg(feature = "coreml")]
@@ -55,6 +56,7 @@ impl EmbeddingGenerator {
             }
         }
         
+        println!("Using {} CPU threads for inference", num_cpus::get());
         let session = builder.commit_from_file(&onnx_path)?;
 
         Ok(Self { session, tokenizer })

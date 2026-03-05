@@ -30,6 +30,7 @@ twox-hash = "1.6"
 serde_bytes = "0.11"
 shellexpand = "3.0"
 sha2 = "0.10"
+num_cpus = "1.16"
 
 # Tree-sitter for AST parsing
 tree-sitter = "0.22"

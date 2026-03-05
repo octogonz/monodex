@@ -119,6 +119,31 @@ fn chrono_timestamp() -> String {
     format!("{:02}:{:02}:{:02}", h, m, s)
 }
 
+
+/// Format duration in seconds to human-readable string (e.g., "1h 23m" or "5m 30s")
+fn format_duration(secs: f64) -> String {
+    let total_secs = secs as u64;
+    let hours = total_secs / 3600;
+    let mins = (total_secs % 3600) / 60;
+    let s = total_secs % 60;
+    
+    if hours > 0 {
+        format!("{}h {}m", hours, mins)
+    } else if mins > 0 {
+        format!("{}m {}s", mins, s)
+    } else {
+        format!("{}s", s)
+    }
+}
+
+/// Format ETA in seconds to human-readable string
+fn format_eta(secs: f64) -> String {
+    if secs <= 0.0 || !secs.is_finite() {
+        return "--".to_string();
+    }
+    format_duration(secs)
+}
+
 fn main() -> anyhow::Result<()> {
     let cli = Cli::parse();
     
@@ -301,13 +326,17 @@ fn run_crawl(config: &Config, catalog_name: &str) -> anyhow::Result<()> {
     let embed_start = std::time::Instant::now();
     
     use rayon::prelude::*;
-    use std::sync::atomic::{AtomicUsize, Ordering};
+    use std::sync::atomic::{AtomicUsize, AtomicU64, Ordering};
     use std::sync::Arc;
     
     const CHECKPOINT_SIZE: usize = 500;  // Upload every 500 chunks
     const PROGRESS_INTERVAL: usize = 100;  // Print progress every 100 chunks
+    const FIRST_LOG_SECS: u64 = 30;        // First time log after 30 seconds
+    const LOG_INTERVAL_SECS: u64 = 180;    // Then every 3 minutes
     
     let processed = Arc::new(AtomicUsize::new(0));
+    let last_log_secs = Arc::new(AtomicU64::new(0));
+    let first_log_done = Arc::new(std::sync::atomic::AtomicBool::new(false));
     
     // Process in batches to allow checkpoint uploads
     let mut total_uploaded: usize = 0;
@@ -317,6 +346,7 @@ fn run_crawl(config: &Config, catalog_name: &str) -> anyhow::Result<()> {
         let batch_start = batch_idx * CHECKPOINT_SIZE;
         
         // Embed this batch in parallel
+        // Note: No printing inside parallel iterator - causes lock contention
         let embedded: Vec<(engine::Chunk, Vec<f32>)> = chunk_batch
             .to_vec()
             .into_par_iter()
@@ -324,40 +354,61 @@ fn run_crawl(config: &Config, catalog_name: &str) -> anyhow::Result<()> {
             .map(|(i, chunk)| {
                 let embedding = embedder.encode(&chunk.text, batch_start + i)?;
                 
-                // Update progress counter
+                // Update progress counter (atomic, no lock)
                 let count = processed.fetch_add(1, Ordering::Relaxed);
                 let current_count = count + 1;
                 
-                // Print progress every PROGRESS_INTERVAL chunks
+                // Store progress for later display (no I/O in parallel section)
                 if current_count % PROGRESS_INTERVAL == 0 || current_count == total_chunks {
-                    let elapsed = embed_start.elapsed();
-                    let rate = current_count as f64 / elapsed.as_secs_f64().max(0.001);
-                    print!("\r  Embedded {}/{} ({:.0}%) - {:.0} chunks/sec   ", 
-                        current_count, total_chunks, 
-                        (current_count as f64 / total_chunks as f64) * 100.0,
-                        rate);
-                    std::io::Write::flush(&mut std::io::stdout()).ok();
+                    // Signal that progress update is needed
+                    // The main thread will print after batch completes
                 }
                 
                 Ok((chunk, embedding))
             })
             .collect::<anyhow::Result<Vec<_>>>()?;
         
+        // Print progress after batch completes (sequential, no contention)
+        let current_count = processed.load(Ordering::Relaxed);
+        let elapsed = embed_start.elapsed();
+        let rate = current_count as f64 / elapsed.as_secs_f64().max(0.001);
+        let remaining = (total_chunks - current_count) as f64 / rate;
+        let eta = format_eta(remaining);
+        print!("\r  Embedded {}/{} ({:.0}%) - {:.0} chunks/sec - ETA: {}   ", 
+            current_count, total_chunks, 
+            (current_count as f64 / total_chunks as f64) * 100.0,
+            rate, eta);
+        std::io::Write::flush(&mut std::io::stdout()).ok();
+        
         // Upload checkpoint immediately
         uploader.upload_batch(&embedded)?;
         total_uploaded += batch_size;
         
-        // Print checkpoint message every 5 checkpoints (2500 chunks)
-        if batch_idx > 0 && batch_idx % 5 == 0 {
+        // Print time log based on elapsed time (not checkpoint count)
+        let elapsed_secs = embed_start.elapsed().as_secs();
+        let first_done = first_log_done.load(Ordering::Relaxed);
+        let should_log = if !first_done && elapsed_secs >= FIRST_LOG_SECS {
+            first_log_done.store(true, Ordering::Relaxed);
+            true
+        } else if first_done && elapsed_secs >= last_log_secs.load(Ordering::Relaxed) + LOG_INTERVAL_SECS {
+            last_log_secs.store(elapsed_secs, Ordering::Relaxed);
+            true
+        } else {
+            false
+        };
+        
+        if should_log {
             let elapsed = embed_start.elapsed();
             let rate = total_uploaded as f64 / elapsed.as_secs_f64().max(0.001);
+            let remaining = (total_chunks - total_uploaded) as f64 / rate;
+            let eta = format_eta(remaining);
             println!();
-            println!("  [{}] Checkpoint: {}/{} chunks ({:.0}%) - elapsed: {:?} - rate: {:.0} chunks/sec", 
+            println!("  [{}] Progress: {}/{} ({:.0}%) - elapsed: {} - ETA: {}", 
                 chrono_timestamp(),
                 total_uploaded, total_chunks, 
                 (total_uploaded as f64 / total_chunks as f64) * 100.0,
-                elapsed,
-                rate);
+                format_duration(elapsed.as_secs_f64()),
+                eta);
         }
     }
     
@@ -368,7 +419,7 @@ fn run_crawl(config: &Config, catalog_name: &str) -> anyhow::Result<()> {
         total_uploaded as f64
     };
     println!();
-    println!("  ✅ Embedded & uploaded {} chunks in {:?}", total_uploaded, embed_elapsed);
+    println!("  ✅ Embedded & uploaded {} chunks in {}", total_uploaded, format_duration(embed_elapsed.as_secs_f64()));
     println!("  📊 Embedding rate: {:.1} chunks/sec", embed_rate);
     println!();
     

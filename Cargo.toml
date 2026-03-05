@@ -32,6 +32,7 @@ shellexpand = "3.0"
 sha2 = "0.10"
 num_cpus = "1.16"
 rayon = "1.10"
+crossbeam-channel = "0.5"
 
 # Tree-sitter for AST parsing
 tree-sitter = "0.22"

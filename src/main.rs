@@ -319,100 +319,148 @@ fn run_crawl(config: &Config, catalog_name: &str) -> anyhow::Result<()> {
     println!("\n  Found {} chunks to embed", total_chunks);
     println!();
 
-    // Phase 2: Parallel embedding with progress and checkpoint uploads
+    // Phase 2: Parallel embedding with time-based checkpoints
     println!("⚡ Phase 2: Embedding {} chunks with {} parallel sessions...", 
         total_chunks, embedder.num_workers());
-    println!("  (Uploading checkpoints every 500 chunks - safe to CTRL+C)");
+    println!("  (Checkpoints every 60s - safe to CTRL+C)");
     let embed_start = std::time::Instant::now();
     
     use rayon::prelude::*;
-    use std::sync::atomic::{AtomicUsize, AtomicU64, Ordering};
-    use std::sync::Arc;
+    use std::sync::atomic::{AtomicUsize, AtomicBool, Ordering};
+    use std::sync::{Arc, Mutex};
+    use crossbeam_channel::{unbounded, Sender, Receiver};
     
-    const CHECKPOINT_SIZE: usize = 500;  // Upload every 500 chunks
-    const PROGRESS_INTERVAL: usize = 100;  // Print progress every 100 chunks
-    const FIRST_LOG_SECS: u64 = 30;        // First time log after 30 seconds
-    const LOG_INTERVAL_SECS: u64 = 180;    // Then every 3 minutes
+    // Channels for streaming embeddings to uploader
+    let (embed_tx, embed_rx): (Sender<(engine::Chunk, Vec<f32>)>, Receiver<(engine::Chunk, Vec<f32>)>) = unbounded();
     
     let processed = Arc::new(AtomicUsize::new(0));
-    let last_log_secs = Arc::new(AtomicU64::new(0));
-    let first_log_done = Arc::new(std::sync::atomic::AtomicBool::new(false));
+    let stop_flag = Arc::new(AtomicBool::new(false));
     
-    // Process in batches to allow checkpoint uploads
-    let mut total_uploaded: usize = 0;
+    // Track last upload time
+    let last_upload_time = Arc::new(Mutex::new(std::time::Instant::now()));
     
-    for (batch_idx, chunk_batch) in all_chunks.chunks(CHECKPOINT_SIZE).enumerate() {
-        let batch_size = chunk_batch.len();
-        let batch_start = batch_idx * CHECKPOINT_SIZE;
+    // Progress reporter thread - prints every 30 seconds
+    let processed_clone = Arc::clone(&processed);
+    let stop_clone = Arc::clone(&stop_flag);
+    let total_chunks_for_thread = total_chunks;
+    let embed_start_for_thread = std::time::Instant::now();
+    let last_print_time = Arc::new(Mutex::new(std::time::Instant::now()));
+    let last_print_clone = Arc::clone(&last_print_time);
+    
+    let progress_thread = std::thread::spawn(move || {
+        while !stop_clone.load(Ordering::Relaxed) {
+            std::thread::sleep(std::time::Duration::from_secs(5));
+            
+            let mut last = last_print_clone.lock().unwrap();
+            if last.elapsed() >= std::time::Duration::from_secs(30) {
+                let current = processed_clone.load(Ordering::Relaxed);
+                let elapsed = embed_start_for_thread.elapsed();
+                let rate = current as f64 / elapsed.as_secs_f64().max(0.001);
+                let remaining = (total_chunks_for_thread - current) as f64 / rate;
+                let eta = format_eta(remaining);
+                
+                eprintln!("[{}] Embedded {}/{} ({:.0}%) - {:.1} chunks/sec - ETA: {}", 
+                    chrono_timestamp(),
+                    current, total_chunks_for_thread, 
+                    (current as f64 / total_chunks_for_thread as f64) * 100.0,
+                    rate, eta);
+                
+                *last = std::time::Instant::now();
+            }
+        }
+    });
+    
+    // Wrap uploader in Arc<Mutex> for sharing across threads
+    let uploader = Arc::new(Mutex::new(uploader));
+    
+    // Uploader thread - uploads accumulated embeddings every 60 seconds
+    let stop_uploader = Arc::clone(&stop_flag);
+    let last_upload_time_clone = Arc::clone(&last_upload_time);
+    let uploader_clone = Arc::clone(&uploader);
+    
+    let uploader_thread = std::thread::spawn(move || {
+        let mut accumulated: Vec<(engine::Chunk, Vec<f32>)> = Vec::new();
         
-        // Embed this batch in parallel
-        // Note: No printing inside parallel iterator - causes lock contention
-        let embedded: Vec<(engine::Chunk, Vec<f32>)> = chunk_batch
-            .to_vec()
-            .into_par_iter()
-            .enumerate()
-            .map(|(i, chunk)| {
-                let embedding = embedder.encode(&chunk.text, batch_start + i)?;
-                
-                // Update progress counter (atomic, no lock)
-                let count = processed.fetch_add(1, Ordering::Relaxed);
-                let current_count = count + 1;
-                
-                // Store progress for later display (no I/O in parallel section)
-                if current_count % PROGRESS_INTERVAL == 0 || current_count == total_chunks {
-                    // Signal that progress update is needed
-                    // The main thread will print after batch completes
+        loop {
+            // Check if we should upload (60s elapsed or stopped)
+            let should_upload = {
+                let mut last = last_upload_time_clone.lock().unwrap();
+                if last.elapsed() >= std::time::Duration::from_secs(60) {
+                    *last = std::time::Instant::now();
+                    true
+                } else {
+                    false
+                }
+            };
+            
+            // Collect all available embeddings
+            while let Ok(embedded) = embed_rx.try_recv() {
+                accumulated.push(embedded);
+            }
+            
+            if should_upload && !accumulated.is_empty() {
+                let count = accumulated.len();
+                eprintln!("[{}] Uploading checkpoint ({} chunks)...", chrono_timestamp(), count);
+                let uploader_guard = uploader_clone.lock().unwrap();
+                if let Err(e) = uploader_guard.upload_batch(&accumulated) {
+                    eprintln!("[{}] ⚠️ Upload failed: {}", chrono_timestamp(), e);
+                }
+                drop(uploader_guard);
+                eprintln!("[{}] Checkpoint saved", chrono_timestamp());
+                accumulated.clear();
+            }
+            
+            // Check if done
+            if stop_uploader.load(Ordering::Relaxed) {
+                // Drain remaining
+                while let Ok(embedded) = embed_rx.try_recv() {
+                    accumulated.push(embedded);
                 }
                 
-                Ok((chunk, embedding))
-            })
-            .collect::<anyhow::Result<Vec<_>>>()?;
-        
-        // Print progress after batch completes (sequential, no contention)
-        let current_count = processed.load(Ordering::Relaxed);
-        let elapsed = embed_start.elapsed();
-        let rate = current_count as f64 / elapsed.as_secs_f64().max(0.001);
-        let remaining = (total_chunks - current_count) as f64 / rate;
-        let eta = format_eta(remaining);
-        print!("\r  Embedded {}/{} ({:.0}%) - {:.0} chunks/sec - ETA: {}   ", 
-            current_count, total_chunks, 
-            (current_count as f64 / total_chunks as f64) * 100.0,
-            rate, eta);
-        std::io::Write::flush(&mut std::io::stdout()).ok();
-        
-        // Upload checkpoint immediately
-        uploader.upload_batch(&embedded)?;
-        total_uploaded += batch_size;
-        
-        // Print time log based on elapsed time (not checkpoint count)
-        let elapsed_secs = embed_start.elapsed().as_secs();
-        let first_done = first_log_done.load(Ordering::Relaxed);
-        let should_log = if !first_done && elapsed_secs >= FIRST_LOG_SECS {
-            first_log_done.store(true, Ordering::Relaxed);
-            true
-        } else if first_done && elapsed_secs >= last_log_secs.load(Ordering::Relaxed) + LOG_INTERVAL_SECS {
-            last_log_secs.store(elapsed_secs, Ordering::Relaxed);
-            true
-        } else {
-            false
-        };
-        
-        if should_log {
-            let elapsed = embed_start.elapsed();
-            let rate = total_uploaded as f64 / elapsed.as_secs_f64().max(0.001);
-            let remaining = (total_chunks - total_uploaded) as f64 / rate;
-            let eta = format_eta(remaining);
-            println!();
-            println!("  [{}] Progress: {}/{} ({:.0}%) - elapsed: {} - ETA: {}", 
-                chrono_timestamp(),
-                total_uploaded, total_chunks, 
-                (total_uploaded as f64 / total_chunks as f64) * 100.0,
-                format_duration(elapsed.as_secs_f64()),
-                eta);
+                // Final upload
+                if !accumulated.is_empty() {
+                    eprintln!("[{}] Uploading final batch ({} chunks)...", chrono_timestamp(), accumulated.len());
+                    let uploader_guard = uploader_clone.lock().unwrap();
+                    if let Err(e) = uploader_guard.upload_batch(&accumulated) {
+                        eprintln!("[{}] ⚠️ Final upload failed: {}", chrono_timestamp(), e);
+                    }
+                }
+                break;
+            }
+            
+            std::thread::sleep(std::time::Duration::from_millis(100));
         }
-    }
+    });
+    
+    // Process all chunks in parallel, streaming results to uploader
+    let embed_tx_clone = embed_tx.clone();
+    let processed_embed = Arc::clone(&processed);
+    
+    all_chunks
+        .into_par_iter()
+        .enumerate()
+        .try_for_each(|(i, chunk)| -> anyhow::Result<()> {
+            let embedding = embedder.encode(&chunk.text, i)?;
+            
+            // Update counter
+            processed_embed.fetch_add(1, Ordering::Relaxed);
+            
+            // Send to uploader
+            embed_tx_clone.send((chunk, embedding))?;
+            
+            Ok(())
+        })?;
+    
+    // Signal threads to stop
+    stop_flag.store(true, Ordering::Relaxed);
+    
+    // Wait for threads
+    drop(embed_tx); // Close channel
+    let _ = progress_thread.join();
+    let _ = uploader_thread.join();
     
     let embed_elapsed = embed_start.elapsed();
+    let total_uploaded = processed.load(Ordering::Relaxed);
     let embed_rate = if embed_elapsed.as_secs() > 0 {
         total_uploaded as f64 / embed_elapsed.as_secs_f64()
     } else {
@@ -425,10 +473,13 @@ fn run_crawl(config: &Config, catalog_name: &str) -> anyhow::Result<()> {
     
     // Phase 3: Cleanup orphaned files
     println!("🗑️  Cleaning up orphaned files...");
-    for (file_path, _) in existing_files.iter() {
-        if !files_set.contains(file_path) {
-            uploader.delete_file(file_path, catalog_name)?;
-            files_deleted += 1;
+    {
+        let uploader_guard = uploader.lock().unwrap();
+        for (file_path, _) in existing_files.iter() {
+            if !files_set.contains(file_path) {
+                uploader_guard.delete_file(file_path, catalog_name)?;
+                files_deleted += 1;
+            }
         }
     }
 

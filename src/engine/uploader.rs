@@ -1,11 +1,12 @@
 //! Qdrant client for batch uploading embeddings
-//!
+//! 
 //! This module handles HTTP communication with Qdrant to upload
 //! chunks with their embeddings for semantic search.
 
 use anyhow::{anyhow, Result};
 use reqwest::blocking::Client;
 use serde::{Deserialize, Serialize};
+use super::util::compute_chunk_id;
 
 const DEFAULT_QDRANT_URL: &str = "http://localhost:6333";
 
@@ -57,7 +58,7 @@ struct UpsertRequest {
 /// A single point in Qdrant
 #[derive(Debug, Serialize)]
 struct Point {
-    id: uuid::Uuid,
+    id: u64,  // Hash-based ID
     vector: Vec<f32>,
     payload: PointPayload,
 }
@@ -138,18 +139,13 @@ struct SearchResponse {
 #[derive(Debug, Deserialize)]
 #[allow(dead_code)]
 pub struct SearchResult {
-    pub id: String,
+    pub id: u64,
     pub score: f32,
     pub payload: PointPayload,
 }
 
 impl QdrantUploader {
     /// Creates a new Qdrant uploader
-    ///
-    /// # Arguments
-    ///
-    /// * `collection` - Name of the Qdrant collection
-    /// * `qdrant_url` - Optional Qdrant URL (defaults to localhost:6333)
     pub fn new(collection: &str, qdrant_url: Option<&str>) -> Result<Self> {
         let url = qdrant_url.unwrap_or(DEFAULT_QDRANT_URL).to_string();
         
@@ -165,10 +161,6 @@ impl QdrantUploader {
     }
 
     /// Delete all points for a specific catalog
-    ///
-    /// # Arguments
-    ///
-    /// * `catalog` - Catalog name to delete
     #[allow(dead_code)]
     pub fn delete_catalog(&self, catalog: &str) -> Result<u64> {
         let endpoint = format!("{}/collections/{}/points/delete", self.url, self.collection);
@@ -195,11 +187,6 @@ impl QdrantUploader {
     }
 
     /// Delete all points for a specific file
-    ///
-    /// # Arguments
-    ///
-    /// * `file_path` - File path to delete
-    /// * `catalog` - Catalog containing the file
     pub fn delete_file(&self, file_path: &str, catalog: &str) -> Result<u64> {
         let endpoint = format!("{}/collections/{}/points/delete", self.url, self.collection);
 
@@ -229,7 +216,6 @@ impl QdrantUploader {
     }
 
     /// Get all points for a specific catalog
-    ///
     /// Returns a map of file path → content hash
     pub fn get_catalog_files(&self, catalog: &str) -> Result<std::collections::HashMap<String, String>> {
         let mut files = std::collections::HashMap::new();
@@ -279,14 +265,6 @@ impl QdrantUploader {
     }
 
     /// Uploads a batch of chunks with their embeddings
-    ///
-    /// # Arguments
-    ///
-    /// * `chunks` - Vector of chunks with their associated embeddings
-    ///
-    /// # Returns
-    ///
-    /// Result containing the operation ID or an error
     pub fn upload_batch(&self, chunks: &[(crate::engine::Chunk, Vec<f32>)]) -> Result<u64> {
         if chunks.is_empty() {
             return Ok(0);
@@ -295,8 +273,9 @@ impl QdrantUploader {
         let points: Vec<Point> = chunks
             .iter()
             .map(|(chunk, embedding)| {
+                let id = compute_chunk_id(&chunk.file, chunk.start_line, chunk.part_number);
                 Point {
-                    id: uuid::Uuid::new_v4(), // Use random UUID (dedup via content_hash)
+                    id,
                     vector: embedding.clone(),
                     payload: PointPayload {
                         text: chunk.text.clone(),
@@ -332,16 +311,6 @@ impl QdrantUploader {
     }
 
     /// Queries the collection with an embedding
-    ///
-    /// # Arguments
-    ///
-    /// * `embedding` - Query embedding vector
-    /// * `limit` - Maximum number of results
-    /// * `catalog` - Optional catalog filter
-    ///
-    /// # Returns
-    ///
-    /// Vector of search results with scores and payloads
     pub fn query(&self, embedding: &[f32], limit: usize, catalog: Option<&str>) -> Result<Vec<SearchResult>> {
         #[derive(Debug, Serialize)]
         struct SearchRequest {

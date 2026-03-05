@@ -38,6 +38,12 @@ pub struct Chunk {
     
     /// Breadcrumb path (e.g., "@rushstack/node-core-library:JsonFile.ts:JsonFile.load")
     pub breadcrumb: String,
+    
+    /// Part number (0-indexed) when chunk is split across multiple parts
+    pub part_number: usize,
+    
+    /// Total number of parts (1 if not split)
+    pub part_count: usize,
 }
 
 /// Chunks a file based on its type and content
@@ -47,7 +53,7 @@ pub struct Chunk {
 /// * `file_path` - Path to the file to chunk
 /// * `catalog` - Catalog name for this file
 /// * `package_name` - Package name for breadcrumb (e.g., "@rushstack/node-core-library")
-/// * `target_size` - Target chunk size in characters (default 1800)
+/// * `target_size` - Target chunk size in characters (default 6000)
 /// 
 /// # Returns
 /// 
@@ -90,20 +96,21 @@ pub fn chunk_file(
             // Skip JSON files (low value for AI search)
             Ok(Vec::new())
         }
+        ChunkingStrategy::Skip => Ok(Vec::new()),
         ChunkingStrategy::YamlSimple => {
             chunk_by_lines(file_path, catalog, &content, target_size, "yaml")
         }
-        ChunkingStrategy::SimpleLine => {
+        ChunkingStrategy::SimpleLine => {// Handle simple line-based files
             chunk_by_lines(file_path, catalog, &content, target_size, "text")
-        }
-        ChunkingStrategy::Skip => {
-            Ok(Vec::new())
         }
     }
 }
 
 impl From<PartitionedChunk> for Chunk {
     fn from(p: PartitionedChunk) -> Self {
+        // Extract part info from breadcrumb if present (e.g., "(part 1/2)")
+        let (part_number, part_count) = extract_part_info(&p.breadcrumb);
+        
         Chunk {
             text: p.text,
             file: p.file,
@@ -114,15 +121,36 @@ impl From<PartitionedChunk> for Chunk {
             symbol_name: p.symbol_name,
             chunk_type: p.chunk_type,
             breadcrumb: p.breadcrumb,
+            part_number,
+            part_count,
         }
     }
 }
 
-/// Simple line-based chunking for non-TypeScript files
+/// Extract part number and count from breadcrumb like "function name (part 1/2)"
+fn extract_part_info(breadcrumb: &str) -> (usize, usize) {
+    // Look for "(part N/M)" pattern
+    if let Some(start) = breadcrumb.rfind("(part ") {
+        let rest = &breadcrumb[start + 6..];
+        if let Some(slash) = rest.find('/') {
+            if let Some(end) = rest.find(')') {
+                if let (Ok(n), Ok(m)) = (
+                    rest[..slash].parse::<usize>(),
+                    rest[slash + 1..end].parse::<usize>()
+                ) {
+                    return (n - 1, m); // Convert to 0-indexed
+                }
+            }
+        }
+    }
+    (0, 1) // Default: single part
+}
+
+/// Chunk by lines for simple text files
 fn chunk_by_lines(
     file_path: &str, 
-    catalog: &str,
-    content: &str,
+    catalog: &str, 
+    content: &str, 
     max_chars: usize, 
     chunk_type: &str,
 ) -> Result<Vec<Chunk>> {
@@ -165,10 +193,18 @@ fn chunk_by_lines(
                 symbol_name: None,
                 chunk_type: chunk_type.to_string(),
                 breadcrumb: file_name.clone(),
+                part_number: chunks.len(), // 0-indexed
+                part_count: 0, // Will update after loop
             });
         }
         
         start = end;
+    }
+    
+    // Update part_count for all chunks
+    let total_parts = chunks.len().max(1);
+    for chunk in &mut chunks {
+        chunk.part_count = total_parts;
     }
 
     Ok(chunks)

@@ -359,7 +359,7 @@ fn run_query(config: &Config, text: &str, limit: usize, catalog: Option<&str>) -
     println!();
 
     for (idx, result) in results.iter().enumerate() {
-        println!("{}. Score: {:.3}", idx + 1, result.score);
+        println!("{}. #{:08x}  Score: {:.3}", idx + 1, (result.id >> 32) as u32, result.score);
         println!("   Catalog: {}", result.payload.catalog);
         println!("   File: {}", result.payload.file);
         println!("   Lines: {}-{}", result.payload.start_line, result.payload.end_line);

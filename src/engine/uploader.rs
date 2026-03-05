@@ -104,7 +104,7 @@ struct ScrollResponse {
 struct ScrollResult {
     points: Vec<ScrollPoint>,
     #[serde(default)]
-    next_page_offset: Option<String>,
+    next_page_offset: Option<QdrantId>,
 }
 
 /// Scroll point from Qdrant
@@ -272,7 +272,10 @@ impl QdrantUploader {
                 files.insert(point.payload.source_uri.clone(), point.payload.content_hash.clone());
             }
 
-            offset = scroll_response.result.next_page_offset;
+            offset = scroll_response.result.next_page_offset.map(|id| match id {
+                QdrantId::String(s) => s,
+                QdrantId::Integer(i) => i.to_string(),
+            });
             if offset.is_none() {
                 break;
             }

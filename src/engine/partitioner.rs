@@ -35,8 +35,8 @@ impl Default for PartitionConfig {
 /// A chunk of code with breadcrumb context
 #[derive(Debug, Clone)]
 pub struct PartitionedChunk {
-    /// Source file path
-    pub file: String,
+    /// Source URI (file path, issue reference, etc.)
+    pub source_uri: String,
     
     /// Catalog name (for multi-source partitioning)
     pub catalog: String,
@@ -143,7 +143,7 @@ fn partition_node(
             let symbol_name = get_symbol_name(node, source);
             
             chunks.push(PartitionedChunk {
-                file: file_path.to_string(),
+                source_uri: file_path.to_string(),
                 catalog: catalog.to_string(),
                 content_hash: content_hash.to_string(),
                 breadcrumb,
@@ -298,7 +298,7 @@ fn split_oversized_leaf(
             split_by_lines(&part_text, start_line, config, breadcrumb, chunk_type.clone(), file_path, catalog, content_hash, chunks);
         } else {
             chunks.push(PartitionedChunk {
-                file: file_path.to_string(),
+                source_uri: file_path.to_string(),
                 catalog: catalog.to_string(),
                 content_hash: content_hash.to_string(),
                 breadcrumb: format!("{} (part {}/{})", breadcrumb, i + 1, split_points.len()),
@@ -476,7 +476,7 @@ fn split_by_lines(
         let end_line = start_line_base + end_idx.saturating_sub(1);
         
         chunks.push(PartitionedChunk {
-            file: file_path.to_string(),
+            source_uri: file_path.to_string(),
             catalog: catalog.to_string(),
             content_hash: content_hash.to_string(),
             breadcrumb: format!("{} (part {}/{})", breadcrumb, part_num + 1, split_points.len()),

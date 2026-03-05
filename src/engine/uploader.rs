@@ -67,7 +67,8 @@ struct Point {
 #[derive(Debug, Serialize, Deserialize)]
 pub struct PointPayload {
     pub text: String,
-    pub file: String,
+    pub source_uri: String,
+    pub source_type: String,
     pub catalog: String,
     pub content_hash: String,
     pub start_line: usize,
@@ -198,7 +199,7 @@ impl QdrantUploader {
                         r#match: MatchValue { value: catalog.to_string() },
                     },
                     Condition {
-                        key: "file".to_string(),
+                        key: "source_uri".to_string(),
                         r#match: MatchValue { value: file_path.to_string() },
                     },
                 ],
@@ -252,7 +253,7 @@ impl QdrantUploader {
             }
 
             for point in scroll_response.result.points {
-                files.insert(point.payload.file.clone(), point.payload.content_hash.clone());
+                files.insert(point.payload.source_uri.clone(), point.payload.content_hash.clone());
             }
 
             offset = scroll_response.result.next_page_offset;
@@ -273,13 +274,14 @@ impl QdrantUploader {
         let points: Vec<Point> = chunks
             .iter()
             .map(|(chunk, embedding)| {
-                let id = compute_chunk_id(&chunk.file, chunk.start_line, chunk.part_number);
+                let id = compute_chunk_id(&chunk.source_uri, chunk.start_line, chunk.part_number);
                 Point {
                     id,
                     vector: embedding.clone(),
                     payload: PointPayload {
                         text: chunk.text.clone(),
-                        file: chunk.file.clone(),
+                        source_uri: chunk.source_uri.clone(),
+                        source_type: chunk.source_type.clone(),
                         catalog: chunk.catalog.clone(),
                         content_hash: chunk.content_hash.clone(),
                         start_line: chunk.start_line,

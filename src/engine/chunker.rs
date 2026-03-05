@@ -15,8 +15,11 @@ pub struct Chunk {
     /// The text content of the chunk
     pub text: String,
     
-    /// Source file path
-    pub file: String,
+    /// Source URI (file path, issue reference, etc.)
+    pub source_uri: String,
+    
+    /// Source type (e.g., "code", "issue", "discussion", "document")
+    pub source_type: String,
     
     /// Catalog name (for multi-source partitioning)
     pub catalog: String,
@@ -24,16 +27,16 @@ pub struct Chunk {
     /// Content hash (SHA256) for incremental sync
     pub content_hash: String,
     
-    /// Starting line number (1-indexed)
+    /// Starting line number (1-indexed, None for non-file sources)
     pub start_line: usize,
     
-    /// Ending line number (inclusive)
+    /// Ending line number (inclusive, None for non-file sources)
     pub end_line: usize,
     
     /// Optional symbol name (for functions, classes, etc.)
     pub symbol_name: Option<String>,
     
-    /// Chunk type (e.g., "function", "class", "markdown-section", "json-key")
+    /// Chunk type (e.g., "function", "class", "markdown-section", "issue-comment")
     pub chunk_type: String,
     
     /// Breadcrumb path (e.g., "@rushstack/node-core-library:JsonFile.ts:JsonFile.load")
@@ -113,7 +116,8 @@ impl From<PartitionedChunk> for Chunk {
         
         Chunk {
             text: p.text,
-            file: p.file,
+            source_uri: p.source_uri,
+            source_type: "code".to_string(),
             catalog: p.catalog,
             content_hash: p.content_hash,
             start_line: p.start_line,
@@ -185,7 +189,8 @@ fn chunk_by_lines(
         if !chunk_text.trim().is_empty() {
             chunks.push(Chunk {
                 text: chunk_text,
-                file: file_path.to_string(),
+                source_uri: file_path.to_string(),
+                source_type: "code".to_string(),
                 catalog: catalog.to_string(),
                 content_hash: content_hash.clone(),
                 start_line: start + 1,

@@ -59,7 +59,7 @@ pub fn partition_markdown(source: &str, config: &super::partitioner::PartitionCo
         let text = lines.join("\n");
         if !text.trim().is_empty() {
             chunks.push(PartitionedChunk {
-                file: file_path.to_string(),
+                source_uri: file_path.to_string(),
                 catalog: catalog.to_string(),
                 content_hash: content_hash.clone(),
                 breadcrumb: breadcrumb_prefix.clone(),
@@ -112,7 +112,7 @@ pub fn partition_markdown(source: &str, config: &super::partitioner::PartitionCo
             );
         } else {
             chunks.push(PartitionedChunk {
-                file: file_path.to_string(),
+                source_uri: file_path.to_string(),
                 catalog: catalog.to_string(),
                 content_hash: content_hash.clone(),
                 breadcrumb,
@@ -213,7 +213,7 @@ fn split_oversized_section(
         }
         
         chunks.push(PartitionedChunk {
-            file: file_path.to_string(),
+            source_uri: file_path.to_string(),
             catalog: catalog.to_string(),
             content_hash: content_hash.to_string(),
             breadcrumb: format!("{} (part {}/{})", breadcrumb, i + 1, split_points.len()),
@@ -249,7 +249,7 @@ fn split_by_lines_fallback(
         if current_size + line_size > config.target_size && current_size > 0 {
             let chunk_lines = &lines[current_start..i];
             chunks.push(PartitionedChunk {
-                file: file_path.to_string(),
+                source_uri: file_path.to_string(),
                 catalog: catalog.to_string(),
                 content_hash: content_hash.to_string(),
                 breadcrumb: format!("{} (part {})", breadcrumb, part_num),
@@ -272,7 +272,7 @@ fn split_by_lines_fallback(
     if current_start < lines.len() {
         let chunk_lines = &lines[current_start..];
         chunks.push(PartitionedChunk {
-            file: file_path.to_string(),
+            source_uri: file_path.to_string(),
             catalog: catalog.to_string(),
             content_hash: content_hash.to_string(),
             breadcrumb: format!("{} (part {})", breadcrumb, part_num),

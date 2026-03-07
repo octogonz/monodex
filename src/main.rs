@@ -83,10 +83,6 @@ enum Commands {
         /// Target chunk size in chars
         #[arg(long, default_value = "1800")]
         target_size: usize,
-        
-        /// Package name for breadcrumb
-        #[arg(long, default_value = "")]
-        package: String,
     },
     
     /// Query the semantic search database
@@ -160,8 +156,8 @@ fn main() -> anyhow::Result<()> {
         Commands::Purge { catalog, all } => {
             run_purge(&config, catalog.as_deref(), all)?;
         }
-        Commands::DumpChunks { file, target_size, package } => {
-            run_dump_chunks(&file, target_size, &package)?;
+        Commands::DumpChunks { file, target_size } => {
+            run_dump_chunks(&file, target_size)?;
         }
         Commands::Query { text, limit, catalog } => {
             run_query(&config, &text, limit, catalog.as_deref())?;
@@ -614,7 +610,7 @@ fn is_text_file(path: &str) -> bool {
 }
 
 /// Run chunking diagnostics on a TypeScript file
-fn run_dump_chunks(file: &PathBuf, target_size: usize, package: &str) -> anyhow::Result<()> {
+fn run_dump_chunks(file: &PathBuf, target_size: usize) -> anyhow::Result<()> {
     println!("📦 Chunks for: {}", file.display());
     println!();
     
@@ -627,23 +623,20 @@ fn run_dump_chunks(file: &PathBuf, target_size: usize, package: &str) -> anyhow:
         .and_then(|n| n.to_str())
         .unwrap_or("unknown.ts");
     
-    let package_name = if package.is_empty() {
-        "unknown".to_string()
-    } else {
-        package.to_string()
-    };
+    // Find package name by walking upward to find nearest package.json
+    let file_path = file.to_string_lossy().to_string();
+    let package_name = engine::package_lookup::find_package_name(&file_path, "");
     
     // Create config
     let config = PartitionConfig {
         target_size,
         max_breadcrumb_depth: 4,
         file_name: file_name.to_string(),
-        package_name,
+        package_name: package_name.clone(),
     };
     
     // Partition
-    let file_path = file.to_string_lossy().to_string();
-    let chunks = partition_typescript(&source, &config, &file_path, package);
+    let chunks = partition_typescript(&source, &config, &file_path, &package_name);
     
     // Display results
     println!("Total chunks: {}", chunks.len());

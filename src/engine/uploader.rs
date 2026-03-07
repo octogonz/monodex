@@ -395,4 +395,45 @@ impl QdrantUploader {
 
         Ok(response.result)
     }
+
+    /// Get a single point by ID
+    pub fn get_point(&self, id: u64) -> Result<Option<PointResult>> {
+        #[derive(Debug, Serialize)]
+        struct PointRequest {
+            ids: Vec<u64>,
+            with_payload: bool,
+        }
+
+        let request_body = PointRequest {
+            ids: vec![id],
+            with_payload: true,
+        };
+
+        let endpoint = format!("{}/collections/{}/points", self.url, self.collection);
+        
+        let response = self
+            .client
+            .post(&endpoint)
+            .json(&request_body)
+            .send()?;
+        
+        if !response.status().is_success() {
+            return Ok(None);
+        }
+
+        #[derive(Debug, Deserialize)]
+        struct PointResponse {
+            result: Vec<PointResult>,
+        }
+
+        let point_response: PointResponse = response.json()?;
+        Ok(point_response.result.into_iter().next())
+    }
+}
+
+/// A point retrieved by ID (no score, unlike SearchResult)
+#[derive(Debug, Deserialize)]
+pub struct PointResult {
+    pub id: QdrantId,
+    pub payload: PointPayload,
 }

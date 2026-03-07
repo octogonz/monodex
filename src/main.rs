@@ -100,6 +100,13 @@ enum Commands {
         catalog: Option<String>,
     },
     
+    /// View a full chunk by its ID
+    View {
+        /// Chunk ID (hex, e.g. 30440fb2)
+        #[arg(long)]
+        id: String,
+    },
+    
     /// Query the semantic search database (verbose output for debugging)
     Query {
         /// Search query text
@@ -176,6 +183,9 @@ fn main() -> anyhow::Result<()> {
         }
         Commands::Search { text, limit, catalog } => {
             run_search(&config, &text, limit, catalog.as_deref())?;
+        }
+        Commands::View { id } => {
+            run_view(&config, &id)?;
         }
         Commands::Query { text, limit, catalog } => {
             run_query(&config, &text, limit, catalog.as_deref())?;
@@ -531,7 +541,10 @@ fn run_search(config: &Config, text: &str, limit: usize, catalog: Option<&str>) 
     // Display results as blurbs
     for result in &results {
         // Line 1: #id  score  breadcrumb
-        let id_hex = format!("#{:08x}", (&result.id >> 32) as u32);
+        let id_hex = format!("#{:016x}", match &result.id {
+            engine::uploader::QdrantId::Integer(n) => *n,
+            engine::uploader::QdrantId::String(_) => 0,
+        });
         let breadcrumb = result.payload.breadcrumb.as_deref().unwrap_or("unknown");
         println!("{}  {:.3}  {}", id_hex, result.score, breadcrumb);
         
@@ -542,6 +555,37 @@ fn run_search(config: &Config, text: &str, limit: usize, catalog: Option<&str>) 
         
         // Blank line between results
         println!();
+    }
+    
+    Ok(())
+}
+
+/// Run view command to display a full chunk by ID
+fn run_view(config: &Config, id_str: &str) -> anyhow::Result<()> {
+    // Parse hex ID (with or without # prefix)
+    let id_hex = id_str.trim_start_matches('#');
+    let id: u64 = u64::from_str_radix(id_hex, 16)
+        .map_err(|e| anyhow::anyhow!("Invalid ID '{}': {}. Expected hex like '30440fb2a1b2c3d4'", id_str, e))?;
+    
+    // Query Qdrant
+    let uploader = QdrantUploader::new(&config.qdrant.collection, config.qdrant.url.as_deref())?;
+    let result = uploader.get_point(id)?
+        .ok_or_else(|| anyhow::anyhow!("Chunk #{} not found", id_hex))?;
+    
+    // Display header
+    let breadcrumb = result.payload.breadcrumb.as_deref().unwrap_or("unknown");
+    println!("#{:016x}  {}", id, breadcrumb);
+    println!("Source: {}", result.payload.source_uri);
+    println!("Lines: {}-{}", result.payload.start_line, result.payload.end_line);
+    println!("Type: {}", result.payload.chunk_type);
+    if let Some(ref symbol) = result.payload.symbol_name {
+        println!("Symbol: {}", symbol);
+    }
+    println!();
+    
+    // Display full text (quoted with >)
+    for line in result.payload.text.lines() {
+        println!("> {}", line);
     }
     
     Ok(())
@@ -575,7 +619,11 @@ fn run_query(config: &Config, text: &str, limit: usize, catalog: Option<&str>) -
     println!();
 
     for (idx, result) in results.iter().enumerate() {
-        println!("{}. #{:08x}  Score: {:.3}", idx + 1, ((&result.id) >> 32) as u32, result.score);
+        let id_hex = format!("#{:016x}", match &result.id {
+            engine::uploader::QdrantId::Integer(n) => *n,
+            engine::uploader::QdrantId::String(_) => 0,
+        });
+        println!("{}. {}  Score: {:.3}", idx + 1, id_hex, result.score);
         println!("   Catalog: {}", result.payload.catalog);
         println!("   Source: {}", result.payload.source_uri);
         println!("   Lines: {}-{}", result.payload.start_line, result.payload.end_line);

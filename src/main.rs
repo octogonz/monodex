@@ -85,7 +85,22 @@ enum Commands {
         target_size: usize,
     },
     
-    /// Query the semantic search database
+    /// Search with compact blurb output (for AI assistants)
+    Search {
+        /// Search query text
+        #[arg(long)]
+        text: String,
+        
+        /// Number of results
+        #[arg(long, default_value = "10")]
+        limit: usize,
+        
+        /// Filter by catalog (optional - searches all if omitted)
+        #[arg(long)]
+        catalog: Option<String>,
+    },
+    
+    /// Query the semantic search database (verbose output for debugging)
     Query {
         /// Search query text
         #[arg(long)]
@@ -158,6 +173,9 @@ fn main() -> anyhow::Result<()> {
         }
         Commands::DumpChunks { file, target_size } => {
             run_dump_chunks(&file, target_size)?;
+        }
+        Commands::Search { text, limit, catalog } => {
+            run_search(&config, &text, limit, catalog.as_deref())?;
         }
         Commands::Query { text, limit, catalog } => {
             run_query(&config, &text, limit, catalog.as_deref())?;
@@ -497,6 +515,35 @@ fn run_crawl(config: &Config, catalog_name: &str) -> anyhow::Result<()> {
     println!("Files deleted from DB: {}", files_deleted);
     println!();
 
+    Ok(())
+}
+
+/// Run search with compact blurb output
+fn run_search(config: &Config, text: &str, limit: usize, catalog: Option<&str>) -> anyhow::Result<()> {
+    // Generate embedding for query
+    let embedder = ParallelEmbedder::new()?;
+    let embedding = embedder.encode(text, 0)?;
+    
+    // Query Qdrant
+    let uploader = QdrantUploader::new(&config.qdrant.collection, config.qdrant.url.as_deref())?;
+    let results = uploader.query(&embedding, limit, catalog)?;
+    
+    // Display results as blurbs
+    for result in &results {
+        // Line 1: #id  score  breadcrumb
+        let id_hex = format!("#{:08x}", (&result.id >> 32) as u32);
+        let breadcrumb = result.payload.breadcrumb.as_deref().unwrap_or("unknown");
+        println!("{}  {:.3}  {}", id_hex, result.score, breadcrumb);
+        
+        // Lines 2-4: first 3 lines of code (quoted with >)
+        for line in result.payload.text.lines().take(3) {
+            println!("> {}", line);
+        }
+        
+        // Blank line between results
+        println!();
+    }
+    
     Ok(())
 }
 

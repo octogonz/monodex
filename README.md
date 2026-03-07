@@ -57,21 +57,38 @@ rush-qdrant crawl --catalog rushstack
 rush-qdrant --config /path/to/config.jsonc crawl --catalog rushstack
 ```
 
-### Query the database
+### Search the database
 
 ```bash
-# Semantic search
-rush-qdrant query --text "how to read JSON files"
+# Semantic search with compact blurb output (for AI assistants)
+rush-qdrant search --text "how to read JSON files"
 
-# With catalog filter
-rush-qdrant query --text "API Extractor" --catalog rushstack --limit 10
+# With catalog filter and limit
+rush-qdrant search --text "API Extractor" --catalog rushstack --limit 10
+```
+
+### View full chunks
+
+```bash
+# View a single chunk by ID
+rush-qdrant view --id 30440fb2ecd5fa62
+
+# View multiple chunks (comma-separated)
+rush-qdrant view --id 30440fb2ecd5fa62,a1b2c3d4e5f67890
 ```
 
 ### Debug chunking algorithm
 
 ```bash
 # See how a file gets chunked
-rush-qdrant dump-chunks --file ./src/JsonFile.ts --package "@rushstack/node-core-library"
+rush-qdrant dump-chunks --file ./src/JsonFile.ts
+```
+
+### Verbose query (for debugging)
+
+```bash
+# Verbose output for debugging search behavior
+rush-qdrant query --text "how to read JSON files"
 ```
 
 ## Architecture
@@ -86,9 +103,14 @@ rush-qdrant/
 │       ├── chunker.rs             # File chunking dispatcher
 │       ├── partitioner.rs         # AST-based TypeScript chunking
 │       ├── markdown_partitioner.rs # Markdown heading-based chunking
-│       ├── embedder.rs            # Embedding generation (ONNX)
-│       └── uploader.rs            # Qdrant HTTP client
+│       ├── embedder.rs            # Single-threaded embedding (legacy)
+│       ├── parallel_embedder.rs   # Parallel embedding with multiple ONNX sessions
+│       ├── package_lookup.rs      # Package name resolution (walk up to package.json)
+│       ├── uploader.rs            # Qdrant HTTP client
+│       ├── util.rs                # Hash utilities for chunk IDs
+│       └── snapshots/             # Embedded model files
 ├── Cargo.toml                     # Dependencies
+├── DESIGN.md                      # Design documentation
 └── README.md
 ```
 

@@ -55,14 +55,22 @@ rush-qdrant is a semantic search indexer for Rush monorepos, using Qdrant vector
 ### Phase 6: Query Interface
 **Goal:** Better search for AI assistants.
 
-1. [ ] Implement `search` command with blurb output
-2. [ ] Implement `get` command for full chunks
-3. [ ] Implement `expand` command (surrounding context)
+1. [x] Implement `search` command with blurb output
+2. [x] Implement `view` command for full chunks (renamed from `get`)
+3. [ ] Implement `expand` command (neighboring chunks)
 4. [ ] Implement `siblings` command (other parts of split chunk)
 5. [ ] Implement `cat` command for full files
 6. [ ] Add filtering (`--type`, `--symbol`, `--path`, `--min-score`)
-7. [ ] Add `--json` output format
-8. [ ] Commit changes
+
+### Phase 7: Improved Chunking
+**Goal:** Fix gaps and add overlap for better semantic matching.
+
+1. [ ] Investigate missing text at AST boundaries
+2. [ ] Implement chunk overlap (following LlamaIndex conventions)
+3. [ ] Ensure imports are captured as separate chunks
+4. [ ] Ensure file-level constants and comments are captured
+5. [ ] Rebuild database with improved chunking
+6. [ ] Implement `expand` command using new neighboring chunk data
 
 ---
 
@@ -197,29 +205,27 @@ fn compute_chunk_id(file: &str, start_line: usize, part: usize) -> u64 {
 
 ### Display Format: Hex
 
-The u64 hash is stored as the Qdrant point ID. For display, use **8-character lowercase hex**:
+The u64 hash is stored as the Qdrant point ID. For display, use **16-character lowercase hex**:
 
 ```
 u64 hash: 18472938475621023485
-display:  "#1a2b3c4d"
+display:  "#30440fb2ecd5fa62"
 ```
 
 **Why hex instead of base32/base62:**
 - Only characters `0-9` and `a-f` - no ambiguity
 - Case-insensitive (lowercase convention)
 - Tokenizers handle hex strings cleanly
-- When LLM outputs `#1a2b3c4d`, it won't typo it
+- When LLM outputs `#30440fb2ecd5fa62`, it won't typo it
 
-Implementation:
-```rust
-fn display_id(hash: u64) -> String {
-    format!("#{:08x}", (hash >> 32) & 0xFFFFFFFF)
-}
-```
+**Why 16 chars (full 64-bit) instead of 8 chars (32-bit):**
+- Need full hash to retrieve chunks by ID
+- 16 chars is still short enough for display
+- No collision risk even across multiple repos
 
 ### Collision Tolerance
 
-With 32 bits (4 billion values), collisions are astronomically rare for a single repo. Even if one occurs, disambiguate via breadcrumb/file info.
+With 64 bits, collisions are astronomically rare. Even if one occurs, disambiguate via breadcrumb/file info.
 
 ---
 
@@ -251,18 +257,105 @@ With 32 bits (4 billion values), collisions are astronomically rare for a single
 ### Two-Phase Search
 
 1. **Search → Blurbs**: Concise summaries with stable IDs
-2. **Get → Full Chunks**: Retrieve by ID, expand context, navigate siblings
+2. **View → Full Chunks**: Retrieve by ID for complete content
 
 ### Commands
 
 ```bash
-rush-qdrant search --text <query> [--limit N] [--catalog NAME] [--path GLOB] [--type TYPE]
-rush-qdrant get --id <id1,id2,id3...>
+# Search with compact blurb output (for AI assistants)
+rush-qdrant search --text <query> [--limit N] [--catalog NAME]
+
+# View full chunks by ID (comma-separated for multiple)
+rush-qdrant view --id <id1,id2,id3...>
+
+# Expand to see neighboring chunks (future)
 rush-qdrant expand --id <id> [--context N]
+
+# Other planned commands
 rush-qdrant siblings --id <id>
 rush-qdrant cat --id <id>
 rush-qdrant cat --file <path>
 ```
+
+### Output Format
+
+**Search blurbs** are designed for AI assistants:
+- Line 1: `#id  score  breadcrumb`
+- Lines 2-4: First 3 lines of code, prefixed with `>` (quoted)
+- Blank line between results
+
+The `>` prefix ensures code is clearly marked as quoted content, preventing injection attacks where code could be misinterpreted as instructions.
+
+**View output** shows full chunk content:
+- Header: ID, breadcrumb, source file, lines, type, symbol
+- Full text quoted with `>` prefix
+
+---
+
+## Chunking Analysis
+
+### Current Issues
+
+#### Issue 1: No Overlap Between Chunks
+
+**Industry standard (LlamaIndex):** Most semantic chunkers use overlap:
+- `CodeSplitter`: 15 lines overlap
+- `SentenceSplitter`: 20 characters overlap
+- `TokenTextSplitter`: 20 tokens overlap
+
+**Our implementation:** Zero overlap. This means:
+- Concepts spanning chunk boundaries may be harder to find
+- Boundary context is lost
+- Semantic matching may miss relevant matches
+
+**Planned fix:** Add configurable overlap (default 10-15 lines for code).
+
+#### Issue 2: Missing Text at AST Boundaries
+
+Analysis of `JsonFile.ts` revealed gaps in coverage:
+
+| Gap Lines | Content | Importance |
+|-----------|---------|------------|
+| 1-7 | Copyright header, imports | **High** - imports show dependencies |
+| 9-41 | JSDoc for `JsonObject`, `JsonNull`, `JsonSyntax` | **High** - type documentation |
+| 199-206 | `const DEFAULT_ENCODING`, `export class JsonFile {` | **High** - class declaration |
+| 516-517 | Comment before private method | Medium - code organization |
+| 538-540 | Comment explaining `_formatKeyPath` | **High** - algorithm explanation |
+
+**Root cause:** The partitioner only creates chunks for "meaningful nodes" (functions, methods, classes, interfaces) >= 50 chars. It misses:
+- Import statements
+- Standalone JSDoc/TSDoc comments
+- Type aliases with documentation
+- Constants defined outside functions
+- Class declarations when the body is split into methods
+
+**Planned fix:** 
+1. Create separate chunks for imports sections
+2. Create chunks for file-level constants and type definitions
+3. Attach orphan comments to nearby code or create standalone chunks
+
+### Chunk Structure
+
+```json
+{
+  "id": 18472938475621023485,
+  "vector": [0.1, 0.2, ...],
+  "payload": {
+    "text": "export interface IExtractorConfigParameters { ... }",
+    "source_uri": "/path/to/ExtractorConfig.ts",
+    "source_type": "code",
+    "catalog": "rushstack",
+    "content_hash": "sha256:abc123...",
+    "start_line": 196,
+    "end_line": 229,
+    "symbol_name": "IExtractorConfigParameters",
+    "chunk_type": "interface",
+    "breadcrumb": "@microsoft/api-extractor:ExtractorConfig.ts:IExtractorConfigParameters"
+  }
+}
+```
+
+**Note:** part_number and part_count were planned but not currently implemented. Chunks that exceed target size are split and marked in the breadcrumb as "(part 1/N)".
 
 ---
 
@@ -274,7 +367,6 @@ rush-qdrant cat --file <path>
 | Vector dims | 384 | 768 |
 | ID type | UUID string | u64 hash |
 | Chunk target | 1800 chars | 6000 chars |
-| New fields | — | `part_number`, `part_count` |
 
 **Migration:** Create new collection (different vector size), re-crawl, delete old after verification.
 

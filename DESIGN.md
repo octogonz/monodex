@@ -334,6 +334,67 @@ Analysis of `JsonFile.ts` revealed gaps in coverage:
 2. Create chunks for file-level constants and type definitions
 3. Attach orphan comments to nearby code or create standalone chunks
 
+### Chunking Algorithm Philosophy
+
+The chunking algorithm recursively subdivides a file into smaller AST branches until every piece fits within the embedding model's token limit:
+
+1. Start with the whole file. Does it fit in one chunk? Done.
+2. Otherwise, examine the AST and find a meaningful place to split.
+3. Repeat until all pieces fit (including overlap budget).
+
+**Key principle:** "Split" means cutting a string into substrings. AT NO POINT should lines be skipped or gaps created. Every line of source code must belong to exactly one chunk (with overlap meaning some lines belong to multiple chunks).
+
+### Implementation Plan
+
+#### Step 1: Add `chunk_kind` field to schema
+
+Add to `PointPayload` in `uploader.rs`:
+```rust
+pub chunk_kind: String,
+```
+
+**Values:**
+- `"content"` (default) - Normal code chunks: functions, classes, methods, types
+- `"imports"` - Import statements at top of file (lower search relevance)
+- `"changelog"` - CHANGELOG.md content (historical, often outdated)
+- `"config"` - Configuration files like package.json (structural, less searchable)
+
+This allows search to prioritize `"content"` chunks while still returning other kinds if no better match exists.
+
+#### Step 2: Fix missing text (imports, small types)
+
+**Changes to `partitioner.rs`:**
+
+1. **Extract imports chunk first:**
+   - Before main partition loop, walk AST for `import_statement` nodes at depth 0
+   - Combine into one chunk with `chunk_kind: "imports"`
+   - Breadcrumb: `package:File.ts:imports`
+
+2. **Investigate why small type aliases are skipped:**
+   - Types like `JsonObject`, `JsonNull` have JSDoc but don't appear in chunks
+   - May be due to AST traversal issue, not the 50-char minimum
+   - The 50-char minimum is about avoiding garbage chunks, not skipping meaningful content
+   - Investigate during implementation
+
+#### Step 3: Add overlap
+
+**Constants:**
+```rust
+const OVERLAP_LINES: usize = 18;  // ~15% of 120-line average chunk
+const TARGET_SIZE_WITH_OVERLAP: usize = 5100;  // leaves ~900 chars for overlap
+```
+
+**Algorithm:**
+1. After partitioning, for each chunk:
+   - Extend `start_line` up by `OVERLAP_LINES / 2`
+   - Extend `end_line` down by `OVERLAP_LINES / 2`
+   - Clamp to file boundaries
+2. When calculating if chunk fits budget: `text.len() + estimated_overlap_len`
+
+**Testing:**
+- Use "tiny" catalog or define a single-project catalog (e.g., node-core-library)
+- Avoid full rushstack crawl during testing (can take an hour)
+
 ### Chunk Structure
 
 ```json
@@ -350,6 +411,7 @@ Analysis of `JsonFile.ts` revealed gaps in coverage:
     "end_line": 229,
     "symbol_name": "IExtractorConfigParameters",
     "chunk_type": "interface",
+    "chunk_kind": "content",
     "breadcrumb": "@microsoft/api-extractor:ExtractorConfig.ts:IExtractorConfigParameters"
   }
 }

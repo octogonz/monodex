@@ -1,7 +1,21 @@
 //! Partition-based code chunking
 //!
-//! This module implements a partition algorithm that recursively splits the AST
-//! into chunks of roughly equal size, where each chunk includes breadcrumb context.
+//! ## Algorithm Philosophy
+//!
+//! This module recursively subdivides a file into smaller AST branches until every
+//! piece fits within the embedding model's token limit:
+//!
+//! 1. Start with the whole file. Does it fit in one chunk? Done.
+//! 2. Otherwise, examine the AST and find a meaningful place to split.
+//! 3. Repeat until all pieces fit (including overlap budget).
+//!
+//! **Key principle:** "Split" means cutting a string into substrings. AT NO POINT
+//! should lines be skipped or gaps created. Every line of source code must belong
+//! to exactly one chunk (with overlap meaning some lines belong to multiple chunks).
+//!
+//! The 50-char minimum is about avoiding garbage chunks (stray braces, etc.), not
+//! about skipping meaningful content. If a type alias or constant is being skipped,
+//! that's a bug in the AST traversal, not the minimum size threshold.
 
 use tree_sitter::{Node, Parser};
 use super::util::compute_hash;

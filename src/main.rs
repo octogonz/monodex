@@ -100,9 +100,9 @@ enum Commands {
         catalog: Option<String>,
     },
     
-    /// View a full chunk by its ID
+    /// View full chunks by their IDs (comma-separated)
     View {
-        /// Chunk ID (hex, e.g. 30440fb2)
+        /// Chunk IDs (comma-separated hex, e.g. 30440fb2ecd5fa62,a1b2c3d4e5f67890)
         #[arg(long)]
         id: String,
     },
@@ -560,32 +560,49 @@ fn run_search(config: &Config, text: &str, limit: usize, catalog: Option<&str>) 
     Ok(())
 }
 
-/// Run view command to display a full chunk by ID
+/// Run view command to display full chunks by IDs
 fn run_view(config: &Config, id_str: &str) -> anyhow::Result<()> {
-    // Parse hex ID (with or without # prefix)
-    let id_hex = id_str.trim_start_matches('#');
-    let id: u64 = u64::from_str_radix(id_hex, 16)
-        .map_err(|e| anyhow::anyhow!("Invalid ID '{}': {}. Expected hex like '30440fb2a1b2c3d4'", id_str, e))?;
+    // Parse comma-separated IDs
+    let ids: Vec<u64> = id_str
+        .split(',')
+        .map(|s| {
+            let id_hex = s.trim().trim_start_matches('#');
+            u64::from_str_radix(id_hex, 16)
+                .map_err(|e| anyhow::anyhow!("Invalid ID '{}': {}. Expected hex like '30440fb2ecd5fa62'", s, e))
+        })
+        .collect::<Result<Vec<_>, _>>()?;
+    
+    if ids.is_empty() {
+        return Err(anyhow::anyhow!("No IDs provided"));
+    }
     
     // Query Qdrant
     let uploader = QdrantUploader::new(&config.qdrant.collection, config.qdrant.url.as_deref())?;
-    let result = uploader.get_point(id)?
-        .ok_or_else(|| anyhow::anyhow!("Chunk #{} not found", id_hex))?;
     
-    // Display header
-    let breadcrumb = result.payload.breadcrumb.as_deref().unwrap_or("unknown");
-    println!("#{:016x}  {}", id, breadcrumb);
-    println!("Source: {}", result.payload.source_uri);
-    println!("Lines: {}-{}", result.payload.start_line, result.payload.end_line);
-    println!("Type: {}", result.payload.chunk_type);
-    if let Some(ref symbol) = result.payload.symbol_name {
-        println!("Symbol: {}", symbol);
-    }
-    println!();
-    
-    // Display full text (quoted with >)
-    for line in result.payload.text.lines() {
-        println!("> {}", line);
+    for (i, id) in ids.iter().enumerate() {
+        let result = uploader.get_point(*id)?
+            .ok_or_else(|| anyhow::anyhow!("Chunk #{:016x} not found", id))?;
+        
+        // Display header
+        let breadcrumb = result.payload.breadcrumb.as_deref().unwrap_or("unknown");
+        println!("#{:016x}  {}", id, breadcrumb);
+        println!("Source: {}", result.payload.source_uri);
+        println!("Lines: {}-{}", result.payload.start_line, result.payload.end_line);
+        println!("Type: {}", result.payload.chunk_type);
+        if let Some(ref symbol) = result.payload.symbol_name {
+            println!("Symbol: {}", symbol);
+        }
+        println!();
+        
+        // Display full text (quoted with >)
+        for line in result.payload.text.lines() {
+            println!("> {}", line);
+        }
+        
+        // Blank line between results (but not after the last one)
+        if i < ids.len() - 1 {
+            println!();
+        }
     }
     
     Ok(())

@@ -742,7 +742,6 @@ fn run_dump_chunks(file: &PathBuf, target_size: usize) -> anyhow::Result<()> {
     // Create config
     let config = PartitionConfig {
         target_size,
-        max_breadcrumb_depth: 4,
         file_name: file_name.to_string(),
         package_name: package_name.clone(),
     };

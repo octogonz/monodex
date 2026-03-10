@@ -1,21 +1,26 @@
 //! Partition-based code chunking
 //!
-//! ## Algorithm Philosophy
+//! ## Algorithm: Two Worlds Model
 //!
-//! This module recursively subdivides a file into smaller AST branches until every
-//! piece fits within the embedding model's token limit:
+//! The algorithm coordinates two separate concerns:
 //!
-//! 1. Start with the whole file. Does it fit in one chunk? Done.
-//! 2. Otherwise, examine the AST and find a meaningful place to split.
-//! 3. Repeat until all pieces fit (including overlap budget).
+//! **Chunk Land (sizing/selection):**
+//! - The file is a sequence of line ranges (chunks)
+//! - Can measure any chunk's size in characters
+//! - Can split a chunk at a given line number
+//! - Knows the budget and when we're done
 //!
-//! **Key principle:** "Split" means cutting a string into substrings. AT NO POINT
-//! should lines be skipped or gaps created. Every line of source code must belong
-//! to exactly one chunk (with overlap meaning some lines belong to multiple chunks).
+//! **AST Land (structure/meaning):**
+//! - Recursively walks the syntax tree
+//! - Provides candidate split points as line numbers
+//! - "Meaningful" = doesn't break semantic units
 //!
-//! The 50-char minimum is about avoiding garbage chunks (stray braces, etc.), not
-//! about skipping meaningful content. If a type alias or constant is being skipped,
-//! that's a bug in the AST traversal, not the minimum size threshold.
+//! **Coordination:**
+//! 1. Start with one chunk = entire file
+//! 2. While any chunk exceeds budget:
+//!    a. AST land provides meaningful split points within that chunk
+//!    b. Chunk land picks the best split and divides the chunk
+//! 3. Done - all chunks fit budget
 
 use tree_sitter::{Node, Parser};
 use super::util::compute_hash;
@@ -24,9 +29,6 @@ use super::util::compute_hash;
 pub struct PartitionConfig {
     /// Target chunk size in characters (text only, breadcrumb is extra)
     pub target_size: usize,
-    
-    /// Maximum breadcrumb depth (file > class > method > ...)
-    pub max_breadcrumb_depth: usize,
     
     /// File name for breadcrumb prefix
     pub file_name: String,
@@ -39,7 +41,6 @@ impl Default for PartitionConfig {
     fn default() -> Self {
         Self {
             target_size: 6000,
-            max_breadcrumb_depth: 4,
             file_name: "unknown.ts".to_string(),
             package_name: "unknown".to_string(),
         }
@@ -80,6 +81,13 @@ pub struct PartitionedChunk {
     pub symbol_name: Option<String>,
 }
 
+/// A line range representing a chunk-in-progress
+#[derive(Debug, Clone)]
+struct ChunkRange {
+    start_line: usize,  // 1-indexed, inclusive
+    end_line: usize,    // 1-indexed, inclusive
+}
+
 /// Partition a TypeScript/TSX file into chunks
 pub fn partition_typescript(
     source: &str, 
@@ -97,7 +105,8 @@ pub fn partition_typescript(
         .expect("Failed to parse TypeScript");
     
     let root = tree.root_node();
-    let mut chunks = Vec::new();
+    let lines: Vec<&str> = source.lines().collect();
+    let total_lines = lines.len();
     
     // Build base breadcrumb: package:file
     let base_breadcrumb = if config.package_name.is_empty() {
@@ -106,633 +115,300 @@ pub fn partition_typescript(
         format!("{}:{}", config.package_name, config.file_name)
     };
     
-    // Step 1: Extract imports as a separate chunk (if any exist)
-    extract_imports_chunk(
-        root,
-        source.as_bytes(),
-        &base_breadcrumb,
-        file_path,
-        catalog,
-        &content_hash,
-        &mut chunks,
-    );
+    // Step 1: Extract imports end line
+    let import_end_line = extract_imports_end_line(root, source.as_bytes());
     
-    // Step 2: Partition the rest of the file
-    partition_node(
-        root,
-        source.as_bytes(),
-        config,
-        &base_breadcrumb,
-        "",  // class_context (will be detected)
-        0,  // depth
-        file_path,
-        catalog,
-        &content_hash,
-        &mut chunks,
-    );
+    // Step 2: Initialize chunk ranges
+    let mut chunks: Vec<ChunkRange> = Vec::new();
     
-    chunks
+    if import_end_line > 0 {
+        chunks.push(ChunkRange { start_line: 1, end_line: import_end_line });
+        if import_end_line < total_lines {
+            chunks.push(ChunkRange { start_line: import_end_line + 1, end_line: total_lines });
+        }
+    } else {
+        chunks.push(ChunkRange { start_line: 1, end_line: total_lines });
+    }
+    
+    // Step 3: Iteratively split chunks that exceed budget
+    let mut changed = true;
+    while changed {
+        changed = false;
+        let mut new_chunks = Vec::new();
+        
+        for chunk_range in &chunks {
+            let chunk_text = get_lines_text(&lines, chunk_range.start_line, chunk_range.end_line);
+            let chunk_size = chunk_text.len();
+            
+            if chunk_size <= config.target_size {
+                new_chunks.push(chunk_range.clone());
+            } else {
+                let split_points = find_meaningful_split_points(
+                    root, source.as_bytes(), chunk_range.start_line, chunk_range.end_line,
+                );
+                
+                // Pick the split point closest to middle of the chunk
+                let best_split = pick_best_split(&split_points, chunk_range.start_line, chunk_range.end_line, chunk_size, config.target_size);
+                
+                if let Some(split_line) = best_split {
+                    if split_line > chunk_range.start_line && split_line < chunk_range.end_line {
+                        new_chunks.push(ChunkRange { start_line: chunk_range.start_line, end_line: split_line });
+                        new_chunks.push(ChunkRange { start_line: split_line + 1, end_line: chunk_range.end_line });
+                        changed = true;
+                    } else {
+                        new_chunks.push(chunk_range.clone());
+                    }
+                } else {
+                    new_chunks.push(chunk_range.clone());
+                }
+            }
+        }
+        chunks = new_chunks;
+    }
+    
+    // Step 4: Convert chunk ranges to PartitionedChunks
+    let mut result = Vec::new();
+    
+    for chunk_range in &chunks {
+        let chunk_text = get_lines_text(&lines, chunk_range.start_line, chunk_range.end_line);
+        if chunk_text.trim().is_empty() { continue; }
+        
+        let (chunk_type, symbol_name, breadcrumb_suffix) = get_chunk_metadata(
+            root, source.as_bytes(), chunk_range.start_line, chunk_range.end_line,
+        );
+        
+        let breadcrumb = if breadcrumb_suffix.is_empty() {
+            base_breadcrumb.clone()
+        } else {
+            format!("{}:{}", base_breadcrumb, breadcrumb_suffix)
+        };
+        
+        let chunk_kind = if import_end_line > 0 && chunk_range.end_line <= import_end_line {
+            "imports".to_string()
+        } else {
+            "content".to_string()
+        };
+        
+        result.push(PartitionedChunk {
+            source_uri: file_path.to_string(),
+            catalog: catalog.to_string(),
+            content_hash: content_hash.to_string(),
+            breadcrumb,
+            text: chunk_text,
+            start_line: chunk_range.start_line,
+            end_line: chunk_range.end_line,
+            chunk_type,
+            chunk_kind,
+            symbol_name,
+        });
+    }
+    
+    result
 }
 
-/// Extract import statements as a separate chunk
-fn extract_imports_chunk(
-    root: Node,
-    source: &[u8],
-    base_breadcrumb: &str,
-    file_path: &str,
-    catalog: &str,
-    content_hash: &str,
-    chunks: &mut Vec<PartitionedChunk>,
-) {
-    let mut import_nodes: Vec<Node> = Vec::new();
-    let mut cursor = root.walk();
+/// Pick the best split point - prefer splits that create balanced chunks
+fn pick_best_split(
+    split_points: &[usize],
+    start_line: usize,
+    end_line: usize,
+    chunk_size: usize,
+    target_size: usize,
+) -> Option<usize> {
+    if split_points.is_empty() {
+        return None;
+    }
     
-    // Find all import_statement nodes at the top level (children of program)
+    // Find split that creates two chunks as close to target as possible
+    // Prefer the first split that would make the first chunk fit in budget
+    for &split_line in split_points {
+        // Estimate size proportionally
+        let lines_before = split_line - start_line + 1;
+        let total_lines = end_line - start_line + 1;
+        let estimated_first_size = (chunk_size * lines_before) / total_lines;
+        
+        if estimated_first_size >= target_size / 4 && estimated_first_size <= target_size {
+            return Some(split_line);
+        }
+    }
+    
+    // Fall back to first split point
+    split_points.first().copied()
+}
+
+/// Get the end line of import statements (0 if no imports)
+fn extract_imports_end_line(root: Node, source: &[u8]) -> usize {
+    let mut cursor = root.walk();
+    let mut last_import_end = 0usize;
+    
     for child in root.children(&mut cursor) {
         if child.kind() == "import_statement" {
-            import_nodes.push(child);
+            last_import_end = child.end_position().row + 1;
+        } else if last_import_end > 0 {
+            break;
         }
     }
-    
-    if import_nodes.is_empty() {
-        return;
-    }
-    
-    // Combine all imports into one chunk
-    let first_import = import_nodes[0];
-    let last_import = *import_nodes.last().unwrap();
-    
-    let start_byte = first_import.start_byte();
-    let end_byte = last_import.end_byte();
-    
-    let import_text = String::from_utf8_lossy(&source[start_byte..end_byte]).to_string();
-    
-    // Calculate line numbers
-    let start_line = source[0..start_byte]
-        .iter()
-        .filter(|&&b| b == b'\n')
-        .count() + 1;
-    let end_line = source[0..end_byte]
-        .iter()
-        .filter(|&&b| b == b'\n')
-        .count() + 1;
-    
-    let breadcrumb = format!("{}:imports", base_breadcrumb);
-    
-    chunks.push(PartitionedChunk {
-        source_uri: file_path.to_string(),
-        catalog: catalog.to_string(),
-        content_hash: content_hash.to_string(),
-        breadcrumb,
-        text: import_text,
-        start_line,
-        end_line,
-        chunk_type: "imports".to_string(),
-        chunk_kind: "imports".to_string(),
-        symbol_name: None,
-    });
+    last_import_end
 }
 
-/// Recursively partition a node into chunks
-fn partition_node(
+/// Get text for a line range (1-indexed, inclusive)
+fn get_lines_text(lines: &[&str], start_line: usize, end_line: usize) -> String {
+    if start_line > end_line || start_line == 0 || start_line > lines.len() {
+        return String::new();
+    }
+    let end = end_line.min(lines.len());
+    lines[start_line - 1..end].join("\n")
+}
+
+/// Find meaningful split points within a line range
+fn find_meaningful_split_points(
+    root: Node,
+    source: &[u8],
+    start_line: usize,
+    end_line: usize,
+) -> Vec<usize> {
+    let mut candidates: Vec<usize> = Vec::new();
+    collect_split_candidates(root, source, start_line, end_line, &mut candidates);
+    candidates.sort();
+    candidates.dedup();
+    candidates.into_iter().filter(|&line| line >= start_line && line < end_line).collect()
+}
+
+fn collect_split_candidates(
     node: Node,
     source: &[u8],
-    config: &PartitionConfig,
-    breadcrumb_prefix: &str,
-    class_context: &str,
-    depth: usize,
-    file_path: &str,
-    catalog: &str,
-    content_hash: &str,
-    chunks: &mut Vec<PartitionedChunk>,
+    range_start: usize,
+    range_end: usize,
+    candidates: &mut Vec<usize>,
 ) {
-    // Build the full text for this node (including preceding comments)
-    let (text, start_line) = extract_text_with_preceding_comments(node, source);
-    let end_line = node.end_position().row + 1;
+    let node_start = node.start_position().row + 1;
+    let node_end = node.end_position().row + 1;
     
-    // Determine class context for this node
-    let new_class_context = if get_chunk_type(node) == "class" {
-        get_symbol_name(node, source).unwrap_or_else(|| class_context.to_string())
-    } else {
-        class_context.to_string()
-    };
+    if node_end < range_start || node_start > range_end { return; }
     
-    // Build breadcrumb
-    let breadcrumb = build_breadcrumb(node, source, breadcrumb_prefix, &new_class_context, depth);
-    
-    // Total size = breadcrumb + text
-    let total_size = breadcrumb.len() + text.len();
-    
-    // Check if we should stop splitting (but still split oversized at any depth)
-    if total_size <= config.target_size {
-        // This node fits in budget - create a chunk
-        if text.len() >= 50 {  // Minimum meaningful chunk size
-            let chunk_type = get_chunk_type(node);
-            let symbol_name = get_symbol_name(node, source);
-            
-            chunks.push(PartitionedChunk {
-                source_uri: file_path.to_string(),
-                catalog: catalog.to_string(),
-                content_hash: content_hash.to_string(),
-                breadcrumb,
-                text,
-                start_line,
-                end_line,
-                chunk_type,
-                chunk_kind: "content".to_string(),
-                symbol_name,
-            });
-        }
-        return;
-    }
-    
-    // If we're at max depth but still oversized, we still need to split
-    if depth >= config.max_breadcrumb_depth {
-        split_oversized_leaf(node, source, config, &breadcrumb, start_line, file_path, catalog, content_hash, chunks);
-        return;
-    }
-    
-    // Too big - need to split
-    // Get children that can be partitioned
-    let partitionable_children = get_partitionable_children(node);
-    
-    // Check if this is a function/method/class with a body that we should split
-    let is_function_like = matches!(node.kind(), "function_declaration" | "method_definition" | "arrow_function");
-    
-    if partitionable_children.is_empty() || (is_function_like && text.len() > config.target_size) {
-        // Leaf node OR oversized function/method - try AST-based splitting
-        split_oversized_leaf(node, source, config, &breadcrumb, start_line, file_path, catalog, content_hash, chunks);
-        return;
-    }
-    
-    // If we have children to partition
-    // Calculate cumulative text sizes
-    let child_sizes: Vec<(Node, usize, usize)> = partitionable_children
-        .iter()
-        .map(|child| {
-            let child_text = extract_text_with_preceding_comments(*child, source).0;
-            (*child, child_text.len(), child_text.len())
-        })
-        .collect();
-    
-    // Calculate cumulative sizes
-    let mut cumulative = 0usize;
-    let mut children_with_cumulative: Vec<(Node, usize, usize)> = Vec::new();
-    for (child, size, _) in child_sizes {
-        cumulative += size;
-        children_with_cumulative.push((child, size, cumulative));
-    }
-    
-    let total_content_size = cumulative;
-    
-    // Check if this node itself is too big
-    if total_size > config.target_size && partitionable_children.len() == 1 {
-        // Single child that makes us too big - try to split the child
-        partition_node(partitionable_children[0], source, config, breadcrumb_prefix, &new_class_context, depth + 1, file_path, catalog, content_hash, chunks);
-        return;
-    }
-    
-    // If total content is small enough per-child, just partition all children
-    if total_content_size <= config.target_size * partitionable_children.len() {
-        for child in partitionable_children {
-            partition_node(child, source, config, breadcrumb_prefix, &new_class_context, depth + 1, file_path, catalog, content_hash, chunks);
-        }
-        return;
-    }
-    
-    // Need to split into groups based on cumulative text size
-    let mut current_group_start = 0;
-    let mut current_group_size = 0;
-    
-    for (i, (_child, size, _)) in children_with_cumulative.iter().enumerate() {
-        current_group_size += size;
-        
-        if current_group_size >= config.target_size {
-            for j in current_group_start..=i {
-                partition_node(
-                    partitionable_children[j],
-                    source,
-                    config,
-                    breadcrumb_prefix,
-                    &new_class_context,
-                    depth + 1,
-                    file_path,
-                    catalog,
-                    content_hash,
-                    chunks,
-                );
-            }
-            
-            current_group_start = i + 1;
-            current_group_size = 0;
+    if is_meaningful_split_point(node, source) {
+        if node_end >= range_start && node_end < range_end {
+            candidates.push(node_end);
         }
     }
     
-    // Handle remaining children
-    for j in current_group_start..partitionable_children.len() {
-        partition_node(
-            partitionable_children[j],
-            source,
-            config,
-            breadcrumb_prefix,
-            &new_class_context,
-            depth + 1,
-            file_path,
-            catalog,
-            content_hash,
-            chunks,
-        );
-    }
-}
-
-/// Split an oversized leaf node using AST-based split points
-/// Falls back to line-based splitting if AST splitting fails
-fn split_oversized_leaf(
-    node: Node,
-    source: &[u8],
-    config: &PartitionConfig,
-    breadcrumb: &str,
-    start_line_base: usize,
-    file_path: &str,
-    catalog: &str,
-    content_hash: &str,
-    chunks: &mut Vec<PartitionedChunk>,
-) {
-    let start_byte = node.start_byte();
-    let end_byte = node.end_byte();
-    let text = String::from_utf8_lossy(&source[start_byte..end_byte]).to_string();
-    let chunk_type = get_chunk_type(node);
-    
-    // Find AST-based split points
-    let split_points = find_ast_split_points(node, source, config.target_size);
-
-    
-    if split_points.is_empty() {
-        // No natural split points found - fall back to line-based splitting
-        split_by_lines(&text, start_line_base, config, breadcrumb, chunk_type, file_path, catalog, content_hash, chunks);
-        return;
-    }
-    
-    // Emit chunks at AST split points
-    let lines_vec: Vec<&str> = text.lines().collect();
-    
-    for (i, (start_idx, end_idx)) in split_points.iter().enumerate() {
-        let part_text = lines_vec[*start_idx..*end_idx].join("\n");
-        let part_size = part_text.len();
-        let start_line = start_line_base + start_idx;
-        let end_line = start_line_base + end_idx.saturating_sub(1);
-        
-        // If this chunk is still oversized, try line-based splitting
-        if part_size > config.target_size {
-            split_by_lines(&part_text, start_line, config, breadcrumb, chunk_type.clone(), file_path, catalog, content_hash, chunks);
-        } else {
-            chunks.push(PartitionedChunk {
-                source_uri: file_path.to_string(),
-                catalog: catalog.to_string(),
-                content_hash: content_hash.to_string(),
-                breadcrumb: format!("{} (part {}/{})", breadcrumb, i + 1, split_points.len()),
-                text: part_text,
-                start_line,
-                end_line,
-                chunk_type: chunk_type.clone(),
-                chunk_kind: "content".to_string(),
-                symbol_name: None,
-            });
-        }
-    }
-}
-
-/// Find AST-based split points for an oversized node
-/// Returns a list of (start_line, end_line) tuples for each chunk
-fn find_ast_split_points(node: Node, source: &[u8], target_size: usize) -> Vec<(usize, usize)> {
-    let mut split_candidates = Vec::new();
-    
-    // Get the starting line of this node (to convert absolute to relative)
-    let node_start_line = node.start_position().row;
-    
-    // Traverse to find split-able statements
-    find_split_candidates(node, source, node_start_line, &mut split_candidates);
-    
-    if split_candidates.is_empty() {
-        return Vec::new();
-    }
-    
-    // Convert absolute line numbers to relative (0-based within this node)
-    let relative_candidates: Vec<usize> = split_candidates
-        .iter()
-        .map(|&abs_line| abs_line.saturating_sub(node_start_line))
-        .collect();
-    
-    // Get the text of this node
-    let text = String::from_utf8_lossy(&source[node.start_byte()..node.end_byte()]);
-    let lines_vec: Vec<&str> = text.lines().collect();
-    
-    // Build chunks by walking through lines and splitting at candidates when size exceeds target
-    let mut split_points = Vec::new();
-    let mut chunk_start = 0;
-    
-    // Add 0 as implicit first candidate, and lines_vec.len() as last
-    let mut all_candidates = vec![0];
-    all_candidates.extend(relative_candidates.iter().cloned());
-    all_candidates.push(lines_vec.len());
-    all_candidates.sort();
-    all_candidates.dedup();
-    
-    for i in 1..all_candidates.len() {
-        let prev_candidate = all_candidates[i - 1];
-        let curr_candidate = all_candidates[i];
-        
-        if curr_candidate > lines_vec.len() || prev_candidate >= curr_candidate {
-            continue;
-        }
-        
-        // Calculate size from chunk_start to curr_candidate
-        let segment_size = lines_vec[chunk_start..curr_candidate].join("\n").len();
-        
-        if segment_size > target_size && chunk_start < prev_candidate {
-            // Split at previous candidate
-            split_points.push((chunk_start, prev_candidate));
-            chunk_start = prev_candidate;
-        }
-    }
-    
-    // Add final chunk
-    if chunk_start < lines_vec.len() {
-        split_points.push((chunk_start, lines_vec.len()));
-    }
-    
-    // Validate and deduplicate
-    split_points.retain(|(start, end)| start < end && *end <= lines_vec.len());
-    split_points.sort_by_key(|(start, _)| *start);
-    split_points.dedup();
-    
-        // eprintln!("DEBUG: Found {} split points: {:?}", split_points.len(), split_points);
-    split_points
-}
-
-/// Find candidate split points by looking for major AST structures
-fn find_split_candidates(node: Node, source: &[u8], line_offset: usize, candidates: &mut Vec<usize>) {
-    let start_line = node.start_position().row;
-    let absolute_line = line_offset + start_line;
-    
-    // Check if this node is a good split point
-    if is_good_split_point(node, source) {
-        // eprintln!("DEBUG: Found good split point at line {}: {}", absolute_line, node.kind());
-        candidates.push(absolute_line);
-    }
-    
-    // Recurse into children
     let mut cursor = node.walk();
     for child in node.children(&mut cursor) {
-        find_split_candidates(child, source, line_offset, candidates);
+        collect_split_candidates(child, source, range_start, range_end, candidates);
     }
 }
 
-/// Check if this node is a good split point
-fn is_good_split_point(node: Node, _source: &[u8]) -> bool {
+fn is_meaningful_split_point(node: Node, source: &[u8]) -> bool {
     match node.kind() {
-        // Statement-level structures are good split points
-        "statement_block" => {
-            // Check if this is a top-level block (not nested too deep)
-            let parent = node.parent();
-            if let Some(p) = parent {
-                !matches!(p.kind(), "statement_block" | "if_statement" | "for_statement")
-            } else {
-                false
-            }
+        "function_declaration" | "class_declaration" | "interface_declaration" |
+        "type_alias_declaration" | "enum_declaration" => true,
+        
+        "export_statement" => {
+            let mut cursor = node.walk();
+            node.children(&mut cursor).any(|c| matches!(c.kind(),
+                "function_declaration" | "class_declaration" | "interface_declaration" |
+                "type_alias_declaration" | "enum_declaration"))
         }
         
-        // Control flow statements
-        "if_statement" | "try_statement" | "switch_statement" | "for_statement" 
-        | "for_in_statement" | "while_statement" | "do_statement" => true,
+        "method_definition" => true,
         
-        // Return statements (good phase boundaries)
-        "return_statement" => true,
+        "public_field_definition" | "property_declaration" => {
+            node.end_byte() - node.start_byte() > 50
+        }
         
-        // Enum and object members (for large enums/objects)
-        "enum_assignment" | "enum_declaration" => true,
-        
-        // Comments with substantial content (JSDoc blocks)
-        "comment" => true,
-        
-        // Variable declarations (phase boundaries)
-        "variable_declaration" | "lexical_declaration" => true,
-        
-        // Expression statements can be split points
-        "expression_statement" => {
-            // Only if it's a substantial expression
-            let size = node.end_byte() - node.start_byte();
-            size > 100
+        "lexical_declaration" | "variable_declaration" => {
+            let text = String::from_utf8_lossy(&source[node.start_byte()..node.end_byte()]);
+            text.starts_with("const") || text.starts_with("let") || text.starts_with("var")
         }
         
         _ => false,
     }
 }
 
-/// Fallback: split by lines when AST splitting fails
-fn split_by_lines(
-    text: &str,
-    start_line_base: usize,
-    config: &PartitionConfig,
-    breadcrumb: &str,
-    chunk_type: String,
-    file_path: &str,
-    catalog: &str,
-    content_hash: &str,
-    chunks: &mut Vec<PartitionedChunk>,
+/// Get chunk metadata (type, symbol name, breadcrumb suffix) for a line range
+fn get_chunk_metadata(
+    root: Node,
+    source: &[u8],
+    start_line: usize,
+    end_line: usize,
+) -> (String, Option<String>, String) {
+    let mut best_node: Option<Node> = None;
+    let mut best_size = usize::MAX;
+    
+    find_best_node(root, source, start_line, end_line, &mut best_node, &mut best_size);
+    
+    if let Some(node) = best_node {
+        let chunk_type = get_chunk_type(node);
+        let symbol_name = get_symbol_name(node, source);
+        let breadcrumb_suffix = symbol_name.clone().unwrap_or_default();
+        (chunk_type, symbol_name, breadcrumb_suffix)
+    } else {
+        ("code".to_string(), None, String::new())
+    }
+}
+
+fn find_best_node<'a>(
+    node: Node<'a>,
+    source: &[u8],
+    chunk_start: usize,
+    chunk_end: usize,
+    best_node: &mut Option<Node<'a>>,
+    best_size: &mut usize,
 ) {
-    let lines_vec: Vec<&str> = text.lines().collect();
-    let mut split_points: Vec<(usize, usize)> = Vec::new();
-    let mut current_size = 0;
-    let mut current_start = 0;
+    let node_start = node.start_position().row + 1;
+    let node_end = node.end_position().row + 1;
     
-    for (i, line) in lines_vec.iter().enumerate() {
-        let line_size = line.len() + 1;
-        if current_size + line_size > config.target_size && current_size > 0 {
-            split_points.push((current_start, i));
-            current_size = 0;
-            current_start = i;
+    if node_start > chunk_start || node_end < chunk_end {
+        return;
+    }
+    
+    if is_meaningful_split_point(node, source) {
+        let node_size = node_end - node_start;
+        if node_size < *best_size {
+            *best_node = Some(node);
+            *best_size = node_size;
         }
-        current_size += line_size;
     }
     
-    if current_start < lines_vec.len() {
-        split_points.push((current_start, lines_vec.len()));
-    }
-    
-    for (part_num, (start_idx, end_idx)) in split_points.iter().enumerate() {
-        let part_text = lines_vec[*start_idx..*end_idx].join("\n");
-        let start_line = start_line_base + start_idx;
-        let end_line = start_line_base + end_idx.saturating_sub(1);
-        
-        chunks.push(PartitionedChunk {
-            source_uri: file_path.to_string(),
-            catalog: catalog.to_string(),
-            content_hash: content_hash.to_string(),
-            breadcrumb: format!("{} (part {}/{})", breadcrumb, part_num + 1, split_points.len()),
-            text: part_text,
-            start_line,
-            end_line,
-            chunk_type: chunk_type.clone(),
-            chunk_kind: "content".to_string(),
-            symbol_name: None,
-        });
-    }
-}
-
-/// Get children that can be partitioned (methods, functions, classes, etc.)
-fn get_partitionable_children(node: Node) -> Vec<Node> {
     let mut cursor = node.walk();
-    let mut result = Vec::new();
-    
     for child in node.children(&mut cursor) {
-        if is_meaningful_node(child) {
-            result.push(child);
-        }
-    }
-    
-    result
-}
-
-/// Check if a node is meaningful for partitioning
-fn is_meaningful_node(node: Node) -> bool {
-    match node.kind() {
-        "function_declaration" |
-        "method_definition" |
-        "class_declaration" |
-        "class" |
-        "interface_declaration" |
-        "type_alias_declaration" |
-        "enum_declaration" |
-        "export_statement" |
-        "variable_declaration" |
-        "lexical_declaration" => true,
-        
-        "comment" | "whitespace" => false,
-        
-        _ => {
-            let size = node.end_byte() - node.start_byte();
-            size > 50
-        }
+        find_best_node(child, source, chunk_start, chunk_end, best_node, best_size);
     }
 }
 
-/// Extract text including preceding JSDoc comment
-fn extract_text_with_preceding_comments(node: Node, source: &[u8]) -> (String, usize) {
-    let start_byte = node.start_byte();
-    let end_byte = node.end_byte();
-    let _start_line = node.start_position().row + 1;
-    
-    // Check for preceding JSDoc comment
-    let actual_start = if let Some(comment) = find_preceding_comment(node, source) {
-        comment.start_byte()
-    } else {
-        start_byte
-    };
-    
-    let actual_start_line = source[0..actual_start]
-        .iter()
-        .filter(|&&b| b == b'\n')
-        .count() + 1;
-    
-    let text = String::from_utf8_lossy(&source[actual_start..end_byte]).to_string();
-    (text, actual_start_line)
-}
-
-/// Find the JSDoc comment immediately preceding a node
-/// Skips over non-JSDoc comments (like eslint-disable comments) to find the actual JSDoc
-fn find_preceding_comment<'a>(node: Node<'a>, source: &'a [u8]) -> Option<Node<'a>> {
-    let parent = node.parent()?;
-    let mut cursor = parent.walk();
-    let mut siblings: Vec<Node> = Vec::new();
-    
-    // Collect all siblings before this node
-    for child in parent.children(&mut cursor) {
-        if child == node {
-            break;
-        }
-        siblings.push(child);
-    }
-    
-    // Walk backwards through siblings looking for a JSDoc comment
-    // Skip over non-JSDoc comments (like eslint-disable comments)
-    for sibling in siblings.into_iter().rev() {
-        if sibling.kind() == "comment" {
-            let comment_text = String::from_utf8_lossy(&source[sibling.start_byte()..sibling.end_byte()]);
-            if comment_text.trim_start().starts_with("/**") {
-                return Some(sibling);
-            }
-            // Non-JSDoc comment - keep looking
-        } else {
-            // Non-comment node - stop looking
-            break;
-        }
-    }
-    
-    None
-}
-
-/// Build breadcrumb for a node: package:file:class:symbol
-fn build_breadcrumb(node: Node, source: &[u8], prefix: &str, class_context: &str, depth: usize) -> String {
-    if depth == 0 {
-        return prefix.to_string();
-    }
-    
-    if let Some(name) = get_symbol_name(node, source) {
-        if !class_context.is_empty() && depth == 1 {
-            // At class level - just add class to prefix
-            format!("{}:{}", prefix, name)
-        } else if !class_context.is_empty() && depth > 1 {
-            // Inside class - add class and method
-            format!("{}:{}:{}", prefix, class_context, name)
-        } else {
-            // Top-level symbol
-            format!("{}:{}", prefix, name)
-        }
-    } else {
-        prefix.to_string()
-    }
-}
-
-/// Get the chunk type for a node
 fn get_chunk_type(node: Node) -> String {
-    // For export_statement, look inside for the actual declaration type
     if node.kind() == "export_statement" {
         let mut cursor = node.walk();
         for child in node.children(&mut cursor) {
             let child_type = match child.kind() {
-                "function_declaration" => "function".to_string(),
-                "class_declaration" => "class".to_string(),
-                "interface_declaration" => "interface".to_string(),
-                "type_alias_declaration" => "type".to_string(),
-                "enum_declaration" => "enum".to_string(),
-                "variable_declaration" | "lexical_declaration" => "variable".to_string(),
+                "function_declaration" => "function",
+                "class_declaration" => "class",
+                "interface_declaration" => "interface",
+                "type_alias_declaration" => "type",
+                "enum_declaration" => "enum",
+                "lexical_declaration" | "variable_declaration" => "variable",
                 _ => continue,
             };
-            return child_type;
+            return child_type.to_string();
         }
         return "code".to_string();
     }
     
     match node.kind() {
-        "function_declaration" | "method_definition" => "function".to_string(),
-        "arrow_function" => "arrow_function".to_string(),
-        "class_declaration" | "class" => "class".to_string(),
-        "interface_declaration" => "interface".to_string(),
-        "type_alias_declaration" => "type".to_string(),
-        "enum_declaration" => "enum".to_string(),
-        "property_declaration" | "public_field_definition" => "field".to_string(),
-        _ => "code".to_string(),
-    }
+        "function_declaration" | "method_definition" => "function",
+        "class_declaration" => "class",
+        "interface_declaration" => "interface",
+        "type_alias_declaration" => "type",
+        "enum_declaration" => "enum",
+        "lexical_declaration" | "variable_declaration" => "variable",
+        "public_field_definition" | "property_declaration" => "field",
+        _ => "code",
+    }.to_string()
 }
 
-/// Get the symbol name from a node
 fn get_symbol_name(node: Node, source: &[u8]) -> Option<String> {
-    // For export_statement, look inside for the actual declaration
     if node.kind() == "export_statement" {
         let mut cursor = node.walk();
         for child in node.children(&mut cursor) {
-            // Recursively get symbol name from inner declaration
             if let Some(name) = get_symbol_name(child, source) {
                 return Some(name);
             }
@@ -741,7 +417,6 @@ fn get_symbol_name(node: Node, source: &[u8]) -> Option<String> {
     }
     
     let mut cursor = node.walk();
-    
     for child in node.children(&mut cursor) {
         match child.kind() {
             "identifier" | "property_identifier" | "type_identifier" => {
@@ -751,7 +426,6 @@ fn get_symbol_name(node: Node, source: &[u8]) -> Option<String> {
             _ => {}
         }
     }
-    
     None
 }
 
@@ -764,10 +438,11 @@ mod tests {
         let mut result = String::new();
         for (i, chunk) in chunks.iter().enumerate() {
             result.push_str(&format!(
-                "=== CHUNK {} ===\nBreadcrumb: {}\nType: {}\nSymbol: {:?}\nLines: {}-{}\nSize: {} chars\nText preview (5 lines):\n{}\n\n",
+                "=== CHUNK {} ===\nBreadcrumb: {}\nType: {}\nKind: {}\nSymbol: {:?}\nLines: {}-{}\nSize: {} chars\nText preview (5 lines):\n{}\n\n",
                 i + 1,
                 chunk.breadcrumb,
                 chunk.chunk_type,
+                chunk.chunk_kind,
                 chunk.symbol_name,
                 chunk.start_line,
                 chunk.end_line,
@@ -846,59 +521,12 @@ export class Calculator {
         println!("\n=== PARTITION RESULTS ===");
         println!("Total chunks: {}", chunks.len());
         
-        let mut oversized = 0;
         for chunk in &chunks {
-            let text_size = chunk.text.len();
-            let total_size = chunk.breadcrumb.len() + chunk.text.len();
-            if text_size > 1800 {
-                oversized += 1;
-                println!("⚠️  {}: {} chars (text: {})", chunk.breadcrumb, total_size, text_size);
-            } else {
-                println!("✓ {}: {} chars", chunk.breadcrumb, total_size);
-            }
+            let size = chunk.breadcrumb.len() + chunk.text.len();
+            println!("{}: lines {}-{}, {} chars", chunk.breadcrumb, chunk.start_line, chunk.end_line, size);
         }
         
-        println!("\nOversized text chunks (>1800): {}", oversized);
-        
-        assert!(chunks.len() > 10, "Should have multiple chunks");
-        // assert!(oversized < 2, "Should have minimal oversized chunks");
-        
+        assert!(chunks.len() > 5, "Should have multiple chunks");
         assert_snapshot!(format_chunks(&chunks));
     }
-
-    
-    #[test]
-    fn test_token_count_check() {
-        use tokenizers::Tokenizer;
-        
-        // Load a tokenizer similar to our embedding model
-        let tokenizer = Tokenizer::from_file("models/tokenizer.json").ok();
-        
-        let source = include_str!("../../test_artifacts/JsonFile.ts");
-        let config = PartitionConfig {
-            file_name: "JsonFile.ts".to_string(),
-            package_name: "@rushstack/node-core-library".to_string(),
-            ..Default::default()
-        };
-        let chunks = partition_typescript(source, &config, "JsonFile.ts", "node-core-library");
-        
-        println!("\n=== TOKEN COUNT CHECK ===");
-        println!("Checking chunks that exceed 512 tokens...");
-        
-        if let Some(tokenizer) = tokenizer {
-            for chunk in &chunks {
-                let encoding = tokenizer.encode(chunk.text.as_str(), true).unwrap();
-                let token_count = encoding.len();
-                
-                if token_count > 512 {
-                    println!("⚠️  {}: {} chars, {} tokens (EXCEEDS 512!)", 
-                        chunk.breadcrumb, chunk.text.len(), token_count);
-                }
-            }
-        } else {
-            println!("Tokenizer not available - skipping token count check");
-            println!("Run 'cargo build' first to download the model");
-        }
-    }
-
 }

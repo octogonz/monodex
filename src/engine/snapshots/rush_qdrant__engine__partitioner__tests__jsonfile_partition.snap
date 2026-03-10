@@ -1,297 +1,144 @@
 ---
 source: src/engine/partitioner.rs
-assertion_line: 737
+assertion_line: 530
 expression: format_chunks(&chunks)
 ---
 === CHUNK 1 ===
 Breadcrumb: @rushstack/node-core-library:JsonFile.ts
 Type: code
+Kind: imports
 Symbol: None
-Lines: 8-8
-Size: 137 chars
+Lines: 1-10
+Size: 444 chars
 Text preview (5 lines):
-import type { JsonSchema, IJsonSchemaErrorInfo, IJsonSchemaValidateOptions } from './JsonSchema';
+// Copyright (c) Microsoft Corporation. All rights reserved. Licensed under the MIT license.
+// See LICENSE in the project root for license information.
+
+import * as os from 'node:os';
+
 
 === CHUNK 2 ===
 Breadcrumb: @rushstack/node-core-library:JsonFile.ts
 Type: code
+Kind: content
 Symbol: None
-Lines: 42-101
-Size: 2519 chars
+Lines: 11-101
+Size: 3681 chars
 Text preview (5 lines):
+
 /**
- * Specifies the variant of JSON syntax to be used.
+ * Represents a JSON-serializable object whose type has not been determined yet.
  *
- * @public
- */
+ * @remarks
 
 === CHUNK 3 ===
 Breadcrumb: @rushstack/node-core-library:JsonFile.ts
 Type: code
+Kind: content
 Symbol: None
-Lines: 103-118
-Size: 450 chars
+Lines: 102-171
+Size: 2639 chars
 Text preview (5 lines):
+
 /**
  * Options for {@link JsonFile.parseString}, {@link JsonFile.load}, and {@link JsonFile.loadAsync}.
  *
  * @public
- */
 
 === CHUNK 4 ===
 Breadcrumb: @rushstack/node-core-library:JsonFile.ts
 Type: code
+Kind: content
 Symbol: None
-Lines: 120-125
-Size: 261 chars
+Lines: 172-218
+Size: 1448 chars
 Text preview (5 lines):
-/**
- * Options for {@link JsonFile.loadAndValidate} and {@link JsonFile.loadAndValidateAsync}
- *
- * @public
- */
 
-=== CHUNK 5 ===
-Breadcrumb: @rushstack/node-core-library:JsonFile.ts
-Type: code
-Symbol: None
-Lines: 127-171
-Size: 2003 chars
-Text preview (5 lines):
-/**
- * Options for {@link JsonFile.stringify}
- *
- * @public
- */
-
-=== CHUNK 6 ===
-Breadcrumb: @rushstack/node-core-library:JsonFile.ts
-Type: code
-Symbol: None
-Lines: 173-198
-Size: 912 chars
-Text preview (5 lines):
 /**
  * Options for {@link JsonFile.save} and {@link JsonFile.saveAsync}.
  *
  * @public
- */
+
+=== CHUNK 5 ===
+Breadcrumb: @rushstack/node-core-library:JsonFile.ts:JsonFile
+Type: class
+Kind: content
+Symbol: Some("JsonFile")
+Lines: 219-270
+Size: 1677 chars
+Text preview (5 lines):
+      return jju.parse(contents, parseOptions);
+    } catch (error) {
+      if (FileSystem.isNotExistError(error as Error)) {
+        throw error;
+      } else {
+
+=== CHUNK 6 ===
+Breadcrumb: @rushstack/node-core-library:JsonFile.ts:JsonFile
+Type: class
+Kind: content
+Symbol: Some("JsonFile")
+Lines: 271-316
+Size: 1545 chars
+Text preview (5 lines):
+    jsonSchema.validateObject(jsonObject, jsonFilename, options);
+
+    return jsonObject;
+  }
+
 
 === CHUNK 7 ===
-Breadcrumb: @rushstack/node-core-library:JsonFile.ts:JsonFile:_formatPathForError
-Type: field
-Symbol: Some("_formatPathForError")
-Lines: 207-210
-Size: 180 chars
+Breadcrumb: @rushstack/node-core-library:JsonFile.ts:JsonFile
+Type: class
+Kind: content
+Symbol: Some("JsonFile")
+Lines: 317-362
+Size: 1638 chars
 Text preview (5 lines):
-/**
-   * @internal
-   */
-  public static _formatPathForError: (path: string) => string = (path: string) => path
+    jsonSchema.validateObjectWithCallback(jsonObject, errorCallback);
+
+    return jsonObject;
+  }
+
 
 === CHUNK 8 ===
-Breadcrumb: @rushstack/node-core-library:JsonFile.ts:JsonFile:load
-Type: function
-Symbol: Some("load")
-Lines: 212-231
-Size: 697 chars
+Breadcrumb: @rushstack/node-core-library:JsonFile.ts:JsonFile
+Type: class
+Kind: content
+Symbol: Some("JsonFile")
+Lines: 363-410
+Size: 1707 chars
 Text preview (5 lines):
-/**
-   * Loads a JSON file.
-   */
-  public static load(jsonFilename: string, options?: IJsonFileParseOptions): JsonObject {
-    try {
+
+    if (previousJson !== '') {
+      // NOTE: We don't use mode=json here because comments aren't allowed by strict JSON
+      stringified = jju.update(previousJson, newJsonObject, {
+        mode: explicitMode ?? JsonSyntax.Json5,
 
 === CHUNK 9 ===
-Breadcrumb: @rushstack/node-core-library:JsonFile.ts:JsonFile:loadAsync
-Type: function
-Symbol: Some("loadAsync")
-Lines: 233-252
-Size: 757 chars
+Breadcrumb: @rushstack/node-core-library:JsonFile.ts:JsonFile
+Type: class
+Kind: content
+Symbol: Some("JsonFile")
+Lines: 411-464
+Size: 1722 chars
 Text preview (5 lines):
-/**
-   * An async version of {@link JsonFile.load}.
-   */
-  public static async loadAsync(jsonFilename: string, options?: IJsonFileParseOptions): Promise<JsonObject> {
-    try {
+    if (options.updateExistingFile || options.onlyIfChanged) {
+      try {
+        oldBuffer = FileSystem.readFileToBuffer(jsonFilename);
+      } catch (error) {
+        if (!FileSystem.isNotExistError(error as Error)) {
 
 === CHUNK 10 ===
-Breadcrumb: @rushstack/node-core-library:JsonFile.ts:JsonFile:parseString
-Type: function
-Symbol: Some("parseString")
-Lines: 254-260
-Size: 341 chars
+Breadcrumb: @rushstack/node-core-library:JsonFile.ts:JsonFile
+Type: class
+Kind: content
+Symbol: Some("JsonFile")
+Lines: 465-607
+Size: 4666 chars
 Text preview (5 lines):
-/**
-   * Parses a JSON file's contents.
-   */
-  public static parseString(jsonContents: string, options?: IJsonFileParseOptions): JsonObject {
-    const parseOptions: jju.ParseOptions = JsonFile._buildJjuParseOptions(options);
-
-=== CHUNK 11 ===
-Breadcrumb: @rushstack/node-core-library:JsonFile.ts:JsonFile:loadAndValidate
-Type: function
-Symbol: Some("loadAndValidate")
-Lines: 262-274
-Size: 440 chars
-Text preview (5 lines):
-/**
-   * Loads a JSON file and validate its schema.
-   */
-  public static loadAndValidate(
-    jsonFilename: string,
-
-=== CHUNK 12 ===
-Breadcrumb: @rushstack/node-core-library:JsonFile.ts:JsonFile:loadAndValidateAsync
-Type: function
-Symbol: Some("loadAndValidateAsync")
-Lines: 276-288
-Size: 487 chars
-Text preview (5 lines):
-/**
-   * An async version of {@link JsonFile.loadAndValidate}.
-   */
-  public static async loadAndValidateAsync(
-    jsonFilename: string,
-
-=== CHUNK 13 ===
-Breadcrumb: @rushstack/node-core-library:JsonFile.ts:JsonFile:loadAndValidateWithCallback
-Type: function
-Symbol: Some("loadAndValidateWithCallback")
-Lines: 290-305
-Size: 642 chars
-Text preview (5 lines):
-/**
-   * Loads a JSON file and validate its schema, reporting errors using a callback
-   * @remarks
-   * See JsonSchema.validateObjectWithCallback() for more info.
-   */
-
-=== CHUNK 14 ===
-Breadcrumb: @rushstack/node-core-library:JsonFile.ts:JsonFile:loadAndValidateWithCallbackAsync
-Type: function
-Symbol: Some("loadAndValidateWithCallbackAsync")
-Lines: 307-320
-Size: 589 chars
-Text preview (5 lines):
-/**
-   * An async version of {@link JsonFile.loadAndValidateWithCallback}.
-   */
-  public static async loadAndValidateWithCallbackAsync(
-    jsonFilename: string,
-
-=== CHUNK 15 ===
-Breadcrumb: @rushstack/node-core-library:JsonFile.ts:JsonFile:stringify
-Type: function
-Symbol: Some("stringify")
-Lines: 322-330
-Size: 480 chars
-Text preview (5 lines):
-/**
-   * Serializes the specified JSON object to a string buffer.
-   * @param jsonObject - the object to be serialized
-   * @param options - other settings that control serialization
-   * @returns a JSON string, with newlines, and indented with two spaces
-
-=== CHUNK 16 ===
-Breadcrumb: @rushstack/node-core-library:JsonFile.ts:JsonFile:updateString
-Type: function
-Symbol: Some("updateString")
-Lines: 332-395
-Size: 2174 chars
-Text preview (5 lines):
-/**
-   * Serializes the specified JSON object to a string buffer.
-   * @param previousJson - the previous JSON string, which will be updated
-   * @param newJsonObject - the object to be serialized
-   * @param options - other settings that control serialization
-
-=== CHUNK 17 ===
-Breadcrumb: @rushstack/node-core-library:JsonFile.ts:JsonFile:save
-Type: function
-Symbol: Some("save")
-Lines: 397-453
-Size: 2018 chars
-Text preview (5 lines):
-/**
-   * Saves the file to disk.  Returns false if nothing was written due to options.onlyIfChanged.
-   * @param jsonObject - the object to be saved
-   * @param jsonFilename - the file path to write
-   * @param options - other settings that control how the file is saved
-
-=== CHUNK 18 ===
-Breadcrumb: @rushstack/node-core-library:JsonFile.ts:JsonFile:saveAsync
-Type: function
-Symbol: Some("saveAsync")
-Lines: 455-507
-Size: 1762 chars
-Text preview (5 lines):
-/**
-   * An async version of {@link JsonFile.save}.
-   */
-  public static async saveAsync(
-    jsonObject: JsonObject,
-
-=== CHUNK 19 ===
-Breadcrumb: @rushstack/node-core-library:JsonFile.ts:JsonFile:validateNoUndefinedMembers
-Type: function
-Symbol: Some("validateNoUndefinedMembers")
-Lines: 509-515
-Size: 343 chars
-Text preview (5 lines):
-/**
-   * Used to validate a data structure before writing.  Reports an error if there
-   * are any undefined members.
-   */
-  public static validateNoUndefinedMembers(jsonObject: JsonObject): void {
-
-=== CHUNK 20 ===
-Breadcrumb: @rushstack/node-core-library:JsonFile.ts:JsonFile:_validateNoUndefinedMembers
-Type: function
-Symbol: Some("_validateNoUndefinedMembers")
-Lines: 518-537
-Size: 771 chars
-Text preview (5 lines):
-private static _validateNoUndefinedMembers(jsonObject: JsonObject, keyPath: string[]): void {
-    if (!jsonObject) {
-      return;
-    }
-    if (typeof jsonObject === 'object') {
-
-=== CHUNK 21 ===
-Breadcrumb: @rushstack/node-core-library:JsonFile.ts:JsonFile:_formatKeyPath
-Type: function
-Symbol: Some("_formatKeyPath")
-Lines: 541-566
-Size: 954 chars
-Text preview (5 lines):
-private static _formatKeyPath(keyPath: string[]): string {
-    let result: string = '';
-
-    for (const key of keyPath) {
-      if (/^[0-9]+$/.test(key)) {
-
-=== CHUNK 22 ===
-Breadcrumb: @rushstack/node-core-library:JsonFile.ts:JsonFile:_formatJsonHeaderComment
-Type: function
-Symbol: Some("_formatJsonHeaderComment")
-Lines: 568-585
-Size: 669 chars
-Text preview (5 lines):
-private static _formatJsonHeaderComment(headerComment: string): string {
-    if (headerComment === '') {
-      return '';
-    }
-    const lines: string[] = headerComment.split('\n');
-
-=== CHUNK 23 ===
-Breadcrumb: @rushstack/node-core-library:JsonFile.ts:JsonFile:_buildJjuParseOptions
-Type: function
-Symbol: Some("_buildJjuParseOptions")
-Lines: 587-606
-Size: 587 chars
-Text preview (5 lines):
-private static _buildJjuParseOptions(options: IJsonFileParseOptions = {}): jju.ParseOptions {
-    const parseOptions: jju.ParseOptions = {
-      reserved_keys: 'replace'
-    };
+    if (options.updateExistingFile || options.onlyIfChanged) {
+      try {
+        oldBuffer = await FileSystem.readFileToBufferAsync(jsonFilename);
+      } catch (error) {
+        if (!FileSystem.isNotExistError(error as Error)) {

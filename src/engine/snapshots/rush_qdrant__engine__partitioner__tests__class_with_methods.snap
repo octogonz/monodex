@@ -1,16 +1,18 @@
 ---
 source: src/engine/partitioner.rs
+assertion_line: 508
 expression: format_chunks(&chunks)
 ---
 === CHUNK 1 ===
 Breadcrumb: @math/package:Calculator.ts
 Type: code
+Kind: content
 Symbol: None
-Lines: 2-27
+Lines: 1-26
 Size: 451 chars
 Text preview (5 lines):
+
 /**
  * A simple calculator class.
  */
 export class Calculator {
-    /**

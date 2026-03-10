@@ -334,15 +334,59 @@ Analysis of `JsonFile.ts` revealed gaps in coverage:
 2. Create chunks for file-level constants and type definitions
 3. Attach orphan comments to nearby code or create standalone chunks
 
-### Chunking Algorithm Philosophy
+### Chunking Algorithm
 
-The chunking algorithm recursively subdivides a file into smaller AST branches until every piece fits within the embedding model's token limit:
+**Goal:** Divide a file into chunks that fit the embedding budget, splitting only at meaningful AST boundaries.
 
-1. Start with the whole file. Does it fit in one chunk? Done.
-2. Otherwise, examine the AST and find a meaningful place to split.
-3. Repeat until all pieces fit (including overlap budget).
+#### Two Worlds Model
 
-**Key principle:** "Split" means cutting a string into substrings. AT NO POINT should lines be skipped or gaps created. Every line of source code must belong to exactly one chunk (with overlap meaning some lines belong to multiple chunks).
+The algorithm coordinates two separate concerns:
+
+**Chunk Land (sizing/selection):**
+- The file is a sequence of line ranges (chunks)
+- Can measure any chunk's size in characters
+- Can split a chunk at a given line number
+- Knows the budget and when we're done
+- Simple bookkeeping, no AST knowledge
+
+**AST Land (structure/meaning):**
+- Recursively walks the syntax tree
+- Provides **candidate split points** as line numbers
+- "Meaningful" = doesn't break semantic units (e.g., between methods, not mid-function)
+- No opinions about sizes, only structure
+
+#### Coordination Algorithm
+
+```
+1. Chunk land: Start with one chunk = entire file
+
+2. While any chunk exceeds budget:
+   a. Chunk land: "Chunk X at lines [a,b] is too big"
+   b. AST land: "Meaningful split points in [a,b]: [line1, line2, line3, ...]"
+   c. Chunk land: Try splits, pick the one that best balances sizes
+   d. Chunk land: Replace chunk X with two new chunks at the split point
+
+3. Done - all chunks fit budget
+```
+
+#### Why This Works
+
+- **Wrapper lines stay attached:** Split points are line numbers, not AST nodes. `export class A {` stays with its chunk naturally—no special handling needed.
+- **Siblings group together:** If methods A, B, C total 5,000 chars (under budget), they remain one chunk. We split at **A** meaningful boundary, not **EVERY** boundary.
+- **No gaps:** Splitting a line range creates two line ranges that cover exactly the original range. Nothing is lost.
+
+#### What "Meaningful" Means
+
+Split points are between AST siblings that don't share a semantic relationship:
+- Between top-level statements (imports, classes, functions, constants)
+- Between methods in a class
+- Between properties in an interface
+- Between statements in a function body
+
+NOT meaningful:
+- Mid-expression
+- Between a comment and its target code
+- Inside a parameter list or type definition
 
 ### Implementation Plan
 

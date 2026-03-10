@@ -106,6 +106,18 @@ pub fn partition_typescript(
         format!("{}:{}", config.package_name, config.file_name)
     };
     
+    // Step 1: Extract imports as a separate chunk (if any exist)
+    extract_imports_chunk(
+        root,
+        source.as_bytes(),
+        &base_breadcrumb,
+        file_path,
+        catalog,
+        &content_hash,
+        &mut chunks,
+    );
+    
+    // Step 2: Partition the rest of the file
     partition_node(
         root,
         source.as_bytes(),
@@ -120,6 +132,65 @@ pub fn partition_typescript(
     );
     
     chunks
+}
+
+/// Extract import statements as a separate chunk
+fn extract_imports_chunk(
+    root: Node,
+    source: &[u8],
+    base_breadcrumb: &str,
+    file_path: &str,
+    catalog: &str,
+    content_hash: &str,
+    chunks: &mut Vec<PartitionedChunk>,
+) {
+    let mut import_nodes: Vec<Node> = Vec::new();
+    let mut cursor = root.walk();
+    
+    // Find all import_statement nodes at the top level (children of program)
+    for child in root.children(&mut cursor) {
+        if child.kind() == "import_statement" {
+            import_nodes.push(child);
+        }
+    }
+    
+    if import_nodes.is_empty() {
+        return;
+    }
+    
+    // Combine all imports into one chunk
+    let first_import = import_nodes[0];
+    let last_import = *import_nodes.last().unwrap();
+    
+    let start_byte = first_import.start_byte();
+    let end_byte = last_import.end_byte();
+    
+    let import_text = String::from_utf8_lossy(&source[start_byte..end_byte]).to_string();
+    
+    // Calculate line numbers
+    let start_line = source[0..start_byte]
+        .iter()
+        .filter(|&&b| b == b'\n')
+        .count() + 1;
+    let end_line = source[0..end_byte]
+        .iter()
+        .filter(|&&b| b == b'\n')
+        .count() + 1;
+    
+    let breadcrumb = format!("{}:imports", base_breadcrumb);
+    
+    chunks.push(PartitionedChunk {
+        source_uri: file_path.to_string(),
+        catalog: catalog.to_string(),
+        content_hash: content_hash.to_string(),
+        breadcrumb,
+        text: import_text,
+        start_line,
+        end_line,
+        chunk_type: "imports".to_string(),
+        chunk_kind: "imports".to_string(),
+        symbol_name: None,
+    });
 }
 
 /// Recursively partition a node into chunks
@@ -569,24 +640,32 @@ fn extract_text_with_preceding_comments(node: Node, source: &[u8]) -> (String, u
 }
 
 /// Find the JSDoc comment immediately preceding a node
+/// Skips over non-JSDoc comments (like eslint-disable comments) to find the actual JSDoc
 fn find_preceding_comment<'a>(node: Node<'a>, source: &'a [u8]) -> Option<Node<'a>> {
     let parent = node.parent()?;
     let mut cursor = parent.walk();
-    let mut prev_sibling: Option<Node> = None;
+    let mut siblings: Vec<Node> = Vec::new();
     
+    // Collect all siblings before this node
     for child in parent.children(&mut cursor) {
         if child == node {
             break;
         }
-        prev_sibling = Some(child);
+        siblings.push(child);
     }
     
-    if let Some(prev) = prev_sibling {
-        if prev.kind() == "comment" {
-            let comment_text = String::from_utf8_lossy(&source[prev.start_byte()..prev.end_byte()]);
+    // Walk backwards through siblings looking for a JSDoc comment
+    // Skip over non-JSDoc comments (like eslint-disable comments)
+    for sibling in siblings.into_iter().rev() {
+        if sibling.kind() == "comment" {
+            let comment_text = String::from_utf8_lossy(&source[sibling.start_byte()..sibling.end_byte()]);
             if comment_text.trim_start().starts_with("/**") {
-                return Some(prev);
+                return Some(sibling);
             }
+            // Non-JSDoc comment - keep looking
+        } else {
+            // Non-comment node - stop looking
+            break;
         }
     }
     
@@ -617,6 +696,24 @@ fn build_breadcrumb(node: Node, source: &[u8], prefix: &str, class_context: &str
 
 /// Get the chunk type for a node
 fn get_chunk_type(node: Node) -> String {
+    // For export_statement, look inside for the actual declaration type
+    if node.kind() == "export_statement" {
+        let mut cursor = node.walk();
+        for child in node.children(&mut cursor) {
+            let child_type = match child.kind() {
+                "function_declaration" => "function".to_string(),
+                "class_declaration" => "class".to_string(),
+                "interface_declaration" => "interface".to_string(),
+                "type_alias_declaration" => "type".to_string(),
+                "enum_declaration" => "enum".to_string(),
+                "variable_declaration" | "lexical_declaration" => "variable".to_string(),
+                _ => continue,
+            };
+            return child_type;
+        }
+        return "code".to_string();
+    }
+    
     match node.kind() {
         "function_declaration" | "method_definition" => "function".to_string(),
         "arrow_function" => "arrow_function".to_string(),
@@ -631,6 +728,18 @@ fn get_chunk_type(node: Node) -> String {
 
 /// Get the symbol name from a node
 fn get_symbol_name(node: Node, source: &[u8]) -> Option<String> {
+    // For export_statement, look inside for the actual declaration
+    if node.kind() == "export_statement" {
+        let mut cursor = node.walk();
+        for child in node.children(&mut cursor) {
+            // Recursively get symbol name from inner declaration
+            if let Some(name) = get_symbol_name(child, source) {
+                return Some(name);
+            }
+        }
+        return None;
+    }
+    
     let mut cursor = node.walk();
     
     for child in node.children(&mut cursor) {

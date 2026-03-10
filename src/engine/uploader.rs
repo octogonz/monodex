@@ -76,6 +76,7 @@ pub struct PointPayload {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub symbol_name: Option<String>,
     pub chunk_type: String,
+    pub chunk_kind: String,  // "content" | "imports" | "changelog" | "config"
     #[serde(skip_serializing_if = "Option::is_none")]
     pub breadcrumb: Option<String>,
 }
@@ -336,6 +337,7 @@ impl QdrantUploader {
                         end_line: chunk.end_line,
                         symbol_name: chunk.symbol_name.clone(),
                         chunk_type: chunk.chunk_type.clone(),
+                        chunk_kind: chunk.chunk_kind.clone(),
                         breadcrumb: Some(chunk.breadcrumb.clone()),
                     },
                 }

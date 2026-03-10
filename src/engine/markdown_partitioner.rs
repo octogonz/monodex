@@ -67,6 +67,7 @@ pub fn partition_markdown(source: &str, config: &super::partitioner::PartitionCo
                 start_line: 1,
                 end_line: lines.len(),
                 chunk_type: "markdown".to_string(),
+                chunk_kind: "content".to_string(),
                 symbol_name: None,
             });
         }
@@ -120,6 +121,7 @@ pub fn partition_markdown(source: &str, config: &super::partitioner::PartitionCo
                 start_line: start_idx + 1,  // 1-indexed
                 end_line: end_idx,
                 chunk_type: "section".to_string(),
+                chunk_kind: "content".to_string(),
                 symbol_name: heading,
             });
         }
@@ -221,6 +223,7 @@ fn split_oversized_section(
             start_line: start_line + start_idx,
             end_line: start_line + end_idx - 1,
             chunk_type: "section".to_string(),
+            chunk_kind: "content".to_string(),
             symbol_name: None,
         });
     }
@@ -257,6 +260,7 @@ fn split_by_lines_fallback(
                 start_line: start_line + current_start,
                 end_line: start_line + i - 1,
                 chunk_type: "markdown".to_string(),
+                chunk_kind: "content".to_string(),
                 symbol_name: None,
             });
             
@@ -280,6 +284,7 @@ fn split_by_lines_fallback(
             start_line: start_line + current_start,
             end_line: start_line + lines.len() - 1,
             chunk_type: "markdown".to_string(),
+            chunk_kind: "content".to_string(),
             symbol_name: None,
         });
     }

@@ -73,6 +73,9 @@ pub struct PartitionedChunk {
     /// Chunk type (function, class, method, etc.)
     pub chunk_type: String,
     
+    /// Chunk kind (content, imports, changelog, config)
+    pub chunk_kind: String,
+    
     /// Symbol name (if applicable)
     pub symbol_name: Option<String>,
 }
@@ -165,6 +168,7 @@ fn partition_node(
                 start_line,
                 end_line,
                 chunk_type,
+                chunk_kind: "content".to_string(),
                 symbol_name,
             });
         }
@@ -320,6 +324,7 @@ fn split_oversized_leaf(
                 start_line,
                 end_line,
                 chunk_type: chunk_type.clone(),
+                chunk_kind: "content".to_string(),
                 symbol_name: None,
             });
         }
@@ -498,6 +503,7 @@ fn split_by_lines(
             start_line,
             end_line,
             chunk_type: chunk_type.clone(),
+            chunk_kind: "content".to_string(),
             symbol_name: None,
         });
     }

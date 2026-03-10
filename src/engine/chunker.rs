@@ -39,6 +39,9 @@ pub struct Chunk {
     /// Chunk type (e.g., "function", "class", "markdown-section", "issue-comment")
     pub chunk_type: String,
     
+    /// Chunk kind (content, imports, changelog, config)
+    pub chunk_kind: String,
+    
     /// Breadcrumb path (e.g., "@rushstack/node-core-library:JsonFile.ts:JsonFile.load")
     pub breadcrumb: String,
     
@@ -124,6 +127,7 @@ impl From<PartitionedChunk> for Chunk {
             end_line: p.end_line,
             symbol_name: p.symbol_name,
             chunk_type: p.chunk_type,
+            chunk_kind: p.chunk_kind,
             breadcrumb: p.breadcrumb,
             part_number,
             part_count,
@@ -197,6 +201,7 @@ fn chunk_by_lines(
                 end_line: end,
                 symbol_name: None,
                 chunk_type: chunk_type.to_string(),
+                chunk_kind: "content".to_string(),
                 breadcrumb: file_name.clone(),
                 part_number: chunks.len(), // 0-indexed
                 part_count: 0, // Will update after loop

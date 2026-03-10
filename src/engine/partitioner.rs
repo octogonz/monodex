@@ -286,8 +286,12 @@ fn collect_split_candidates(
     if node_end < range_start || node_start > range_end { return; }
     
     if is_meaningful_split_point(node, source) {
-        if node_end >= range_start && node_end < range_end {
-            candidates.push(node_end);
+        // Find the actual start including any preceding JSDoc comment
+        let actual_start = find_node_start_with_comment(node, source);
+        
+        // Add split point BEFORE the node (including its JSDoc)
+        if actual_start > range_start && actual_start <= range_end {
+            candidates.push(actual_start - 1); // Split AFTER the line before
         }
     }
     
@@ -295,6 +299,48 @@ fn collect_split_candidates(
     for child in node.children(&mut cursor) {
         collect_split_candidates(child, source, range_start, range_end, candidates);
     }
+}
+
+/// Find the start line of a node, including any preceding JSDoc comment
+fn find_node_start_with_comment(node: Node, source: &[u8]) -> usize {
+    let node_start = node.start_position().row + 1;
+    
+    // Look for preceding JSDoc comment
+    if let Some(comment) = find_preceding_jsdoc(node, source) {
+        comment.start_position().row + 1
+    } else {
+        node_start
+    }
+}
+
+/// Find the JSDoc comment immediately preceding a node
+fn find_preceding_jsdoc<'a>(node: Node<'a>, source: &[u8]) -> Option<Node<'a>> {
+    let parent = node.parent()?;
+    let mut cursor = parent.walk();
+    let mut siblings: Vec<Node> = Vec::new();
+    
+    for child in parent.children(&mut cursor) {
+        if child == node {
+            break;
+        }
+        siblings.push(child);
+    }
+    
+    // Walk backwards through siblings looking for a JSDoc comment
+    for sibling in siblings.into_iter().rev() {
+        if sibling.kind() == "comment" {
+            let comment_text = String::from_utf8_lossy(&source[sibling.start_byte()..sibling.end_byte()]);
+            if comment_text.trim_start().starts_with("/**") {
+                return Some(sibling);
+            }
+            // Non-JSDoc comment - keep looking
+        } else if sibling.kind() != "comment" {
+            // Non-comment node - stop looking
+            break;
+        }
+    }
+    
+    None
 }
 
 fn is_meaningful_split_point(node: Node, source: &[u8]) -> bool {

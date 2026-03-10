@@ -1,6 +1,5 @@
 ---
 source: src/engine/partitioner.rs
-assertion_line: 530
 expression: format_chunks(&chunks)
 ---
 === CHUNK 1 ===
@@ -22,8 +21,8 @@ Breadcrumb: @rushstack/node-core-library:JsonFile.ts
 Type: code
 Kind: content
 Symbol: None
-Lines: 11-101
-Size: 3681 chars
+Lines: 11-102
+Size: 3682 chars
 Text preview (5 lines):
 
 /**
@@ -36,109 +35,95 @@ Breadcrumb: @rushstack/node-core-library:JsonFile.ts
 Type: code
 Kind: content
 Symbol: None
-Lines: 102-171
+Lines: 103-172
 Size: 2639 chars
 Text preview (5 lines):
-
 /**
  * Options for {@link JsonFile.parseString}, {@link JsonFile.load}, and {@link JsonFile.loadAsync}.
  *
  * @public
+ */
 
 === CHUNK 4 ===
 Breadcrumb: @rushstack/node-core-library:JsonFile.ts
 Type: code
 Kind: content
 Symbol: None
-Lines: 172-218
-Size: 1448 chars
+Lines: 173-232
+Size: 1806 chars
 Text preview (5 lines):
-
 /**
  * Options for {@link JsonFile.save} and {@link JsonFile.saveAsync}.
  *
  * @public
+ */
 
 === CHUNK 5 ===
 Breadcrumb: @rushstack/node-core-library:JsonFile.ts:JsonFile
 Type: class
 Kind: content
 Symbol: Some("JsonFile")
-Lines: 219-270
-Size: 1677 chars
+Lines: 233-283
+Size: 1655 chars
 Text preview (5 lines):
-      return jju.parse(contents, parseOptions);
-    } catch (error) {
-      if (FileSystem.isNotExistError(error as Error)) {
-        throw error;
-      } else {
+  /**
+   * An async version of {@link JsonFile.load}.
+   */
+  public static async loadAsync(jsonFilename: string, options?: IJsonFileParseOptions): Promise<JsonObject> {
+    try {
 
 === CHUNK 6 ===
 Breadcrumb: @rushstack/node-core-library:JsonFile.ts:JsonFile
 Type: class
 Kind: content
 Symbol: Some("JsonFile")
-Lines: 271-316
-Size: 1545 chars
+Lines: 284-331
+Size: 1732 chars
 Text preview (5 lines):
+    const jsonObject: JsonObject = await JsonFile.loadAsync(jsonFilename, options);
     jsonSchema.validateObject(jsonObject, jsonFilename, options);
 
     return jsonObject;
   }
-
 
 === CHUNK 7 ===
 Breadcrumb: @rushstack/node-core-library:JsonFile.ts:JsonFile
 Type: class
 Kind: content
 Symbol: Some("JsonFile")
-Lines: 317-362
-Size: 1638 chars
+Lines: 332-396
+Size: 2164 chars
 Text preview (5 lines):
-    jsonSchema.validateObjectWithCallback(jsonObject, errorCallback);
-
-    return jsonObject;
-  }
-
+  /**
+   * Serializes the specified JSON object to a string buffer.
+   * @param previousJson - the previous JSON string, which will be updated
+   * @param newJsonObject - the object to be serialized
+   * @param options - other settings that control serialization
 
 === CHUNK 8 ===
 Breadcrumb: @rushstack/node-core-library:JsonFile.ts:JsonFile
 Type: class
 Kind: content
 Symbol: Some("JsonFile")
-Lines: 363-410
-Size: 1707 chars
+Lines: 397-454
+Size: 2016 chars
 Text preview (5 lines):
-
-    if (previousJson !== '') {
-      // NOTE: We don't use mode=json here because comments aren't allowed by strict JSON
-      stringified = jju.update(previousJson, newJsonObject, {
-        mode: explicitMode ?? JsonSyntax.Json5,
+  /**
+   * Saves the file to disk.  Returns false if nothing was written due to options.onlyIfChanged.
+   * @param jsonObject - the object to be saved
+   * @param jsonFilename - the file path to write
+   * @param options - other settings that control how the file is saved
 
 === CHUNK 9 ===
 Breadcrumb: @rushstack/node-core-library:JsonFile.ts:JsonFile
 Type: class
 Kind: content
 Symbol: Some("JsonFile")
-Lines: 411-464
-Size: 1722 chars
+Lines: 455-607
+Size: 4981 chars
 Text preview (5 lines):
-    if (options.updateExistingFile || options.onlyIfChanged) {
-      try {
-        oldBuffer = FileSystem.readFileToBuffer(jsonFilename);
-      } catch (error) {
-        if (!FileSystem.isNotExistError(error as Error)) {
-
-=== CHUNK 10 ===
-Breadcrumb: @rushstack/node-core-library:JsonFile.ts:JsonFile
-Type: class
-Kind: content
-Symbol: Some("JsonFile")
-Lines: 465-607
-Size: 4666 chars
-Text preview (5 lines):
-    if (options.updateExistingFile || options.onlyIfChanged) {
-      try {
-        oldBuffer = await FileSystem.readFileToBufferAsync(jsonFilename);
-      } catch (error) {
-        if (!FileSystem.isNotExistError(error as Error)) {
+  /**
+   * An async version of {@link JsonFile.save}.
+   */
+  public static async saveAsync(
+    jsonObject: JsonObject,

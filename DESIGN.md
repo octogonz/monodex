@@ -388,6 +388,35 @@ NOT meaningful:
 - Between a comment and its target code
 - Inside a parameter list or type definition
 
+#### Wrapper Lines (Critical Detail)
+
+When splitting a parent node into children, the parent's wrapper lines attach to the child chunks:
+
+```
+/** Class JSDoc */      // L0  ─┐
+class A {               // L1   │ These attach to first method's chunk
+  /** a1 JSDoc */       // L2  ─┘
+  a1() {}               // L3  ← First split point after this
+  /** a2 JSDoc */       // L4
+  a2() {}               // L5  ← Second split point after this
+  /** a3 JSDoc */       // L6
+  a3() {}               // L7 ─┐
+}                       // L8 ─┘─ Closing brace attaches to last method's chunk
+```
+
+If we split this class into three chunks (one per method):
+- Chunk 1: L0-L3 (class JSDoc, class header, a1)
+- Chunk 2: L4-L5 (a2's JSDoc, a2)
+- Chunk 3: L6-L8 (a3's JSDoc, a3, closing brace)
+
+**Key insight:** The split point is AFTER a sibling, but BEFORE the next sibling's JSDoc. The class header "comes along for the ride" with the first method.
+
+#### Never Recombine Fragments
+
+Once we decide to split A and B (two classes), we never recombine a fragment of A with a fragment of B. We accept smaller chunks from A rather than mixing unrelated AST branches.
+
+Example: If A's methods are tiny but A and B are split, we keep all of A's methods together rather than combining some of A's methods with some of B's methods.
+
 ### Implementation Plan
 
 #### Step 1: Add `chunk_kind` field to schema

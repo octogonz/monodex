@@ -143,23 +143,69 @@ pub fn partition_typescript(
             if chunk_size <= config.target_size {
                 new_chunks.push(chunk_range.clone());
             } else {
-                let split_points = find_meaningful_split_points(
-                    root, source.as_bytes(), chunk_range.start_line, chunk_range.end_line,
-                );
+                // Chunk is too big - find the deepest node spanning this range
+                let spanning = find_spanning_node(root, chunk_range.start_line, chunk_range.end_line);
                 
-                // Pick the split point closest to middle of the chunk
-                let best_split = pick_best_split(&split_points, chunk_range.start_line, chunk_range.end_line, chunk_size, config.target_size);
+                // Get meaningful children of the spanning node
+                let mut children = get_meaningful_children(spanning, source.as_bytes());
                 
-                if let Some(split_line) = best_split {
-                    if split_line > chunk_range.start_line && split_line < chunk_range.end_line {
-                        new_chunks.push(ChunkRange { start_line: chunk_range.start_line, end_line: split_line });
-                        new_chunks.push(ChunkRange { start_line: split_line + 1, end_line: chunk_range.end_line });
-                        changed = true;
+                // Filter to children that are within the chunk range
+                children.retain(|child| {
+                    let child_start = child.start_position().row + 1;
+                    let child_end = child.end_position().row + 1;
+                    child_end >= chunk_range.start_line && child_start <= chunk_range.end_line
+                });
+                
+                // Keep diving until we find 2+ meaningful children or can't go deeper
+                // This handles: export_statement -> class_declaration -> class_body -> methods
+                let mut current_node = if children.len() == 1 { Some(children[0]) } else { None };
+                
+                while let Some(node) = current_node {
+                    let mut inner_children = get_meaningful_children(node, source.as_bytes());
+                    
+                    // If no meaningful children, look inside structural containers
+                    if inner_children.is_empty() {
+                        inner_children = find_children_in_container(node);
+                    }
+                    
+                    if inner_children.len() >= 2 {
+                        // Found 2+ children - use them as split candidates
+                        children = inner_children;
+                        break;
+                    } else if inner_children.len() == 1 {
+                        // Only 1 child - keep diving
+                        current_node = Some(inner_children[0]);
+                    } else {
+                        // No children - can't go deeper
+                        break;
+                    }
+                }
+                
+                if children.len() < 2 {
+                    // Can't split - no siblings to split between
+                    new_chunks.push(chunk_range.clone());
+                } else {
+                    // Find split points between these siblings
+                    let split_points: Vec<usize> = children
+                        .iter()
+                        .take(children.len() - 1)
+                        .map(|child| child.end_position().row + 1)
+                        .filter(|&line| line >= chunk_range.start_line && line < chunk_range.end_line)
+                        .collect();
+                    
+                    let best_split = pick_best_split(&split_points, chunk_range.start_line, chunk_range.end_line, chunk_size, config.target_size);
+                    
+                    if let Some(split_line) = best_split {
+                        if split_line >= chunk_range.start_line && split_line < chunk_range.end_line {
+                            new_chunks.push(ChunkRange { start_line: chunk_range.start_line, end_line: split_line });
+                            new_chunks.push(ChunkRange { start_line: split_line + 1, end_line: chunk_range.end_line });
+                            changed = true;
+                        } else {
+                            new_chunks.push(chunk_range.clone());
+                        }
                     } else {
                         new_chunks.push(chunk_range.clone());
                     }
-                } else {
-                    new_chunks.push(chunk_range.clone());
                 }
             }
         }
@@ -219,9 +265,7 @@ fn pick_best_split(
     }
     
     // Find split that creates two chunks as close to target as possible
-    // Prefer the first split that would make the first chunk fit in budget
     for &split_line in split_points {
-        // Estimate size proportionally
         let lines_before = split_line - start_line + 1;
         let total_lines = end_line - start_line + 1;
         let estimated_first_size = (chunk_size * lines_before) / total_lines;
@@ -231,8 +275,70 @@ fn pick_best_split(
         }
     }
     
-    // Fall back to first split point
     split_points.first().copied()
+}
+
+/// Find the deepest AST node that spans the entire line range
+fn find_spanning_node<'a>(node: Node<'a>, start_line: usize, end_line: usize) -> Node<'a> {
+    let node_start = node.start_position().row + 1;
+    let node_end = node.end_position().row + 1;
+    
+    if node_start > start_line || node_end < end_line {
+        return node;
+    }
+    
+    let mut cursor = node.walk();
+    for child in node.children(&mut cursor) {
+        let child_start = child.start_position().row + 1;
+        let child_end = child.end_position().row + 1;
+        
+        if child_start <= start_line && child_end >= end_line {
+            return find_spanning_node(child, start_line, end_line);
+        }
+    }
+    
+    node
+}
+
+/// Get meaningful children of a node (methods, classes, functions, etc.)
+fn get_meaningful_children<'a>(node: Node<'a>, source: &[u8]) -> Vec<Node<'a>> {
+    let mut cursor = node.walk();
+    let mut children = Vec::new();
+    
+    for child in node.children(&mut cursor) {
+        if is_meaningful_split_point(child, source) {
+            children.push(child);
+        }
+    }
+    
+    children
+}
+
+/// Find children inside structural containers (class_body, export_statement, etc.)
+/// Returns direct children of the container that are meaningful split points.
+fn find_children_in_container<'a>(node: Node<'a>) -> Vec<Node<'a>> {
+    let mut cursor = node.walk();
+    
+    // Check if this node IS a container we want to look inside
+    for child in node.children(&mut cursor) {
+        if matches!(child.kind(), "class_body" | "declaration_list" | "statement_block" | "object_type") {
+            // Found a container - return its meaningful children
+            let mut container_cursor = child.walk();
+            let mut result = Vec::new();
+            for grandchild in child.children(&mut container_cursor) {
+                if matches!(grandchild.kind(), 
+                    "method_definition" | "public_field_definition" | 
+                    "function_declaration" | "class_declaration" | 
+                    "interface_declaration" | "type_alias_declaration" | 
+                    "enum_declaration" | "lexical_declaration") {
+                    result.push(grandchild);
+                }
+            }
+            return result;
+        }
+    }
+    
+    Vec::new()
 }
 
 /// Get the end line of import statements (0 if no imports)
@@ -286,12 +392,10 @@ fn collect_split_candidates(
     if node_end < range_start || node_start > range_end { return; }
     
     if is_meaningful_split_point(node, source) {
-        // Find the actual start including any preceding JSDoc comment
-        let actual_start = find_node_start_with_comment(node, source);
-        
-        // Add split point BEFORE the node (including its JSDoc)
-        if actual_start > range_start && actual_start <= range_end {
-            candidates.push(actual_start - 1); // Split AFTER the line before
+        // Add split point AFTER this node ends
+        // This is "between siblings" - after one sibling, before the next
+        if node_end >= range_start && node_end < range_end {
+            candidates.push(node_end);
         }
     }
     

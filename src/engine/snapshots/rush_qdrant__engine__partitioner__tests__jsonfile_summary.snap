@@ -1,6 +1,6 @@
 ---
 source: src/engine/partitioner.rs
-assertion_line: 598
+assertion_line: 702
 expression: summary
 ---
 === CHUNK 1 ===
@@ -22,8 +22,8 @@ Breadcrumb: @rushstack/node-core-library:JsonFile.ts
 Type: code
 Kind: content
 Symbol: None
-Lines: 11-102
-Size: 3682 chars
+Lines: 11-101
+Size: 3681 chars
 Text preview (5 lines):
 
 /**
@@ -36,95 +36,106 @@ Breadcrumb: @rushstack/node-core-library:JsonFile.ts
 Type: code
 Kind: content
 Symbol: None
-Lines: 103-172
+Lines: 102-171
 Size: 2639 chars
 Text preview (5 lines):
+
 /**
  * Options for {@link JsonFile.parseString}, {@link JsonFile.load}, and {@link JsonFile.loadAsync}.
  *
  * @public
- */
 
 === CHUNK 4 ===
 Breadcrumb: @rushstack/node-core-library:JsonFile.ts
 Type: code
 Kind: content
 Symbol: None
-Lines: 173-232
-Size: 1806 chars
+Lines: 172-198
+Size: 913 chars
 Text preview (5 lines):
+
 /**
  * Options for {@link JsonFile.save} and {@link JsonFile.saveAsync}.
  *
  * @public
- */
 
 === CHUNK 5 ===
-Breadcrumb: @rushstack/node-core-library:JsonFile.ts:JsonFile
-Type: class
+Breadcrumb: @rushstack/node-core-library:JsonFile.ts
+Type: code
 Kind: content
-Symbol: Some("JsonFile")
-Lines: 233-283
-Size: 1655 chars
+Symbol: None
+Lines: 199-200
+Size: 81 chars
 Text preview (5 lines):
-  /**
-   * An async version of {@link JsonFile.load}.
-   */
-  public static async loadAsync(jsonFilename: string, options?: IJsonFileParseOptions): Promise<JsonObject> {
-    try {
+
+const DEFAULT_ENCODING: 'utf8' = 'utf8';
 
 === CHUNK 6 ===
-Breadcrumb: @rushstack/node-core-library:JsonFile.ts:JsonFile
-Type: class
+Breadcrumb: @rushstack/node-core-library:JsonFile.ts
+Type: code
 Kind: content
-Symbol: Some("JsonFile")
-Lines: 284-331
-Size: 1732 chars
+Symbol: None
+Lines: 201-252
+Size: 1592 chars
 Text preview (5 lines):
-    const jsonObject: JsonObject = await JsonFile.loadAsync(jsonFilename, options);
-    jsonSchema.validateObject(jsonObject, jsonFilename, options);
 
-    return jsonObject;
-  }
+/**
+ * Utilities for reading/writing JSON files.
+ * @public
+ */
 
 === CHUNK 7 ===
 Breadcrumb: @rushstack/node-core-library:JsonFile.ts:JsonFile
 Type: class
 Kind: content
 Symbol: Some("JsonFile")
-Lines: 332-396
-Size: 2164 chars
+Lines: 253-305
+Size: 1701 chars
 Text preview (5 lines):
+
   /**
-   * Serializes the specified JSON object to a string buffer.
-   * @param previousJson - the previous JSON string, which will be updated
-   * @param newJsonObject - the object to be serialized
-   * @param options - other settings that control serialization
+   * Parses a JSON file's contents.
+   */
+  public static parseString(jsonContents: string, options?: IJsonFileParseOptions): JsonObject {
 
 === CHUNK 8 ===
 Breadcrumb: @rushstack/node-core-library:JsonFile.ts:JsonFile
 Type: class
 Kind: content
 Symbol: Some("JsonFile")
-Lines: 397-454
-Size: 2016 chars
+Lines: 306-395
+Size: 3100 chars
 Text preview (5 lines):
+
   /**
-   * Saves the file to disk.  Returns false if nothing was written due to options.onlyIfChanged.
-   * @param jsonObject - the object to be saved
-   * @param jsonFilename - the file path to write
-   * @param options - other settings that control how the file is saved
+   * An async version of {@link JsonFile.loadAndValidateWithCallback}.
+   */
+  public static async loadAndValidateWithCallbackAsync(
 
 === CHUNK 9 ===
 Breadcrumb: @rushstack/node-core-library:JsonFile.ts:JsonFile
 Type: class
 Kind: content
 Symbol: Some("JsonFile")
-Lines: 455-607
-Size: 4981 chars
+Lines: 396-453
+Size: 2016 chars
 Text preview (5 lines):
+
+  /**
+   * Saves the file to disk.  Returns false if nothing was written due to options.onlyIfChanged.
+   * @param jsonObject - the object to be saved
+   * @param jsonFilename - the file path to write
+
+=== CHUNK 10 ===
+Breadcrumb: @rushstack/node-core-library:JsonFile.ts:JsonFile
+Type: class
+Kind: content
+Symbol: Some("JsonFile")
+Lines: 454-607
+Size: 4982 chars
+Text preview (5 lines):
+
   /**
    * An async version of {@link JsonFile.save}.
    */
   public static async saveAsync(
-    jsonObject: JsonObject,

@@ -1,6 +1,6 @@
 ---
 source: src/engine/partitioner.rs
-assertion_line: 594
+assertion_line: 698
 expression: visualization
 ---
 -- [CHUNK 1] [10 lines] [404 chars] --
@@ -14,7 +14,7 @@ import * as jju from 'jju';
 import type { JsonSchema, IJsonSchemaErrorInfo, IJsonSchemaValidateOptions } from './JsonSchema';
 import { Text, type NewlineKind } from './Text';
 import { FileSystem } from './FileSystem';
--- [CHUNK 2] [92 lines] [3642 chars] --
+-- [CHUNK 2] [91 lines] [3641 chars] --
 
 /**
  * Represents a JSON-serializable object whose type has not been determined yet.
@@ -106,8 +106,8 @@ export enum JsonSyntax {
    */
   Json5 = 'json5'
 }
-
 -- [CHUNK 3] [70 lines] [2599 chars] --
+
 /**
  * Options for {@link JsonFile.parseString}, {@link JsonFile.load}, and {@link JsonFile.loadAsync}.
  *
@@ -177,8 +177,8 @@ export interface IJsonFileStringifyOptions extends IJsonFileParseOptions {
    */
   headerComment?: string;
 }
+-- [CHUNK 4] [27 lines] [873 chars] --
 
--- [CHUNK 4] [60 lines] [1766 chars] --
 /**
  * Options for {@link JsonFile.save} and {@link JsonFile.saveAsync}.
  *
@@ -205,8 +205,10 @@ export interface IJsonFileSaveOptions extends IJsonFileStringifyOptions {
    */
   updateExistingFile?: boolean;
 }
+-- [CHUNK 5] [2 lines] [41 chars] --
 
 const DEFAULT_ENCODING: 'utf8' = 'utf8';
+-- [CHUNK 6] [52 lines] [1552 chars] --
 
 /**
  * Utilities for reading/writing JSON files.
@@ -239,7 +241,6 @@ export class JsonFile {
     }
   }
 
--- [CHUNK 5] [51 lines] [1606 chars] --
   /**
    * An async version of {@link JsonFile.load}.
    */
@@ -260,6 +261,7 @@ export class JsonFile {
       }
     }
   }
+-- [CHUNK 7] [53 lines] [1652 chars] --
 
   /**
    * Parses a JSON file's contents.
@@ -291,7 +293,6 @@ export class JsonFile {
     jsonSchema: JsonSchema,
     options?: IJsonFileLoadAndValidateOptions
   ): Promise<JsonObject> {
--- [CHUNK 6] [48 lines] [1683 chars] --
     const jsonObject: JsonObject = await JsonFile.loadAsync(jsonFilename, options);
     jsonSchema.validateObject(jsonObject, jsonFilename, options);
 
@@ -314,6 +315,7 @@ export class JsonFile {
 
     return jsonObject;
   }
+-- [CHUNK 8] [90 lines] [3051 chars] --
 
   /**
    * An async version of {@link JsonFile.loadAndValidateWithCallback}.
@@ -340,7 +342,6 @@ export class JsonFile {
     return JsonFile.updateString('', jsonObject, options);
   }
 
--- [CHUNK 7] [65 lines] [2115 chars] --
   /**
    * Serializes the specified JSON object to a string buffer.
    * @param previousJson - the previous JSON string, which will be updated
@@ -405,8 +406,8 @@ export class JsonFile {
 
     return stringified;
   }
+-- [CHUNK 9] [58 lines] [1967 chars] --
 
--- [CHUNK 8] [58 lines] [1967 chars] --
   /**
    * Saves the file to disk.  Returns false if nothing was written due to options.onlyIfChanged.
    * @param jsonObject - the object to be saved
@@ -464,8 +465,8 @@ export class JsonFile {
     */
     return true;
   }
+-- [CHUNK 10] [154 lines] [4933 chars] --
 
--- [CHUNK 9] [153 lines] [4932 chars] --
   /**
    * An async version of {@link JsonFile.save}.
    */

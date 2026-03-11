@@ -1,0 +1,130 @@
+---
+source: src/engine/partitioner.rs
+assertion_line: 598
+expression: summary
+---
+=== CHUNK 1 ===
+Breadcrumb: @rushstack/node-core-library:JsonFile.ts
+Type: code
+Kind: imports
+Symbol: None
+Lines: 1-10
+Size: 444 chars
+Text preview (5 lines):
+// Copyright (c) Microsoft Corporation. All rights reserved. Licensed under the MIT license.
+// See LICENSE in the project root for license information.
+
+import * as os from 'node:os';
+
+
+=== CHUNK 2 ===
+Breadcrumb: @rushstack/node-core-library:JsonFile.ts
+Type: code
+Kind: content
+Symbol: None
+Lines: 11-102
+Size: 3682 chars
+Text preview (5 lines):
+
+/**
+ * Represents a JSON-serializable object whose type has not been determined yet.
+ *
+ * @remarks
+
+=== CHUNK 3 ===
+Breadcrumb: @rushstack/node-core-library:JsonFile.ts
+Type: code
+Kind: content
+Symbol: None
+Lines: 103-172
+Size: 2639 chars
+Text preview (5 lines):
+/**
+ * Options for {@link JsonFile.parseString}, {@link JsonFile.load}, and {@link JsonFile.loadAsync}.
+ *
+ * @public
+ */
+
+=== CHUNK 4 ===
+Breadcrumb: @rushstack/node-core-library:JsonFile.ts
+Type: code
+Kind: content
+Symbol: None
+Lines: 173-232
+Size: 1806 chars
+Text preview (5 lines):
+/**
+ * Options for {@link JsonFile.save} and {@link JsonFile.saveAsync}.
+ *
+ * @public
+ */
+
+=== CHUNK 5 ===
+Breadcrumb: @rushstack/node-core-library:JsonFile.ts:JsonFile
+Type: class
+Kind: content
+Symbol: Some("JsonFile")
+Lines: 233-283
+Size: 1655 chars
+Text preview (5 lines):
+  /**
+   * An async version of {@link JsonFile.load}.
+   */
+  public static async loadAsync(jsonFilename: string, options?: IJsonFileParseOptions): Promise<JsonObject> {
+    try {
+
+=== CHUNK 6 ===
+Breadcrumb: @rushstack/node-core-library:JsonFile.ts:JsonFile
+Type: class
+Kind: content
+Symbol: Some("JsonFile")
+Lines: 284-331
+Size: 1732 chars
+Text preview (5 lines):
+    const jsonObject: JsonObject = await JsonFile.loadAsync(jsonFilename, options);
+    jsonSchema.validateObject(jsonObject, jsonFilename, options);
+
+    return jsonObject;
+  }
+
+=== CHUNK 7 ===
+Breadcrumb: @rushstack/node-core-library:JsonFile.ts:JsonFile
+Type: class
+Kind: content
+Symbol: Some("JsonFile")
+Lines: 332-396
+Size: 2164 chars
+Text preview (5 lines):
+  /**
+   * Serializes the specified JSON object to a string buffer.
+   * @param previousJson - the previous JSON string, which will be updated
+   * @param newJsonObject - the object to be serialized
+   * @param options - other settings that control serialization
+
+=== CHUNK 8 ===
+Breadcrumb: @rushstack/node-core-library:JsonFile.ts:JsonFile
+Type: class
+Kind: content
+Symbol: Some("JsonFile")
+Lines: 397-454
+Size: 2016 chars
+Text preview (5 lines):
+  /**
+   * Saves the file to disk.  Returns false if nothing was written due to options.onlyIfChanged.
+   * @param jsonObject - the object to be saved
+   * @param jsonFilename - the file path to write
+   * @param options - other settings that control how the file is saved
+
+=== CHUNK 9 ===
+Breadcrumb: @rushstack/node-core-library:JsonFile.ts:JsonFile
+Type: class
+Kind: content
+Symbol: Some("JsonFile")
+Lines: 455-607
+Size: 4981 chars
+Text preview (5 lines):
+  /**
+   * An async version of {@link JsonFile.save}.
+   */
+  public static async saveAsync(
+    jsonObject: JsonObject,

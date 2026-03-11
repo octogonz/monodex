@@ -480,7 +480,7 @@ mod tests {
     use super::*;
     use insta::assert_snapshot;
 
-    fn format_chunks(chunks: &[PartitionedChunk]) -> String {
+    fn format_chunks_summary(chunks: &[PartitionedChunk]) -> String {
         let mut result = String::new();
         for (i, chunk) in chunks.iter().enumerate() {
             result.push_str(&format!(
@@ -499,6 +499,31 @@ mod tests {
         result
     }
     
+    /// Visualize chunks as split points in the original source
+    fn format_chunks_visualization(source: &str, chunks: &[PartitionedChunk]) -> String {
+        let lines: Vec<&str> = source.lines().collect();
+        let mut result = String::new();
+        
+        for (i, chunk) in chunks.iter().enumerate() {
+            let line_count = chunk.end_line - chunk.start_line + 1;
+            let size = chunk.text.len();
+            
+            result.push_str(&format!(
+                "-- [CHUNK {}] [{} lines] [{} chars] --\n",
+                i + 1, line_count, size
+            ));
+            
+            for line_num in chunk.start_line..=chunk.end_line {
+                if line_num > 0 && line_num <= lines.len() {
+                    result.push_str(lines[line_num - 1]);
+                    result.push('\n');
+                }
+            }
+        }
+        
+        result
+    }
+    
     #[test]
     fn test_simple_function() {
         let source = r#"
@@ -513,7 +538,7 @@ export function add(a: number, b: number): number {
         };
         let chunks = partition_typescript(source, &config, "test.ts", "test");
         assert_snapshot!(chunks.len());
-        assert_snapshot!(format_chunks(&chunks));
+        assert_snapshot!(format_chunks_summary(&chunks));
     }
     
     #[test]
@@ -551,7 +576,7 @@ export class Calculator {
             ..Default::default()
         };
         let chunks = partition_typescript(source, &config, "Calculator.ts", "math");
-        assert_snapshot!(format_chunks(&chunks));
+        assert_snapshot!(format_chunks_summary(&chunks));
     }
     
     #[test]
@@ -564,15 +589,12 @@ export class Calculator {
         };
         let chunks = partition_typescript(source, &config, "JsonFile.ts", "node-core-library");
         
-        println!("\n=== PARTITION RESULTS ===");
-        println!("Total chunks: {}", chunks.len());
+        // Snapshot 1: Visualization of split points in the source
+        let visualization = format_chunks_visualization(source, &chunks);
+        assert_snapshot!("jsonfile_visualization", visualization);
         
-        for chunk in &chunks {
-            let size = chunk.breadcrumb.len() + chunk.text.len();
-            println!("{}: lines {}-{}, {} chars", chunk.breadcrumb, chunk.start_line, chunk.end_line, size);
-        }
-        
-        assert!(chunks.len() > 5, "Should have multiple chunks");
-        assert_snapshot!(format_chunks(&chunks));
+        // Snapshot 2: Metadata summary
+        let summary = format_chunks_summary(&chunks);
+        assert_snapshot!("jsonfile_summary", summary);
     }
 }

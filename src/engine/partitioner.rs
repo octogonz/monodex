@@ -25,6 +25,76 @@
 use tree_sitter::{Node, Parser};
 use super::util::compute_hash;
 
+/// Quality score for chunking results.
+/// Uses inverse square of line counts: Σ (1 / lines²)
+/// This penalizes tiny chunks heavily while large chunks contribute negligibly.
+pub fn chunk_quality_score(chunks: &[PartitionedChunk]) -> f64 {
+    chunks
+        .iter()
+        .map(|chunk| {
+            let lines = chunk.end_line - chunk.start_line + 1;
+            1.0 / (lines as f64).powi(2)
+        })
+        .sum()
+}
+
+/// Quality report for chunking results
+pub struct ChunkQualityReport {
+    /// Quality score (lower is better)
+    pub score: f64,
+    /// Total number of chunks
+    pub total_chunks: usize,
+    /// Number of chunks under 20 lines (likely problematic)
+    pub tiny_chunks: usize,
+    /// Smallest chunk in lines
+    pub min_lines: usize,
+    /// Largest chunk in lines
+    pub max_lines: usize,
+    /// Mean chunk size in lines
+    pub mean_lines: f64,
+}
+
+impl ChunkQualityReport {
+    pub fn from_chunks(chunks: &[PartitionedChunk]) -> Self {
+        if chunks.is_empty() {
+            return Self {
+                score: 0.0,
+                total_chunks: 0,
+                tiny_chunks: 0,
+                min_lines: 0,
+                max_lines: 0,
+                mean_lines: 0.0,
+            };
+        }
+        
+        let line_counts: Vec<usize> = chunks
+            .iter()
+            .map(|c| c.end_line - c.start_line + 1)
+            .collect();
+        
+        Self {
+            score: chunk_quality_score(chunks),
+            total_chunks: chunks.len(),
+            tiny_chunks: line_counts.iter().filter(|&&l| l < 20).count(),
+            min_lines: *line_counts.iter().min().unwrap(),
+            max_lines: *line_counts.iter().max().unwrap(),
+            mean_lines: line_counts.iter().sum::<usize>() as f64 / line_counts.len() as f64,
+        }
+    }
+    
+    pub fn format(&self) -> String {
+        format!(
+            "Score: {:.3} | Chunks: {} | Tiny (<20 lines): {} | Lines: {}-{} (mean {:.1})",
+            self.score,
+            self.total_chunks,
+            self.tiny_chunks,
+            self.min_lines,
+            self.max_lines,
+            self.mean_lines
+        )
+    }
+}
+
 /// Configuration for partition chunking
 pub struct PartitionConfig {
     /// Target chunk size in characters (text only, breadcrumb is extra)

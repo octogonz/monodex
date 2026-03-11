@@ -18,3 +18,4 @@ pub mod package_lookup;
 // Re-export commonly used types for convenience
 pub use chunker::Chunk;
 pub use parallel_embedder::ParallelEmbedder;
+pub use partitioner::{PartitionConfig, PartitionedChunk, partition_typescript, ChunkQualityReport};

@@ -12,7 +12,7 @@ use engine::{
     config::should_skip_path,
     chunker::chunk_file,
     ParallelEmbedder,
-    partitioner::{partition_typescript, PartitionConfig},
+    partitioner::{partition_typescript, PartitionConfig, ChunkQualityReport},
     uploader::QdrantUploader,
 };
 
@@ -121,6 +121,17 @@ enum Commands {
         #[arg(long)]
         catalog: Option<String>,
     },
+    
+    /// Sample random files and compute chunking quality scores
+    SampleQuality {
+        /// Number of files to sample
+        #[arg(long, default_value = "20")]
+        count: usize,
+        
+        /// Directory to sample from (default: rushstack monorepo)
+        #[arg(long)]
+        dir: Option<String>,
+    },
 }
 
 const DEFAULT_CONFIG_PATH: &str = "~/.config/rush-qdrant/config.jsonc";
@@ -189,6 +200,9 @@ fn main() -> anyhow::Result<()> {
         }
         Commands::Query { text, limit, catalog } => {
             run_query(&config, &text, limit, catalog.as_deref())?;
+        }
+        Commands::SampleQuality { count, dir } => {
+            run_sample_quality(count, dir)?;
         }
     }
 
@@ -800,6 +814,93 @@ fn run_dump_chunks(file: &PathBuf, target_size: usize) -> anyhow::Result<()> {
     println!("Average size: {:.0} chars", total_chars as f64 / chunks.len() as f64);
     println!("Oversized chunks (>{}): {}", target_size, oversized);
     println!("Small chunks (<200): {}", undersized);
+    
+    Ok(())
+}
+
+/// Run quality sampling on random files
+fn run_sample_quality(count: usize, dir: Option<String>) -> anyhow::Result<()> {
+    use rand::seq::IndexedRandom;
+    
+    let base_dir = dir.unwrap_or_else(|| "/Users/bytedance/ai/qdrant/rushstack".to_string());
+    
+    println!("📊 Sampling {} TypeScript files from: {}", count, base_dir);
+    println!();
+    
+    // Collect all TypeScript files
+    let mut ts_files: Vec<PathBuf> = walkdir::WalkDir::new(&base_dir)
+        .into_iter()
+        .filter_map(|e| e.ok())
+        .filter(|e| {
+            let path = e.path();
+            let ext = path.extension().map(|s| s.to_string_lossy()).unwrap_or_default();
+            ext == "ts" && !path.to_string_lossy().contains("node_modules")
+        })
+        .map(|e| e.path().to_owned())
+        .collect();
+    
+    println!("Found {} TypeScript files", ts_files.len());
+    
+    if ts_files.is_empty() {
+        return Err(anyhow::anyhow!("No TypeScript files found"));
+    }
+    
+    // Random sample
+    let mut rng = rand::rng();
+    let sample: Vec<_> = ts_files
+        .choose_multiple(&mut rng, count)
+        .into_iter()
+        .collect();
+    
+    // Compute quality scores
+    let mut results: Vec<_> = sample
+        .into_iter()
+        .filter_map(|path| {
+            let source = std::fs::read_to_string(&path).ok()?;
+            let file_name = path.file_name()?.to_string_lossy().to_string();
+            let config = PartitionConfig {
+                file_name,
+                package_name: "rushstack".to_string(),
+                ..Default::default()
+            };
+            let chunks = partition_typescript(&source, &config, path.to_str().unwrap(), "rushstack");
+            let report = ChunkQualityReport::from_chunks(&chunks);
+            Some((path, report, chunks))
+        })
+        .collect();
+    
+    // Sort by score (worst first)
+    results.sort_by(|a, b| b.1.score.partial_cmp(&a.1.score).unwrap());
+    
+    println!("\n=== Quality Scores (worst first) ===\n");
+    for (i, (path, report, _)) in results.iter().enumerate() {
+        let rel_path = path.strip_prefix(&base_dir).unwrap_or(path);
+        println!("{}. {} {}", i + 1, report.format(), rel_path.display());
+    }
+    
+    // Show top 3 worst for investigation
+    println!("\n=== Top 3 Worst Files ===\n");
+    for (path, report, chunks) in results.iter().take(3) {
+        let rel_path = path.strip_prefix(&base_dir).unwrap_or(path);
+        println!("--- {} ---", rel_path.display());
+        println!("{}", report.format());
+        
+        // Show chunk breakdown
+        for (i, chunk) in chunks.iter().enumerate() {
+            let lines = chunk.end_line - chunk.start_line + 1;
+            let tiny_marker = if lines < 20 { " [TINY]" } else { "" };
+            println!(
+                "  Chunk {}: {} lines ({}-{}) {} - {}",
+                i + 1,
+                lines,
+                chunk.start_line,
+                chunk.end_line,
+                tiny_marker,
+                chunk.breadcrumb
+            );
+        }
+        println!();
+    }
     
     Ok(())
 }

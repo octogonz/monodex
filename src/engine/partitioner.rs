@@ -60,7 +60,7 @@ fn is_transparent_conduit(kind: &str) -> bool {
     matches!(kind,
         "export_statement" |
         // Declaration containers (hold class_body, object_type, etc.)
-        "class_declaration" | "interface_declaration" |
+        "class_declaration" | "abstract_class_declaration" | "interface_declaration" |
         "type_alias_declaration" | "enum_declaration" |
         "function_declaration" | "method_definition" | "arrow_function" |
         "if_statement" | "try_statement" | "catch_clause" |

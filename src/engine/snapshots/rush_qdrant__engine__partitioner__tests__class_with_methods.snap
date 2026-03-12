@@ -1,8 +1,14 @@
 ---
 source: src/engine/partitioner.rs
-assertion_line: 508
-expression: format_chunks(&chunks)
+assertion_line: 762
+expression: format_chunks_summary(&chunks)
 ---
+=== QUALITY SCORE ===
+Score: 0.001
+Total chunks: 1
+Tiny chunks (<20 lines): 0
+Lines: 26-26 (mean 26.0)
+
 === CHUNK 1 ===
 Breadcrumb: @math/package:Calculator.ts
 Type: code

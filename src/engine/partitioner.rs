@@ -655,7 +655,16 @@ mod tests {
     use insta::assert_snapshot;
 
     fn format_chunks_summary(chunks: &[PartitionedChunk]) -> String {
-        let mut result = String::new();
+        let report = ChunkQualityReport::from_chunks(chunks);
+        let mut result = format!(
+            "=== QUALITY SCORE ===\nScore: {:.3}\nTotal chunks: {}\nTiny chunks (<20 lines): {}\nLines: {}-{} (mean {:.1})\n\n",
+            report.score,
+            report.total_chunks,
+            report.tiny_chunks,
+            report.min_lines,
+            report.max_lines,
+            report.mean_lines
+        );
         for (i, chunk) in chunks.iter().enumerate() {
             result.push_str(&format!(
                 "=== CHUNK {} ===\nBreadcrumb: {}\nType: {}\nKind: {}\nSymbol: {:?}\nLines: {}-{}\nSize: {} chars\nText preview (5 lines):\n{}\n\n",

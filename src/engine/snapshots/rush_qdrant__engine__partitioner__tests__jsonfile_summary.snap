@@ -1,8 +1,14 @@
 ---
 source: src/engine/partitioner.rs
-assertion_line: 702
+assertion_line: 781
 expression: summary
 ---
+=== QUALITY SCORE ===
+Score: 0.263
+Total chunks: 10
+Tiny chunks (<20 lines): 2
+Lines: 2-154 (mean 60.7)
+
 === CHUNK 1 ===
 Breadcrumb: @rushstack/node-core-library:JsonFile.ts
 Type: code

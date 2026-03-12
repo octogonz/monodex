@@ -815,6 +815,11 @@ fn run_dump_chunks(file: &PathBuf, target_size: usize) -> anyhow::Result<()> {
     println!("Oversized chunks (>{}): {}", target_size, oversized);
     println!("Small chunks (<200): {}", undersized);
     
+    // Quality score
+    let report = ChunkQualityReport::from_chunks(&chunks);
+    println!("Quality score: {:.3} (lower is better)", report.score);
+    println!("  Tiny chunks (<20 lines): {}", report.tiny_chunks);
+    
     Ok(())
 }
 

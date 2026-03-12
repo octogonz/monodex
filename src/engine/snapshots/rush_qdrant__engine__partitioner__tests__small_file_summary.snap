@@ -1,0 +1,23 @@
+---
+source: src/engine/partitioner.rs
+assertion_line: 866
+expression: summary
+---
+=== QUALITY SCORE ===
+Score: 100.0%
+Total chunks: 1
+Tiny chunks (<20 lines): 1
+Lines: 4-4 (mean 4.0)
+
+=== CHUNK 1 ===
+Breadcrumb: @test/package:tiny.ts
+Type: code
+Kind: content
+Symbol: None
+Lines: 1-4
+Size: 89 chars
+Text preview (5 lines):
+// Small test file
+export function tiny(): number {
+    return 42;
+}

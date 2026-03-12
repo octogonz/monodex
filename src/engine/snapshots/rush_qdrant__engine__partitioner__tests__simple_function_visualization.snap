@@ -1,0 +1,10 @@
+---
+source: src/engine/partitioner.rs
+assertion_line: 780
+expression: visualization
+---
+-- [CHUNK 1] [4 lines] [72 chars] --
+
+export function add(a: number, b: number): number {
+    return a + b;
+}

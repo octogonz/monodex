@@ -1,21 +1,21 @@
 ---
 source: src/engine/partitioner.rs
-assertion_line: 845
+assertion_line: 843
 expression: summary
 ---
 === QUALITY SCORE ===
-Score: 98.0%
-Total chunks: 10
-Tiny chunks (<20 lines): 2
-Lines: 2-154 (mean 60.7)
+Score: 98.6%
+Total chunks: 9
+Tiny chunks (<20 lines): 1
+Lines: 2-154 (mean 67.4)
 
 === CHUNK 1 ===
 Breadcrumb: @rushstack/node-core-library:JsonFile.ts
 Type: code
-Kind: imports
+Kind: content
 Symbol: None
-Lines: 1-10
-Size: 444 chars
+Lines: 1-101
+Size: 4086 chars
 Text preview (5 lines):
 // Copyright (c) Microsoft Corporation. All rights reserved. Licensed under the MIT license.
 // See LICENSE in the project root for license information.
@@ -24,20 +24,6 @@ import * as os from 'node:os';
 
 
 === CHUNK 2 ===
-Breadcrumb: @rushstack/node-core-library:JsonFile.ts
-Type: code
-Kind: content
-Symbol: None
-Lines: 11-101
-Size: 3681 chars
-Text preview (5 lines):
-
-/**
- * Represents a JSON-serializable object whose type has not been determined yet.
- *
- * @remarks
-
-=== CHUNK 3 ===
 Breadcrumb: @rushstack/node-core-library:JsonFile.ts
 Type: code
 Kind: content
@@ -51,7 +37,7 @@ Text preview (5 lines):
  *
  * @public
 
-=== CHUNK 4 ===
+=== CHUNK 3 ===
 Breadcrumb: @rushstack/node-core-library:JsonFile.ts
 Type: code
 Kind: content
@@ -65,7 +51,7 @@ Text preview (5 lines):
  *
  * @public
 
-=== CHUNK 5 ===
+=== CHUNK 4 ===
 Breadcrumb: @rushstack/node-core-library:JsonFile.ts
 Type: code
 Kind: content
@@ -76,7 +62,7 @@ Text preview (5 lines):
 
 const DEFAULT_ENCODING: 'utf8' = 'utf8';
 
-=== CHUNK 6 ===
+=== CHUNK 5 ===
 Breadcrumb: @rushstack/node-core-library:JsonFile.ts
 Type: code
 Kind: content
@@ -90,7 +76,7 @@ Text preview (5 lines):
  * @public
  */
 
-=== CHUNK 7 ===
+=== CHUNK 6 ===
 Breadcrumb: @rushstack/node-core-library:JsonFile.ts:JsonFile
 Type: class
 Kind: content
@@ -104,7 +90,7 @@ Text preview (5 lines):
    */
   public static parseString(jsonContents: string, options?: IJsonFileParseOptions): JsonObject {
 
-=== CHUNK 8 ===
+=== CHUNK 7 ===
 Breadcrumb: @rushstack/node-core-library:JsonFile.ts:JsonFile
 Type: class
 Kind: content
@@ -118,7 +104,7 @@ Text preview (5 lines):
    */
   public static async loadAndValidateWithCallbackAsync(
 
-=== CHUNK 9 ===
+=== CHUNK 8 ===
 Breadcrumb: @rushstack/node-core-library:JsonFile.ts:JsonFile
 Type: class
 Kind: content
@@ -132,7 +118,7 @@ Text preview (5 lines):
    * @param jsonObject - the object to be saved
    * @param jsonFilename - the file path to write
 
-=== CHUNK 10 ===
+=== CHUNK 9 ===
 Breadcrumb: @rushstack/node-core-library:JsonFile.ts:JsonFile
 Type: class
 Kind: content

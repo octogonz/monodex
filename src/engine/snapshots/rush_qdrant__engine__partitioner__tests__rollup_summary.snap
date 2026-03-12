@@ -1,0 +1,24 @@
+---
+source: src/engine/partitioner.rs
+assertion_line: 885
+expression: summary
+---
+=== QUALITY SCORE ===
+Score: 100.0%
+Total chunks: 1
+Tiny chunks (<20 lines): 1
+Lines: 12-12 (mean 12.0)
+
+=== CHUNK 1 ===
+Breadcrumb: api-extractor-scenarios:rollup.d.ts
+Type: code
+Kind: content
+Symbol: None
+Lines: 1-12
+Size: 278 chars
+Text preview (5 lines):
+import { Lib1Class } from 'api-extractor-lib1-test';
+import { Lib2Interface as RenamedLib2Interface } from 'api-extractor-lib2-test';
+
+/** @public */
+export declare class A {

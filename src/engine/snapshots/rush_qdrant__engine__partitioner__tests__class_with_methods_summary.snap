@@ -1,7 +1,7 @@
 ---
 source: src/engine/partitioner.rs
-assertion_line: 822
-expression: "format_chunks_summary(&chunks, source.lines().count())"
+assertion_line: 826
+expression: summary
 ---
 === QUALITY SCORE ===
 Score: 100.0%

@@ -1,0 +1,32 @@
+---
+source: src/engine/partitioner.rs
+assertion_line: 823
+expression: visualization
+---
+-- [CHUNK 1] [26 lines] [424 chars] --
+
+/**
+ * A simple calculator class.
+ */
+export class Calculator {
+    /**
+     * Adds two numbers.
+     */
+    add(a: number, b: number): number {
+        return a + b;
+    }
+    
+    /**
+     * Subtracts two numbers.
+     */
+    subtract(a: number, b: number): number {
+        return a - b;
+    }
+    
+    /**
+     * Multiplies two numbers.
+     */
+    multiply(a: number, b: number): number {
+        return a * b;
+    }
+}

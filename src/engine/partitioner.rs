@@ -775,8 +775,12 @@ export function add(a: number, b: number): number {
             ..Default::default()
         };
         let chunks = partition_typescript(source, &config, "test.ts", "test");
-        assert_snapshot!(chunks.len());
-        assert_snapshot!(format_chunks_summary(&chunks, source.lines().count()));
+        
+        let visualization = format_chunks_visualization(source, &chunks);
+        assert_snapshot!("simple_function_visualization", visualization);
+        
+        let summary = format_chunks_summary(&chunks, source.lines().count());
+        assert_snapshot!("simple_function_summary", summary);
     }
     
     #[test]
@@ -814,7 +818,12 @@ export class Calculator {
             ..Default::default()
         };
         let chunks = partition_typescript(source, &config, "Calculator.ts", "math");
-        assert_snapshot!(format_chunks_summary(&chunks, source.lines().count()));
+        
+        let visualization = format_chunks_visualization(source, &chunks);
+        assert_snapshot!("class_with_methods_visualization", visualization);
+        
+        let summary = format_chunks_summary(&chunks, source.lines().count());
+        assert_snapshot!("class_with_methods_summary", summary);
     }
     
     #[test]
@@ -827,18 +836,16 @@ export class Calculator {
         };
         let chunks = partition_typescript(source, &config, "JsonFile.ts", "node-core-library");
         
-        // Snapshot 1: Visualization of split points in the source
         let visualization = format_chunks_visualization(source, &chunks);
         assert_snapshot!("jsonfile_visualization", visualization);
         
-        // Snapshot 2: Metadata summary
         let summary = format_chunks_summary(&chunks, source.lines().count());
         assert_snapshot!("jsonfile_summary", summary);
     }
     
     #[test]
     fn test_small_file_not_penalized() {
-        // A 10-line file with one chunk should score 100%
+        // A small file with one chunk should score 100%
         // (not penalized for being "tiny" since the whole file is tiny)
         let source = r#"// Small test file
 export function tiny(): number {
@@ -851,12 +858,12 @@ export function tiny(): number {
             ..Default::default()
         };
         let chunks = partition_typescript(source, &config, "tiny.ts", "test");
-        let file_lines = source.lines().count();
-        let score = chunk_quality_score(&chunks, file_lines);
         
-        // Small file with one chunk should score 100%
-        assert_eq!(chunks.len(), 1);
-        assert!(score > 99.0, "Small file with one chunk should score ~100%, got {:.1}%", score);
+        let visualization = format_chunks_visualization(source, &chunks);
+        assert_snapshot!("small_file_visualization", visualization);
+        
+        let summary = format_chunks_summary(&chunks, source.lines().count());
+        assert_snapshot!("small_file_summary", summary);
     }
     
     #[test]
@@ -870,11 +877,30 @@ export function tiny(): number {
             ..Default::default()
         };
         let chunks = partition_typescript(source, &config, "rollup.d.ts", "api-extractor-scenarios");
-        let file_lines = source.lines().count();
-        let score = chunk_quality_score(&chunks, file_lines);
         
-        // The whole file is only 242 chars - should be one chunk
-        assert_eq!(chunks.len(), 1, "Small file should not be split, got {} chunks", chunks.len());
-        assert!(score > 99.0, "Small file with one chunk should score ~100%, got {:.1}%", score);
+        let visualization = format_chunks_visualization(source, &chunks);
+        assert_snapshot!("rollup_visualization", visualization);
+        
+        let summary = format_chunks_summary(&chunks, source.lines().count());
+        assert_snapshot!("rollup_summary", summary);
+    }
+    
+    #[test]
+    fn test_tunneled_browser_connection() {
+        // A 231-line file with nested functions that produces tiny chunks
+        // This is a regression test for the "tiny chunks for variables" bug
+        let source = include_str!("../../test_artifacts/TunneledBrowserConnection.ts");
+        let config = PartitionConfig {
+            file_name: "TunneledBrowserConnection.ts".to_string(),
+            package_name: "@rushstack/playwright-browser-tunnel".to_string(),
+            ..Default::default()
+        };
+        let chunks = partition_typescript(source, &config, "TunneledBrowserConnection.ts", "playwright-browser-tunnel");
+        
+        let visualization = format_chunks_visualization(source, &chunks);
+        assert_snapshot!("tunneled_visualization", visualization);
+        
+        let summary = format_chunks_summary(&chunks, source.lines().count());
+        assert_snapshot!("tunneled_summary", summary);
     }
 }

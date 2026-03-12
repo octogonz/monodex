@@ -1,5 +1,0 @@
----
-source: src/engine/partitioner.rs
-expression: chunks.len()
----
-1

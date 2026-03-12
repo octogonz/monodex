@@ -12,7 +12,7 @@ use engine::{
     config::should_skip_path,
     chunker::chunk_file,
     ParallelEmbedder,
-    partitioner::{partition_typescript, PartitionConfig, ChunkQualityReport},
+    partitioner::{partition_typescript, PartitionConfig, ChunkQualityReport, PartitionDebug},
     uploader::QdrantUploader,
 };
 
@@ -821,6 +821,7 @@ fn run_dump_chunks(file: &PathBuf, target_size: usize, visualize: bool) -> anyho
         target_size,
         file_name: file_name.to_string(),
         package_name: package_name.clone(),
+        debug: PartitionDebug::default(),
     };
     
     // Partition

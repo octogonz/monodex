@@ -1,0 +1,51 @@
+---
+source: src/engine/partitioner.rs
+expression: summary
+---
+=== QUALITY SCORE ===
+Score: 99.4%
+Total chunks: 3
+Tiny chunks (<20 lines): 0
+Lines: 20-183 (mean 112.7)
+
+=== CHUNK 1 ===
+Breadcrumb: @rushstack/node-core-library:IPackageJson.ts
+Type: code
+Kind: content
+Symbol: None
+Lines: 1-135
+Size: 4074 chars
+Text preview (5 lines):
+// Copyright (c) Microsoft Corporation. All rights reserved. Licensed under the MIT license.
+// See LICENSE in the project root for license information.
+
+/**
+ * This interface is part of the {@link IPackageJson} file format.  It is used for the
+
+=== CHUNK 2 ===
+Breadcrumb: @rushstack/node-core-library:IPackageJson.ts
+Type: code
+Kind: content
+Symbol: None
+Lines: 136-318
+Size: 5525 chars
+Text preview (5 lines):
+
+/**
+ * An interface for accessing common fields from a package.json file whose version field may be missing.
+ *
+ * @remarks
+
+=== CHUNK 3 ===
+Breadcrumb: @rushstack/node-core-library:IPackageJson.ts
+Type: code
+Kind: content
+Symbol: None
+Lines: 319-338
+Size: 843 chars
+Text preview (5 lines):
+
+/**
+ * An interface for accessing common fields from a package.json file.
+ *
+ * @remarks

@@ -46,6 +46,54 @@ const TARGET_LINES: usize = 120;
 /// Minimum chunk size as ratio of target (20%)
 const MIN_CHUNK_RATIO: f64 = 0.20;
 
+/// Debug logging for partitioning decisions
+#[derive(Debug, Clone, Copy, Default)]
+pub struct PartitionDebug {
+    /// Enable verbose logging of split decisions
+    pub enabled: bool,
+}
+
+impl PartitionDebug {
+    pub fn log(&self, msg: &str) {
+        if self.enabled {
+            eprintln!("[DEBUG] {}", msg);
+        }
+    }
+    
+    pub fn log_split_attempt(&self, start_line: usize, end_line: usize, chunk_size: usize) {
+        if self.enabled {
+            eprintln!("[DEBUG] === Splitting chunk lines {}-{} ({} chars) ===", start_line, end_line, chunk_size);
+        }
+    }
+    
+    pub fn log_scope(&self, scope_type: &str, kind: &str, start_line: usize, end_line: usize) {
+        if self.enabled {
+            eprintln!("[DEBUG] {} scope '{}' at lines {}-{}", scope_type, kind, start_line, end_line);
+        }
+    }
+    
+    pub fn log_candidates(&self, candidates: &[usize]) {
+        if self.enabled {
+            eprintln!("[DEBUG]   Candidates: {:?}", candidates);
+        }
+    }
+    
+    pub fn log_split_decision(&self, result: &str, split_line: Option<usize>) {
+        if self.enabled {
+            match split_line {
+                Some(line) => eprintln!("[DEBUG]   => {} at line {}", result, line),
+                None => eprintln!("[DEBUG]   => {}", result),
+            }
+        }
+    }
+    
+    pub fn log_meaningful_child(&self, kind: &str, start_line: usize, end_line: usize) {
+        if self.enabled {
+            eprintln!("[DEBUG]   Meaningful child: '{}' at lines {}-{}", kind, start_line, end_line);
+        }
+    }
+}
+
 /// Check if a node is a split scope - direct children define split boundaries.
 fn is_split_scope(kind: &str) -> bool {
     matches!(kind,
@@ -215,6 +263,9 @@ pub struct PartitionConfig {
     
     /// Package name for breadcrumb (e.g., "@rushstack/node-core-library")
     pub package_name: String,
+    
+    /// Debug logging for partitioning decisions
+    pub debug: PartitionDebug,
 }
 
 impl Default for PartitionConfig {
@@ -223,6 +274,7 @@ impl Default for PartitionConfig {
             target_size: 6000,
             file_name: "unknown.ts".to_string(),
             package_name: "unknown".to_string(),
+            debug: PartitionDebug::default(),
         }
     }
 }
@@ -287,9 +339,15 @@ fn find_best_split(
     target_size: usize,
     min_chunk_size: usize,
     source: &[u8],
+    debug: &PartitionDebug,
 ) -> SplitResult {
+    debug.log_split_attempt(start_line, end_line, chunk_size);
+    
     // Find the shallowest split scope that spans this chunk
-    let initial_scope = find_shallowest_split_scope(root, start_line, end_line, source);
+    let initial_scope = find_shallowest_split_scope(root, start_line, end_line, source, debug);
+    debug.log_scope("Initial", initial_scope.kind(), 
+        initial_scope.start_position().row + 1, 
+        initial_scope.end_position().row + 1);
     
     // Track the least-bad AST split seen during descent
     let mut least_bad_split: Option<(usize, usize)> = None;
@@ -297,18 +355,25 @@ fn find_best_split(
     
     // Walk the chain of nested split scopes
     let mut current_scope = Some(initial_scope);
+    let mut iteration = 0;
     
     while let Some(scope) = current_scope {
+        iteration += 1;
+        debug.log(&format!("--- Iteration {} ---", iteration));
+        
         // Get candidate boundaries from this scope's direct children
-        let candidates = get_scope_candidates(scope, source, start_line, end_line);
+        let candidates = get_scope_candidates(scope, source, start_line, end_line, debug);
+        debug.log_candidates(&candidates);
         
         if !candidates.is_empty() {
             // Check if this scope yields a usable partition
             if let Some(split_line) = find_usable_split(
                 &candidates, start_line, end_line, chunk_size, target_size, min_chunk_size,
             ) {
+                debug.log_split_decision("USABLE SPLIT", Some(split_line));
                 return SplitResult::Split(split_line);
             }
+            debug.log_split_decision("No usable split (min_chunk constraint)", None);
             
             // No usable partition - record the least-bad split from this scope
             // But only if it respects min_chunk_size (don't record tiny splits)
@@ -318,14 +383,23 @@ fn find_best_split(
                 let estimated_first_size = (chunk_size * lines_before) / total_lines;
                 let estimated_second_size = chunk_size - estimated_first_size;
                 
-                // Skip splits that create chunks below minimum size
-                if estimated_first_size < min_chunk_size || estimated_second_size < min_chunk_size {
-                    continue;
-                }
-                
+                // Compute badness for this split
+                // Note: We include ALL candidates, even those that create tiny chunks,
+                // because a semantically-meaningful split is better than line-based fallback.
+                // The badness calculation already penalizes small chunks heavily.
                 let badness = compute_split_badness(
                     split_line, start_line, end_line, chunk_size, ideal_first_size,
                 );
+                
+                // Log the candidate with size info
+                let size_note = if estimated_first_size < min_chunk_size || estimated_second_size < min_chunk_size {
+                    format!(" (WARNING: creates tiny chunk)")
+                } else {
+                    String::new()
+                };
+                debug.log(&format!("  Candidate line {} -> sizes ({}, {}) badness {}{}", 
+                    split_line, estimated_first_size, estimated_second_size, badness, size_note));
+                
                 if least_bad_split.map_or(true, |(_, b)| badness < b) {
                     least_bad_split = Some((split_line, badness));
                 }
@@ -333,19 +407,22 @@ fn find_best_split(
         }
         
         // Descend to a nested split scope
-        current_scope = find_nested_split_scope(scope, start_line, end_line, source);
+        current_scope = find_nested_split_scope(scope, start_line, end_line, source, debug);
     }
     
     // No usable partition found - use least-bad AST split if available
-    if let Some((split_line, _)) = least_bad_split {
+    if let Some((split_line, badness)) = least_bad_split {
+        debug.log_split_decision(&format!("Least-bad AST split (badness {})", badness), Some(split_line));
         return SplitResult::Split(split_line);
     }
     
     // No AST split at all - use line-based fallback
     let mid_line = start_line + (end_line - start_line) / 2;
     if mid_line > start_line && mid_line < end_line {
+        debug.log_split_decision("FALLBACK (no AST candidates)", Some(mid_line));
         SplitResult::Fallback(mid_line)
     } else {
+        debug.log_split_decision("CANNOT SPLIT (too small)", None);
         SplitResult::CannotSplit
     }
 }
@@ -356,6 +433,7 @@ fn find_shallowest_split_scope<'a>(
     start_line: usize,
     end_line: usize,
     source: &[u8],
+    debug: &PartitionDebug,
 ) -> Node<'a> {
     let node_start = node.start_position().row + 1;
     let node_end = node.end_position().row + 1;
@@ -376,19 +454,19 @@ fn find_shallowest_split_scope<'a>(
             let child_start = child.start_position().row + 1;
             let child_end = child.end_position().row + 1;
             if child_start <= start_line && child_end >= end_line {
-                return find_shallowest_split_scope(child, start_line, end_line, source);
+                return find_shallowest_split_scope(child, start_line, end_line, source, debug);
             }
         }
     }
     
     // Check for single meaningful child to descend into
-    let meaningful = get_meaningful_children(node, source);
+    let meaningful = get_meaningful_children(node, source, debug);
     if meaningful.len() == 1 {
         let child = meaningful[0];
         let child_start = child.start_position().row + 1;
         let child_end = child.end_position().row + 1;
         if child_start <= start_line && child_end >= end_line {
-            return find_shallowest_split_scope(child, start_line, end_line, source);
+            return find_shallowest_split_scope(child, start_line, end_line, source, debug);
         }
     }
     
@@ -402,6 +480,7 @@ fn find_nested_split_scope<'a>(
     start_line: usize,
     end_line: usize,
     source: &[u8],
+    debug: &PartitionDebug,
 ) -> Option<Node<'a>> {
     let mut cursor = node.walk();
     let mut best_child: Option<Node<'a>> = None;
@@ -436,9 +515,11 @@ fn find_nested_split_scope<'a>(
     // If we found a transparent conduit, recursively descend through it
     // to find a nested split scope
     if let Some(child) = best_child {
+        debug.log(&format!("Descending to child '{}' at lines {}-{}", 
+            child.kind(), child.start_position().row + 1, child.end_position().row + 1));
         if is_transparent_conduit(child.kind()) {
             // Try to find a deeper split scope inside this conduit
-            if let Some(deeper) = find_deepest_split_scope(child, start_line, end_line, source) {
+            if let Some(deeper) = find_deepest_split_scope(child, start_line, end_line, source, debug) {
                 return Some(deeper);
             }
         }
@@ -458,6 +539,7 @@ fn find_deepest_split_scope<'a>(
     start_line: usize,
     end_line: usize,
     source: &[u8],
+    debug: &PartitionDebug,
 ) -> Option<Node<'a>> {
     let node_start = node.start_position().row + 1;
     let node_end = node.end_position().row + 1;
@@ -469,7 +551,7 @@ fn find_deepest_split_scope<'a>(
     
     // If this is a split scope, check if it has meaningful children
     if is_split_scope(node.kind()) {
-        let children = get_meaningful_children(node, source);
+        let children = get_meaningful_children(node, source, debug);
         let overlapping: Vec<Node> = children
             .into_iter()
             .filter(|child| {
@@ -487,10 +569,18 @@ fn find_deepest_split_scope<'a>(
             let overlap_lines = overlap_end - overlap_start + 1;
             let scope_lines = node_end - node_start + 1;
             
+            debug.log(&format!("  Split scope '{}' has {} overlapping children, scope_lines={}, overlap_lines={}",
+                node.kind(), overlapping.len(), scope_lines, overlap_lines));
+            
             // Only accept if the scope overlaps at least 30 lines AND
             // the scope is at least 30 lines (to filter out tiny nested scopes)
             if overlap_lines >= 30 && scope_lines >= 30 {
+                debug.log(&format!("  -> Accepted split scope '{}' at lines {}-{}", 
+                    node.kind(), node_start, node_end));
                 return Some(node);
+            } else {
+                debug.log(&format!("  -> Rejected: overlap_lines ({}) < 30 or scope_lines ({}) < 30", 
+                    overlap_lines, scope_lines));
             }
         }
     }
@@ -507,7 +597,7 @@ fn find_deepest_split_scope<'a>(
         
         // Recursively descend into transparent conduits or split scopes
         if is_transparent_conduit(child.kind()) || is_split_scope(child.kind()) {
-            if let Some(deeper) = find_deepest_split_scope(child, start_line, end_line, source) {
+            if let Some(deeper) = find_deepest_split_scope(child, start_line, end_line, source, debug) {
                 return Some(deeper);
             }
         }
@@ -522,8 +612,9 @@ fn get_scope_candidates(
     source: &[u8],
     chunk_start: usize,
     chunk_end: usize,
+    debug: &PartitionDebug,
 ) -> Vec<usize> {
-    let children = get_meaningful_children(scope, source);
+    let children = get_meaningful_children(scope, source, debug);
     
     let overlapping: Vec<Node> = children
         .into_iter()
@@ -682,6 +773,7 @@ pub fn partition_typescript(
                     config.target_size,
                     min_chunk_size,
                     source.as_bytes(),
+                    &config.debug,
                 ) {
                     SplitResult::Split(split_line) => {
                         new_chunks.push(ChunkRange { start_line: chunk_range.start_line, end_line: split_line });
@@ -817,12 +909,17 @@ fn find_spanning_node<'a>(node: Node<'a>, start_line: usize, end_line: usize) ->
 }
 
 /// Get meaningful children of a node (methods, classes, functions, etc.)
-fn get_meaningful_children<'a>(node: Node<'a>, source: &[u8]) -> Vec<Node<'a>> {
+fn get_meaningful_children<'a>(node: Node<'a>, source: &[u8], debug: &PartitionDebug) -> Vec<Node<'a>> {
     let mut cursor = node.walk();
     let mut children = Vec::new();
     
     for child in node.children(&mut cursor) {
         if is_meaningful_split_point(child, source) {
+            debug.log_meaningful_child(
+                child.kind(), 
+                child.start_position().row + 1, 
+                child.end_position().row + 1
+            );
             children.push(child);
         }
     }
@@ -1286,6 +1383,32 @@ export function tiny(): number {
         assert_snapshot!("colorize_summary", summary);
         
         // Should NOT have fallback split - should use AST-based splitting at method boundaries
+        for chunk in &chunks {
+            assert!(!chunk.breadcrumb.contains("[fallback-split]"), 
+                "Unexpected fallback split in chunk: {}", chunk.breadcrumb);
+        }
+    }
+    
+    #[test]
+    fn test_ipackagejson_interface_file() {
+        // An interface-only file with large interfaces
+        // Tests that interface boundaries are used as split points
+        let source = include_str!("../../test_artifacts/IPackageJson.ts");
+        let config = PartitionConfig {
+            file_name: "IPackageJson.ts".to_string(),
+            package_name: "@rushstack/node-core-library".to_string(),
+            debug: PartitionDebug { enabled: true },
+            ..Default::default()
+        };
+        let chunks = partition_typescript(source, &config, "IPackageJson.ts", "node-core-library");
+        
+        let visualization = format_chunks_visualization(source, &chunks);
+        assert_snapshot!("ipackagejson_visualization", visualization);
+        
+        let summary = format_chunks_summary(&chunks, source.lines().count());
+        assert_snapshot!("ipackagejson_summary", summary);
+        
+        // Should not need fallback split for interface files
         for chunk in &chunks {
             assert!(!chunk.breadcrumb.contains("[fallback-split]"), 
                 "Unexpected fallback split in chunk: {}", chunk.breadcrumb);

@@ -296,19 +296,30 @@ The `>` prefix ensures code is clearly marked as quoted content, preventing inje
 
 ### Current Issues
 
-#### Issue 1: No Overlap Between Chunks
+#### Issue 1: Overlap Between Chunks (Tabled)
 
 **Industry standard (LlamaIndex):** Most semantic chunkers use overlap:
 - `CodeSplitter`: 15 lines overlap
 - `SentenceSplitter`: 20 characters overlap
 - `TokenTextSplitter`: 20 tokens overlap
 
-**Our implementation:** Zero overlap. This means:
-- Concepts spanning chunk boundaries may be harder to find
-- Boundary context is lost
-- Semantic matching may miss relevant matches
+**Our current approach:** Zero overlap.
 
-**Planned fix:** Add configurable overlap (default 10-15 lines for code).
+**Why we're tabling this for now:**
+
+With our improved scope-based chunking algorithm, we now produce semantically meaningful splits at natural code boundaries (between methods, event handlers, logical sections). Given:
+
+1. **Large chunks provide context** - 6000 chars (~120 lines) is substantial
+2. **Semantic boundaries are meaningful** - we split where code logically separates
+3. **Cost/benefit unclear** - storage duplication vs marginal recall improvement
+4. **No evidence of problem yet** - haven't seen cases where queries fail due to boundary issues
+
+We'll keep overlap as a potential enhancement if we encounter specific cases where it would solve a real problem, rather than implementing it speculatively.
+
+**If needed later:**
+- Apply as post-processing step (doesn't affect splitting algorithm)
+- Configurable overlap (default 0, optional 10-20 lines)
+- Adjust target_size to account for overlap budget
 
 #### Issue 2: Missing Text at AST Boundaries
 
@@ -476,24 +487,14 @@ This allows search to prioritize `"content"` chunks while still returning other 
    - The 50-char minimum is about avoiding garbage chunks, not skipping meaningful content
    - Investigate during implementation
 
-#### Step 3: Add overlap
+#### Step 3: Add overlap (Tabled)
 
-**Constants:**
-```rust
-const OVERLAP_LINES: usize = 18;  // ~15% of 120-line average chunk
-const TARGET_SIZE_WITH_OVERLAP: usize = 5100;  // leaves ~900 chars for overlap
-```
+See "Issue 1: Overlap Between Chunks" above for rationale on why this is tabled.
 
-**Algorithm:**
-1. After partitioning, for each chunk:
-   - Extend `start_line` up by `OVERLAP_LINES / 2`
-   - Extend `end_line` down by `OVERLAP_LINES / 2`
-   - Clamp to file boundaries
-2. When calculating if chunk fits budget: `text.len() + estimated_overlap_len`
-
-**Testing:**
-- Use "tiny" catalog or define a single-project catalog (e.g., node-core-library)
-- Avoid full rushstack crawl during testing (can take an hour)
+**If implemented later:**
+- Apply as post-processing step (doesn't affect splitting algorithm)
+- Configurable overlap (default 0, optional 10-20 lines)
+- Adjust target_size to account for overlap budget
 
 ### Chunk Structure
 

@@ -1,9 +1,9 @@
 ---
 source: src/engine/partitioner.rs
-assertion_line: 901
+assertion_line: 939
 expression: visualization
 ---
--- [CHUNK 1] [38 lines] [1470 chars] --
+-- [CHUNK 1] [49 lines] [1920 chars] --
 // Copyright (c) Microsoft Corporation. All rights reserved. Licensed under the MIT license.
 // See LICENSE in the project root for license information.
 
@@ -42,25 +42,18 @@ export async function tunneledBrowserConnection(
   const remoteWsServer: WebSocketServer = new WebSocketServer({ port });
   // Local HTTP + WebSocket server where the playwright client will connect providing params
   const httpServer: HttpServer = new HttpServer(logger);
--- [CHUNK 2] [4 lines] [178 chars] --
   await httpServer.listenAsync();
   logger.writeLine(`Remote WebSocket server listening on ws://localhost:${port}`);
 
   const localProxyWs: WebSocketServer = httpServer.wsServer;
--- [CHUNK 3] [1 lines] [59 chars] --
   const localProxyWsEndpoint: string = httpServer.endpoint;
--- [CHUNK 4] [2 lines] [44 chars] --
 
   let browserName: BrowserName | undefined;
--- [CHUNK 5] [1 lines] [47 chars] --
   let launchOptions: LaunchOptions | undefined;
--- [CHUNK 6] [1 lines] [42 chars] --
   let remoteSocket: WebSocket | undefined;
--- [CHUNK 7] [1 lines] [36 chars] --
   let handshakeAck: boolean = false;
--- [CHUNK 8] [1 lines] [37 chars] --
   let handshakeSent: boolean = false;
--- [CHUNK 9] [182 lines] [7209 chars] --
+-- [CHUNK 2] [91 lines] [3604 chars] --
 
   function maybeSendHandshake(): void {
     if (!handshakeSent && remoteSocket && browserName && launchOptions) {
@@ -152,6 +145,7 @@ export async function tunneledBrowserConnection(
         logger.writeDebugLine(
           `  Connection state at close: handshakeSent=${handshakeSent}, handshakeAck=${handshakeAck}`
         );
+-- [CHUNK 3] [91 lines] [3604 chars] --
         logger.writeDebugLine(`  Buffered messages pending: ${bufferedLocalMessages.length}`);
       });
       ws.on('error', (err: Error) => {

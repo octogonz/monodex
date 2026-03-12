@@ -1,21 +1,21 @@
 ---
 source: src/engine/partitioner.rs
-assertion_line: 904
+assertion_line: 942
 expression: summary
 ---
 === QUALITY SCORE ===
-Score: 87.9%
-Total chunks: 9
-Tiny chunks (<20 lines): 7
-Lines: 1-182 (mean 25.7)
+Score: 99.0%
+Total chunks: 3
+Tiny chunks (<20 lines): 0
+Lines: 49-91 (mean 77.0)
 
 === CHUNK 1 ===
 Breadcrumb: @rushstack/playwright-browser-tunnel:TunneledBrowserConnection.ts
 Type: code
 Kind: content
 Symbol: None
-Lines: 1-38
-Size: 1535 chars
+Lines: 1-49
+Size: 1985 chars
 Text preview (5 lines):
 // Copyright (c) Microsoft Corporation. All rights reserved. Licensed under the MIT license.
 // See LICENSE in the project root for license information.
@@ -28,85 +28,25 @@ Breadcrumb: @rushstack/playwright-browser-tunnel:TunneledBrowserConnection.ts:tu
 Type: function
 Kind: content
 Symbol: Some("tunneledBrowserConnection")
-Lines: 39-42
-Size: 269 chars
-Text preview (5 lines):
-  await httpServer.listenAsync();
-  logger.writeLine(`Remote WebSocket server listening on ws://localhost:${port}`);
-
-  const localProxyWs: WebSocketServer = httpServer.wsServer;
-
-=== CHUNK 3 ===
-Breadcrumb: @rushstack/playwright-browser-tunnel:TunneledBrowserConnection.ts
-Type: variable
-Kind: content
-Symbol: None
-Lines: 43-43
-Size: 124 chars
-Text preview (5 lines):
-  const localProxyWsEndpoint: string = httpServer.endpoint;
-
-=== CHUNK 4 ===
-Breadcrumb: @rushstack/playwright-browser-tunnel:TunneledBrowserConnection.ts:tunneledBrowserConnection
-Type: function
-Kind: content
-Symbol: Some("tunneledBrowserConnection")
-Lines: 44-45
-Size: 135 chars
-Text preview (5 lines):
-
-  let browserName: BrowserName | undefined;
-
-=== CHUNK 5 ===
-Breadcrumb: @rushstack/playwright-browser-tunnel:TunneledBrowserConnection.ts
-Type: variable
-Kind: content
-Symbol: None
-Lines: 46-46
-Size: 112 chars
-Text preview (5 lines):
-  let launchOptions: LaunchOptions | undefined;
-
-=== CHUNK 6 ===
-Breadcrumb: @rushstack/playwright-browser-tunnel:TunneledBrowserConnection.ts
-Type: variable
-Kind: content
-Symbol: None
-Lines: 47-47
-Size: 107 chars
-Text preview (5 lines):
-  let remoteSocket: WebSocket | undefined;
-
-=== CHUNK 7 ===
-Breadcrumb: @rushstack/playwright-browser-tunnel:TunneledBrowserConnection.ts
-Type: variable
-Kind: content
-Symbol: None
-Lines: 48-48
-Size: 101 chars
-Text preview (5 lines):
-  let handshakeAck: boolean = false;
-
-=== CHUNK 8 ===
-Breadcrumb: @rushstack/playwright-browser-tunnel:TunneledBrowserConnection.ts
-Type: variable
-Kind: content
-Symbol: None
-Lines: 49-49
-Size: 102 chars
-Text preview (5 lines):
-  let handshakeSent: boolean = false;
-
-=== CHUNK 9 ===
-Breadcrumb: @rushstack/playwright-browser-tunnel:TunneledBrowserConnection.ts:tunneledBrowserConnection
-Type: function
-Kind: content
-Symbol: Some("tunneledBrowserConnection")
-Lines: 50-231
-Size: 7300 chars
+Lines: 50-140
+Size: 3695 chars
 Text preview (5 lines):
 
   function maybeSendHandshake(): void {
     if (!handshakeSent && remoteSocket && browserName && launchOptions) {
       const handshake: IHandshake = {
         action: 'handshake',
+
+=== CHUNK 3 ===
+Breadcrumb: @rushstack/playwright-browser-tunnel:TunneledBrowserConnection.ts:tunneledBrowserConnection
+Type: function
+Kind: content
+Symbol: Some("tunneledBrowserConnection")
+Lines: 141-231
+Size: 3695 chars
+Text preview (5 lines):
+        logger.writeDebugLine(`  Buffered messages pending: ${bufferedLocalMessages.length}`);
+      });
+      ws.on('error', (err: Error) => {
+        logger.writeErrorLine(`Remote websocket error: ${getNormalizedErrorString(err)}`);
+        logger.writeErrorLine(`  Socket readyState: ${getWebSocketReadyStateString(ws.readyState)}`);

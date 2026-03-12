@@ -307,8 +307,25 @@ pub fn partition_typescript(
                 }
                 
                 if children.len() < 2 {
-                    // Can't split - no siblings to split between
-                    new_chunks.push(chunk_range.clone());
+                    // Can't split using AST - fallback to line-based splitting
+                    let mid_line = chunk_range.start_line + (chunk_range.end_line - chunk_range.start_line) / 2;
+                    
+                    eprintln!(
+                        "WARNING: Could not find AST split points for chunk at lines {}-{} ({} chars). \
+                        Falling back to line-based split at line {}.",
+                        chunk_range.start_line, chunk_range.end_line, chunk_size, mid_line
+                    );
+                    
+                    // Split at the middle line
+                    new_chunks.push(ChunkRange { 
+                        start_line: chunk_range.start_line, 
+                        end_line: mid_line 
+                    });
+                    new_chunks.push(ChunkRange { 
+                        start_line: mid_line + 1, 
+                        end_line: chunk_range.end_line 
+                    });
+                    changed = true;
                 } else {
                     // Find split points between these siblings
                     let split_points: Vec<usize> = children
@@ -378,6 +395,7 @@ pub fn partition_typescript(
 }
 
 /// Pick the best split point - prefer splits that create balanced chunks
+/// Strategy: pick the split closest to the middle of the chunk (in characters)
 fn pick_best_split(
     split_points: &[usize],
     start_line: usize,
@@ -389,18 +407,38 @@ fn pick_best_split(
         return None;
     }
     
-    // Find split that creates two chunks as close to target as possible
+    // Target: split at approximately half the chunk size
+    let ideal_first_size = chunk_size / 2;
+    
+    // Find the split point that creates a first chunk closest to ideal
+    // but not exceeding target_size
+    let mut best_split: Option<usize> = None;
+    let mut best_distance = usize::MAX;
+    
     for &split_line in split_points {
         let lines_before = split_line - start_line + 1;
         let total_lines = end_line - start_line + 1;
         let estimated_first_size = (chunk_size * lines_before) / total_lines;
         
-        if estimated_first_size >= target_size / 4 && estimated_first_size <= target_size {
-            return Some(split_line);
+        // Only consider splits that don't exceed target
+        if estimated_first_size > target_size {
+            continue;
+        }
+        
+        // Prefer splits that get closest to half the chunk size
+        let distance = if estimated_first_size > ideal_first_size {
+            estimated_first_size - ideal_first_size
+        } else {
+            ideal_first_size - estimated_first_size
+        };
+        
+        if distance < best_distance {
+            best_distance = distance;
+            best_split = Some(split_line);
         }
     }
     
-    split_points.first().copied()
+    best_split
 }
 
 /// Find the deepest AST node that spans the entire line range
@@ -902,5 +940,45 @@ export function tiny(): number {
         
         let summary = format_chunks_summary(&chunks, source.lines().count());
         assert_snapshot!("tunneled_summary", summary);
+    }
+    
+    #[test]
+    fn test_long_template_string_fallback() {
+        // A degenerate case: a long template literal that cannot be split by AST
+        // The chunker should fall back to line-based splitting with a warning
+        // We make it 200 lines to exceed the 6000 char target
+        let mut source_lines = vec![
+            "// A file with a very long template string".to_string(),
+            "const longString = `".to_string(),
+        ];
+        for i in 1..=200 {
+            source_lines.push(format!("line{} some content here to make it longer", i));
+        }
+        source_lines.push("`;".to_string());
+        source_lines.push("console.log(longString);".to_string());
+        let source = source_lines.join("\n");
+        
+        let config = PartitionConfig {
+            file_name: "long_string.ts".to_string(),
+            package_name: "test".to_string(),
+            ..Default::default()
+        };
+        let chunks = partition_typescript(&source, &config, "long_string.ts", "test");
+        
+        let visualization = format_chunks_visualization(&source, &chunks);
+        assert_snapshot!("long_string_visualization", visualization);
+        
+        let summary = format_chunks_summary(&chunks, source.lines().count());
+        assert_snapshot!("long_string_summary", summary);
+        
+        // Verify that the long string was split despite having no AST split points
+        assert!(chunks.len() > 1, "Expected fallback to split the oversized chunk");
+        
+        // Verify no chunk exceeds target size (with some tolerance for the fallback)
+        for chunk in &chunks {
+            assert!(chunk.text.len() <= config.target_size + 500, 
+                "Chunk at lines {}-{} exceeds target: {} chars", 
+                chunk.start_line, chunk.end_line, chunk.text.len());
+        }
     }
 }

@@ -1,6 +1,6 @@
 ---
 source: src/engine/partitioner.rs
-assertion_line: 832
+assertion_line: 878
 expression: visualization
 ---
 -- [CHUNK 1] [101 lines] [4046 chars] --
@@ -176,7 +176,7 @@ export interface IJsonFileStringifyOptions extends IJsonFileParseOptions {
    */
   headerComment?: string;
 }
--- [CHUNK 3] [27 lines] [873 chars] --
+-- [CHUNK 3] [29 lines] [915 chars] --
 
 /**
  * Options for {@link JsonFile.save} and {@link JsonFile.saveAsync}.
@@ -204,10 +204,9 @@ export interface IJsonFileSaveOptions extends IJsonFileStringifyOptions {
    */
   updateExistingFile?: boolean;
 }
--- [CHUNK 4] [2 lines] [41 chars] --
 
 const DEFAULT_ENCODING: 'utf8' = 'utf8';
--- [CHUNK 5] [52 lines] [1552 chars] --
+-- [CHUNK 4] [130 lines] [4141 chars] --
 
 /**
  * Utilities for reading/writing JSON files.
@@ -260,7 +259,6 @@ export class JsonFile {
       }
     }
   }
--- [CHUNK 6] [53 lines] [1652 chars] --
 
   /**
    * Parses a JSON file's contents.
@@ -314,7 +312,6 @@ export class JsonFile {
 
     return jsonObject;
   }
--- [CHUNK 7] [90 lines] [3051 chars] --
 
   /**
    * An async version of {@link JsonFile.loadAndValidateWithCallback}.
@@ -340,6 +337,7 @@ export class JsonFile {
   public static stringify(jsonObject: JsonObject, options?: IJsonFileStringifyOptions): string {
     return JsonFile.updateString('', jsonObject, options);
   }
+-- [CHUNK 5] [123 lines] [4083 chars] --
 
   /**
    * Serializes the specified JSON object to a string buffer.
@@ -405,7 +403,6 @@ export class JsonFile {
 
     return stringified;
   }
--- [CHUNK 8] [58 lines] [1967 chars] --
 
   /**
    * Saves the file to disk.  Returns false if nothing was written due to options.onlyIfChanged.
@@ -464,7 +461,7 @@ export class JsonFile {
     */
     return true;
   }
--- [CHUNK 9] [154 lines] [4933 chars] --
+-- [CHUNK 6] [154 lines] [4933 chars] --
 
   /**
    * An async version of {@link JsonFile.save}.

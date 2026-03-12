@@ -1,13 +1,13 @@
 ---
 source: src/engine/partitioner.rs
-assertion_line: 843
+assertion_line: 881
 expression: summary
 ---
 === QUALITY SCORE ===
-Score: 98.6%
-Total chunks: 9
-Tiny chunks (<20 lines): 1
-Lines: 2-154 (mean 67.4)
+Score: 100.0%
+Total chunks: 6
+Tiny chunks (<20 lines): 0
+Lines: 29-154 (mean 101.2)
 
 === CHUNK 1 ===
 Breadcrumb: @rushstack/node-core-library:JsonFile.ts
@@ -42,8 +42,8 @@ Breadcrumb: @rushstack/node-core-library:JsonFile.ts
 Type: code
 Kind: content
 Symbol: None
-Lines: 172-198
-Size: 913 chars
+Lines: 172-200
+Size: 955 chars
 Text preview (5 lines):
 
 /**
@@ -56,19 +56,8 @@ Breadcrumb: @rushstack/node-core-library:JsonFile.ts
 Type: code
 Kind: content
 Symbol: None
-Lines: 199-200
-Size: 81 chars
-Text preview (5 lines):
-
-const DEFAULT_ENCODING: 'utf8' = 'utf8';
-
-=== CHUNK 5 ===
-Breadcrumb: @rushstack/node-core-library:JsonFile.ts
-Type: code
-Kind: content
-Symbol: None
-Lines: 201-252
-Size: 1592 chars
+Lines: 201-330
+Size: 4181 chars
 Text preview (5 lines):
 
 /**
@@ -76,49 +65,21 @@ Text preview (5 lines):
  * @public
  */
 
+=== CHUNK 5 ===
+Breadcrumb: @rushstack/node-core-library:JsonFile.ts:JsonFile
+Type: class
+Kind: content
+Symbol: Some("JsonFile")
+Lines: 331-453
+Size: 4132 chars
+Text preview (5 lines):
+
+  /**
+   * Serializes the specified JSON object to a string buffer.
+   * @param previousJson - the previous JSON string, which will be updated
+   * @param newJsonObject - the object to be serialized
+
 === CHUNK 6 ===
-Breadcrumb: @rushstack/node-core-library:JsonFile.ts:JsonFile
-Type: class
-Kind: content
-Symbol: Some("JsonFile")
-Lines: 253-305
-Size: 1701 chars
-Text preview (5 lines):
-
-  /**
-   * Parses a JSON file's contents.
-   */
-  public static parseString(jsonContents: string, options?: IJsonFileParseOptions): JsonObject {
-
-=== CHUNK 7 ===
-Breadcrumb: @rushstack/node-core-library:JsonFile.ts:JsonFile
-Type: class
-Kind: content
-Symbol: Some("JsonFile")
-Lines: 306-395
-Size: 3100 chars
-Text preview (5 lines):
-
-  /**
-   * An async version of {@link JsonFile.loadAndValidateWithCallback}.
-   */
-  public static async loadAndValidateWithCallbackAsync(
-
-=== CHUNK 8 ===
-Breadcrumb: @rushstack/node-core-library:JsonFile.ts:JsonFile
-Type: class
-Kind: content
-Symbol: Some("JsonFile")
-Lines: 396-453
-Size: 2016 chars
-Text preview (5 lines):
-
-  /**
-   * Saves the file to disk.  Returns false if nothing was written due to options.onlyIfChanged.
-   * @param jsonObject - the object to be saved
-   * @param jsonFilename - the file path to write
-
-=== CHUNK 9 ===
 Breadcrumb: @rushstack/node-core-library:JsonFile.ts:JsonFile
 Type: class
 Kind: content

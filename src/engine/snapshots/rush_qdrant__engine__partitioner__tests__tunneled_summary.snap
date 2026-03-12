@@ -1,6 +1,6 @@
 ---
 source: src/engine/partitioner.rs
-assertion_line: 942
+assertion_line: 860
 expression: summary
 ---
 === QUALITY SCORE ===
@@ -10,12 +10,12 @@ Tiny chunks (<20 lines): 0
 Lines: 49-91 (mean 77.0)
 
 === CHUNK 1 ===
-Breadcrumb: @rushstack/playwright-browser-tunnel:TunneledBrowserConnection.ts
+Breadcrumb: @rushstack/playwright-browser-tunnel:TunneledBrowserConnection.ts:[fallback-split]
 Type: code
 Kind: content
 Symbol: None
 Lines: 1-49
-Size: 1985 chars
+Size: 2002 chars
 Text preview (5 lines):
 // Copyright (c) Microsoft Corporation. All rights reserved. Licensed under the MIT license.
 // See LICENSE in the project root for license information.
@@ -24,12 +24,12 @@ import type { LaunchOptions } from 'playwright-core';
 import playwrightPackageJson from 'playwright-core/package.json';
 
 === CHUNK 2 ===
-Breadcrumb: @rushstack/playwright-browser-tunnel:TunneledBrowserConnection.ts:tunneledBrowserConnection
+Breadcrumb: @rushstack/playwright-browser-tunnel:TunneledBrowserConnection.ts:tunneledBrowserConnection:[fallback-split]
 Type: function
 Kind: content
 Symbol: Some("tunneledBrowserConnection")
 Lines: 50-140
-Size: 3695 chars
+Size: 3712 chars
 Text preview (5 lines):
 
   function maybeSendHandshake(): void {
@@ -38,12 +38,12 @@ Text preview (5 lines):
         action: 'handshake',
 
 === CHUNK 3 ===
-Breadcrumb: @rushstack/playwright-browser-tunnel:TunneledBrowserConnection.ts:tunneledBrowserConnection
+Breadcrumb: @rushstack/playwright-browser-tunnel:TunneledBrowserConnection.ts:tunneledBrowserConnection:[fallback-split]
 Type: function
 Kind: content
 Symbol: Some("tunneledBrowserConnection")
 Lines: 141-231
-Size: 3695 chars
+Size: 3712 chars
 Text preview (5 lines):
         logger.writeDebugLine(`  Buffered messages pending: ${bufferedLocalMessages.length}`);
       });

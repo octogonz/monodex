@@ -6,7 +6,7 @@
 mod engine;
 
 use clap::{Parser, Subcommand};
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::path::PathBuf;
 use engine::{
     config::should_skip_path,
@@ -61,6 +61,10 @@ enum Commands {
         /// Catalog name (from config file)
         #[arg(long)]
         catalog: String,
+
+        /// Allow files with chunking warnings to participate in incremental skipping
+        #[arg(long, default_value_t = false)]
+        incremental_warnings: bool,
     },
     
     /// Purge all chunks from a catalog or entire collection
@@ -183,8 +187,8 @@ fn main() -> anyhow::Result<()> {
     let config = load_config(&config_path)?;
 
     match cli.command {
-        Commands::Crawl { catalog } => {
-            run_crawl(&config, &catalog)?;
+        Commands::Crawl { catalog, incremental_warnings } => {
+            run_crawl(&config, &catalog, incremental_warnings)?;
         }
         Commands::Purge { catalog, all } => {
             run_purge(&config, catalog.as_deref(), all)?;
@@ -221,7 +225,7 @@ fn load_config(path: &PathBuf) -> anyhow::Result<Config> {
 }
 
 /// Run crawl (incremental sync)
-fn run_crawl(config: &Config, catalog_name: &str) -> anyhow::Result<()> {
+fn run_crawl(config: &Config, catalog_name: &str, incremental_warnings: bool) -> anyhow::Result<()> {
     let total_start = std::time::Instant::now();
     println!("🔍 Starting crawl...");
     println!("Catalog: {}", catalog_name);
@@ -248,6 +252,16 @@ fn run_crawl(config: &Config, catalog_name: &str) -> anyhow::Result<()> {
     println!("📂 Checking existing index...");
     let existing_files = uploader.get_catalog_files(catalog_name)?;
     println!("Found {} files already indexed", existing_files.len());
+
+    // Load persisted chunking warning files (sticky by default)
+    let warning_state_path = std::path::PathBuf::from(format!(".rush-qdrant-warnings-{}.json", catalog_name));
+    let warning_files: HashSet<String> = match std::fs::read_to_string(&warning_state_path) {
+        Ok(content) => serde_json::from_str(&content).unwrap_or_default(),
+        Err(_) => HashSet::new(),
+    };
+    if !warning_files.is_empty() {
+        println!("Found {} files with prior chunking warnings", warning_files.len());
+    }
     println!();
 
     // Scan directory
@@ -289,12 +303,15 @@ fn run_crawl(config: &Config, catalog_name: &str) -> anyhow::Result<()> {
     let mut all_chunks: Vec<engine::Chunk> = Vec::new();
     let mut chunks_by_type: HashMap<String, usize> = HashMap::new();
     let mut files_deleted = 0;
+    let mut crawl_warning_files: HashSet<String> = HashSet::new();
+    let mut warning_count: usize = 0;
     
     for (idx, file_path) in files_to_process.iter().enumerate() {
         // Progress indicator
-        print!("\r  Chunking file {}/{} ({:.0}%)   ", 
+        print!("\r  Chunking file {}/{} ({:.0}%) | warnings: {}   ", 
             idx + 1, total_files, 
-            ((idx + 1) as f64 / total_files as f64) * 100.0);
+            ((idx + 1) as f64 / total_files as f64) * 100.0,
+            warning_count);
         std::io::Write::flush(&mut std::io::stdout())?;
 
         // Read file and compute hash
@@ -314,8 +331,13 @@ fn run_crawl(config: &Config, catalog_name: &str) -> anyhow::Result<()> {
         // Check if file changed
         if let Some(existing_hash) = existing_files.get(file_path) {
             if existing_hash == &current_hash {
-                unchanged_count += 1;
-                continue; // Skip unchanged file
+                let has_warning = warning_files.contains(file_path);
+                if has_warning && !incremental_warnings {
+                    // Sticky retry for warning files: always reprocess until clean
+                } else {
+                    unchanged_count += 1;
+                    continue; // Skip unchanged file
+                }
             }
             
             // File changed - delete old chunks
@@ -342,10 +364,23 @@ fn run_crawl(config: &Config, catalog_name: &str) -> anyhow::Result<()> {
         
         match chunk_file(file_path, catalog_name, &package_name_or_folder, 6000) {
             Ok(chunks) => {
-                for chunk in &chunks {
-                    *chunks_by_type.entry(chunk.chunk_type.clone()).or_insert(0) += 1;
+                // Detect fallback warning marker in chunks (injected by partitioner via breadcrumb suffix)
+                let had_warning = chunks.iter().any(|c| c.breadcrumb.contains("[fallback-split]"));
+                if had_warning {
+                    warning_count += 1;
+                    crawl_warning_files.insert(file_path.clone());
+                    println!();
+                    println!("Warning: Couldn't find a splitpoint for {}", file_path);
                 }
-                all_chunks.extend(chunks);
+
+                for mut chunk in chunks {
+                    if had_warning {
+                        // Strip marker from stored breadcrumb; marker is only for signaling in-process
+                        chunk.breadcrumb = chunk.breadcrumb.replace(":[fallback-split]", "");
+                    }
+                    *chunks_by_type.entry(chunk.chunk_type.clone()).or_insert(0) += 1;
+                    all_chunks.push(chunk);
+                }
             }
             Err(e) => {
                 eprintln!("\n  ⚠️  Failed to chunk file {}: {}", file_path, e);
@@ -538,6 +573,30 @@ fn run_crawl(config: &Config, catalog_name: &str) -> anyhow::Result<()> {
     println!("Overall rate: {:.1} chunks/sec", total_chunks as f64 / total_elapsed.as_secs_f64().max(0.001));
     println!("Files deleted from DB: {}", files_deleted);
     println!();
+
+    // Update warning state: keep files that had warnings this crawl
+    // plus any previous warning files that were skipped due to incremental mode.
+    let mut next_warning_files: HashSet<String> = HashSet::new();
+    next_warning_files.extend(crawl_warning_files.iter().cloned());
+    if incremental_warnings {
+        // In this mode, unchanged warning files may remain skipped; preserve prior state.
+        next_warning_files.extend(warning_files.iter().cloned());
+    }
+    let json = serde_json::to_string_pretty(&next_warning_files)?;
+    std::fs::write(&warning_state_path, json)?;
+
+    // Warning summary
+    if !crawl_warning_files.is_empty() {
+        let plural = if crawl_warning_files.len() == 1 { "file" } else { "files" };
+        println!("Chunking warnings in {} {}:", crawl_warning_files.len(), plural);
+        for file in crawl_warning_files.iter().take(20) {
+            println!("  - {}", file);
+        }
+        if crawl_warning_files.len() > 20 {
+            println!("  ... and {} more", crawl_warning_files.len() - 20);
+        }
+        println!();
+    }
 
     Ok(())
 }
@@ -834,7 +893,7 @@ fn run_sample_quality(count: usize, dir: Option<String>) -> anyhow::Result<()> {
     println!();
     
     // Collect all TypeScript files
-    let mut ts_files: Vec<PathBuf> = walkdir::WalkDir::new(&base_dir)
+    let ts_files: Vec<PathBuf> = walkdir::WalkDir::new(&base_dir)
         .into_iter()
         .filter_map(|e| e.ok())
         .filter(|e| {

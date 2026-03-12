@@ -256,6 +256,7 @@ pub fn partition_typescript(
     let import_end_line = extract_imports_end_line(root, source.as_bytes());
     
     // Step 2: Iteratively split chunks that exceed budget
+    let mut used_fallback_split = false;
     let mut changed = true;
     while changed {
         changed = false;
@@ -310,13 +311,8 @@ pub fn partition_typescript(
                     // Can't split using AST - fallback to line-based splitting
                     let mid_line = chunk_range.start_line + (chunk_range.end_line - chunk_range.start_line) / 2;
                     
-                    eprintln!(
-                        "WARNING: Could not find AST split points for chunk at lines {}-{} ({} chars). \
-                        Falling back to line-based split at line {}.",
-                        chunk_range.start_line, chunk_range.end_line, chunk_size, mid_line
-                    );
-                    
                     // Split at the middle line
+                    used_fallback_split = true;
                     new_chunks.push(ChunkRange { 
                         start_line: chunk_range.start_line, 
                         end_line: mid_line 
@@ -365,11 +361,15 @@ pub fn partition_typescript(
             root, source.as_bytes(), chunk_range.start_line, chunk_range.end_line,
         );
         
-        let breadcrumb = if breadcrumb_suffix.is_empty() {
+        let mut breadcrumb = if breadcrumb_suffix.is_empty() {
             base_breadcrumb.clone()
         } else {
             format!("{}:{}", base_breadcrumb, breadcrumb_suffix)
         };
+
+        if used_fallback_split {
+            breadcrumb.push_str(":[fallback-split]");
+        }
         
         let chunk_kind = if import_end_line > 0 && chunk_range.end_line <= import_end_line {
             "imports".to_string()
@@ -505,7 +505,7 @@ fn find_children_in_container<'a>(node: Node<'a>) -> Vec<Node<'a>> {
 }
 
 /// Get the end line of import statements (0 if no imports)
-fn extract_imports_end_line(root: Node, source: &[u8]) -> usize {
+fn extract_imports_end_line(root: Node, _source: &[u8]) -> usize {
     let mut cursor = root.walk();
     let mut last_import_end = 0usize;
     
@@ -526,88 +526,6 @@ fn get_lines_text(lines: &[&str], start_line: usize, end_line: usize) -> String 
     }
     let end = end_line.min(lines.len());
     lines[start_line - 1..end].join("\n")
-}
-
-/// Find meaningful split points within a line range
-fn find_meaningful_split_points(
-    root: Node,
-    source: &[u8],
-    start_line: usize,
-    end_line: usize,
-) -> Vec<usize> {
-    let mut candidates: Vec<usize> = Vec::new();
-    collect_split_candidates(root, source, start_line, end_line, &mut candidates);
-    candidates.sort();
-    candidates.dedup();
-    candidates.into_iter().filter(|&line| line >= start_line && line < end_line).collect()
-}
-
-fn collect_split_candidates(
-    node: Node,
-    source: &[u8],
-    range_start: usize,
-    range_end: usize,
-    candidates: &mut Vec<usize>,
-) {
-    let node_start = node.start_position().row + 1;
-    let node_end = node.end_position().row + 1;
-    
-    if node_end < range_start || node_start > range_end { return; }
-    
-    if is_meaningful_split_point(node, source) {
-        // Add split point AFTER this node ends
-        // This is "between siblings" - after one sibling, before the next
-        if node_end >= range_start && node_end < range_end {
-            candidates.push(node_end);
-        }
-    }
-    
-    let mut cursor = node.walk();
-    for child in node.children(&mut cursor) {
-        collect_split_candidates(child, source, range_start, range_end, candidates);
-    }
-}
-
-/// Find the start line of a node, including any preceding JSDoc comment
-fn find_node_start_with_comment(node: Node, source: &[u8]) -> usize {
-    let node_start = node.start_position().row + 1;
-    
-    // Look for preceding JSDoc comment
-    if let Some(comment) = find_preceding_jsdoc(node, source) {
-        comment.start_position().row + 1
-    } else {
-        node_start
-    }
-}
-
-/// Find the JSDoc comment immediately preceding a node
-fn find_preceding_jsdoc<'a>(node: Node<'a>, source: &[u8]) -> Option<Node<'a>> {
-    let parent = node.parent()?;
-    let mut cursor = parent.walk();
-    let mut siblings: Vec<Node> = Vec::new();
-    
-    for child in parent.children(&mut cursor) {
-        if child == node {
-            break;
-        }
-        siblings.push(child);
-    }
-    
-    // Walk backwards through siblings looking for a JSDoc comment
-    for sibling in siblings.into_iter().rev() {
-        if sibling.kind() == "comment" {
-            let comment_text = String::from_utf8_lossy(&source[sibling.start_byte()..sibling.end_byte()]);
-            if comment_text.trim_start().starts_with("/**") {
-                return Some(sibling);
-            }
-            // Non-JSDoc comment - keep looking
-        } else if sibling.kind() != "comment" {
-            // Non-comment node - stop looking
-            break;
-        }
-    }
-    
-    None
 }
 
 fn is_meaningful_split_point(node: Node, source: &[u8]) -> bool {

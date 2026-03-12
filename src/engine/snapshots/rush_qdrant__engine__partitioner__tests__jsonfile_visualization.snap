@@ -1,6 +1,6 @@
 ---
 source: src/engine/partitioner.rs
-assertion_line: 1059
+assertion_line: 1163
 expression: visualization
 ---
 -- [CHUNK 1] [101 lines] [4046 chars] --
@@ -205,7 +205,7 @@ export interface IJsonFileSaveOptions extends IJsonFileStringifyOptions {
 }
 
 const DEFAULT_ENCODING: 'utf8' = 'utf8';
--- [CHUNK 3] [102 lines] [3177 chars] --
+-- [CHUNK 3] [105 lines] [3205 chars] --
 
 /**
  * Utilities for reading/writing JSON files.
@@ -308,10 +308,10 @@ export class JsonFile {
   ): JsonObject {
     const jsonObject: JsonObject = JsonFile.load(jsonFilename, options);
     jsonSchema.validateObjectWithCallback(jsonObject, errorCallback);
--- [CHUNK 4] [102 lines] [3476 chars] --
 
     return jsonObject;
   }
+-- [CHUNK 4] [90 lines] [3051 chars] --
 
   /**
    * An async version of {@link JsonFile.loadAndValidateWithCallback}.
@@ -402,6 +402,7 @@ export class JsonFile {
 
     return stringified;
   }
+-- [CHUNK 5] [112 lines] [3674 chars] --
 
   /**
    * Saves the file to disk.  Returns false if nothing was written due to options.onlyIfChanged.
@@ -411,7 +412,6 @@ export class JsonFile {
    * @returns false if ISaveJsonFileOptions.onlyIfChanged didn't save anything; true otherwise
    */
   public static save(
--- [CHUNK 5] [102 lines] [3273 chars] --
     jsonObject: JsonObject,
     jsonFilename: string,
     options: IJsonFileSaveOptions = {}
@@ -514,8 +514,8 @@ export class JsonFile {
     }
     */
     return true;
--- [CHUNK 6] [101 lines] [3230 chars] --
   }
+-- [CHUNK 6] [100 lines] [3226 chars] --
 
   /**
    * Used to validate a data structure before writing.  Reports an error if there

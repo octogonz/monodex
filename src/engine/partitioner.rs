@@ -59,6 +59,9 @@ fn is_split_scope(kind: &str) -> bool {
 fn is_transparent_conduit(kind: &str) -> bool {
     matches!(kind,
         "export_statement" |
+        // Declaration containers (hold class_body, object_type, etc.)
+        "class_declaration" | "interface_declaration" |
+        "type_alias_declaration" | "enum_declaration" |
         "function_declaration" | "method_definition" | "arrow_function" |
         "if_statement" | "try_statement" | "catch_clause" |
         "for_statement" | "for_in_statement" | "for_of_statement" |
@@ -1282,10 +1285,10 @@ export function tiny(): number {
         let summary = format_chunks_summary(&chunks, source.lines().count());
         assert_snapshot!("colorize_summary", summary);
         
-        // TODO: Currently uses fallback split - should use AST-based splitting at method boundaries
-        // for chunk in &chunks {
-        //     assert!(!chunk.breadcrumb.contains("[fallback-split]"), 
-        //         "Unexpected fallback split in chunk: {}", chunk.breadcrumb);
-        // }
+        // Should NOT have fallback split - should use AST-based splitting at method boundaries
+        for chunk in &chunks {
+            assert!(!chunk.breadcrumb.contains("[fallback-split]"), 
+                "Unexpected fallback split in chunk: {}", chunk.breadcrumb);
+        }
     }
 }

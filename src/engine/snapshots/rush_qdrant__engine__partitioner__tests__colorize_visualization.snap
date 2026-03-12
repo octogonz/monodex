@@ -1,6 +1,6 @@
 ---
 source: src/engine/partitioner.rs
-assertion_line: 1280
+assertion_line: 1283
 expression: visualization
 ---
 -- [CHUNK 1] [55 lines] [1467 chars] --
@@ -59,7 +59,7 @@ const RAINBOW_SEQUENCE: SgrParameterAttribute[] = [
   SgrParameterAttribute.BlueForeground,
   SgrParameterAttribute.MagentaForeground
 ];
--- [CHUNK 2] [117 lines] [3295 chars] --
+-- [CHUNK 2] [115 lines] [3237 chars] --
 
 /**
  * The static functions on this class are used to produce colored text
@@ -175,9 +175,9 @@ export class Colorize {
       text
     );
   }
+-- [CHUNK 3] [119 lines] [3324 chars] --
 
   public static yellowBackground(text: string): string {
--- [CHUNK 3] [117 lines] [3266 chars] --
     return Colorize._wrapTextInAnsiEscapeCodes(
       SgrParameterAttribute.YellowBackground,
       SgrParameterAttribute.DefaultBackground,

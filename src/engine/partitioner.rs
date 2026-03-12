@@ -249,22 +249,13 @@ pub fn partition_typescript(
         format!("{}:{}", config.package_name, config.file_name)
     };
     
-    // Step 1: Extract imports end line
+    // Step 1: Start with the whole file as one chunk
+    let mut chunks: Vec<ChunkRange> = vec![ChunkRange { start_line: 1, end_line: total_lines }];
+    
+    // Also extract imports end line for chunk_kind metadata (but don't pre-split)
     let import_end_line = extract_imports_end_line(root, source.as_bytes());
     
-    // Step 2: Initialize chunk ranges
-    let mut chunks: Vec<ChunkRange> = Vec::new();
-    
-    if import_end_line > 0 {
-        chunks.push(ChunkRange { start_line: 1, end_line: import_end_line });
-        if import_end_line < total_lines {
-            chunks.push(ChunkRange { start_line: import_end_line + 1, end_line: total_lines });
-        }
-    } else {
-        chunks.push(ChunkRange { start_line: 1, end_line: total_lines });
-    }
-    
-    // Step 3: Iteratively split chunks that exceed budget
+    // Step 2: Iteratively split chunks that exceed budget
     let mut changed = true;
     while changed {
         changed = false;
@@ -346,7 +337,7 @@ pub fn partition_typescript(
         chunks = new_chunks;
     }
     
-    // Step 4: Convert chunk ranges to PartitionedChunks
+    // Step 3: Convert chunk ranges to PartitionedChunks
     let mut result = Vec::new();
     
     for chunk_range in &chunks {
@@ -865,6 +856,25 @@ export function tiny(): number {
         
         // Small file with one chunk should score 100%
         assert_eq!(chunks.len(), 1);
+        assert!(score > 99.0, "Small file with one chunk should score ~100%, got {:.1}%", score);
+    }
+    
+    #[test]
+    fn test_small_file_should_not_split() {
+        // A 12-line .d.ts file (242 chars) should NOT be split into 2 chunks
+        // This is a regression test for the "imports always split" bug
+        let source = include_str!("../../test_artifacts/rollup.d.ts");
+        let config = PartitionConfig {
+            file_name: "rollup.d.ts".to_string(),
+            package_name: "api-extractor-scenarios".to_string(),
+            ..Default::default()
+        };
+        let chunks = partition_typescript(source, &config, "rollup.d.ts", "api-extractor-scenarios");
+        let file_lines = source.lines().count();
+        let score = chunk_quality_score(&chunks, file_lines);
+        
+        // The whole file is only 242 chars - should be one chunk
+        assert_eq!(chunks.len(), 1, "Small file should not be split, got {} chunks", chunks.len());
         assert!(score > 99.0, "Small file with one chunk should score ~100%, got {:.1}%", score);
     }
 }

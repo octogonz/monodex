@@ -99,7 +99,8 @@ fn is_split_scope(kind: &str) -> bool {
     matches!(kind,
         "program" | "source_file" |
         "class_body" | "declaration_list" | "object_type" |
-        "statement_block" | "switch_body"
+        "statement_block" | "switch_body" |
+        "object"  // Object literals (contain 'pair' children)
     )
 }
 
@@ -117,8 +118,11 @@ fn is_transparent_conduit(kind: &str) -> bool {
         "switch_statement" | "switch_case" |
         "return_statement" | "throw_statement" |
         "expression_statement" |
+        // Variable declarations may contain object literals with properties
+        "lexical_declaration" | "variable_declarator" |
         // Expression wrappers that may contain nested scopes
-        "await_expression" | "new_expression" | "arguments" | "call_expression"
+        "await_expression" | "new_expression" | "arguments" | "call_expression" |
+        "as_expression"  // `expr as const` wraps object literals
     )
 }
 
@@ -479,7 +483,7 @@ fn find_nested_split_scope<'a>(
     node: Node<'a>,
     start_line: usize,
     end_line: usize,
-    source: &[u8],
+    _source: &[u8],
     debug: &PartitionDebug,
 ) -> Option<Node<'a>> {
     let mut cursor = node.walk();
@@ -519,7 +523,7 @@ fn find_nested_split_scope<'a>(
             child.kind(), child.start_position().row + 1, child.end_position().row + 1));
         if is_transparent_conduit(child.kind()) {
             // Try to find a deeper split scope inside this conduit
-            if let Some(deeper) = find_deepest_split_scope(child, start_line, end_line, source, debug) {
+            if let Some(deeper) = find_deepest_split_scope(child, start_line, end_line, _source, debug) {
                 return Some(deeper);
             }
         }
@@ -995,9 +999,14 @@ fn is_meaningful_split_point(node: Node, source: &[u8]) -> bool {
         
         "method_definition" => true,
         
+        // Class fields and interface properties
         "public_field_definition" | "property_declaration" => {
             node.end_byte() - node.start_byte() > 50
         }
+        
+        // Object literal properties (key-value pairs) and interface property signatures
+        // These are meaningful split points for large objects/interfaces
+        "pair" | "property_signature" => true,
         
         "lexical_declaration" | "variable_declaration" => {
             let text = String::from_utf8_lossy(&source[node.start_byte()..node.end_byte()]);
@@ -1408,6 +1417,31 @@ export function tiny(): number {
             assert!(!chunk.breadcrumb.contains("[fallback-split]"), 
                 "Unexpected fallback split in chunk: {}", chunk.breadcrumb);
         }
+    }
+    
+    #[test]
+    fn test_environment_configuration() {
+        // A file with two giant constructs:
+        // 1. A 226-line const object (EnvironmentVariableNames)
+        // 2. A 476-line class (EnvironmentConfiguration)
+        // 
+        // This tests the "single giant construct" problem where we have very few
+        // meaningful split points because the file is dominated by large object/class
+        // literals that don't have natural internal split boundaries.
+        let source = include_str!("../../test_artifacts/EnvironmentConfiguration.ts");
+        let config = PartitionConfig {
+            file_name: "EnvironmentConfiguration.ts".to_string(),
+            package_name: "rush-lib".to_string(),
+            debug: PartitionDebug { enabled: true },
+            ..Default::default()
+        };
+        let chunks = partition_typescript(source, &config, "EnvironmentConfiguration.ts", "rush-lib");
+        
+        let visualization = format_chunks_visualization(source, &chunks);
+        assert_snapshot!("environment_config_visualization", visualization);
+        
+        let summary = format_chunks_summary(&chunks, source.lines().count());
+        assert_snapshot!("environment_config_summary", summary);
     }
     
 }

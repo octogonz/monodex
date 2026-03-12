@@ -1,0 +1,122 @@
+---
+source: src/engine/partitioner.rs
+assertion_line: 1444
+expression: summary
+---
+=== QUALITY SCORE ===
+Score: 99.7%
+Total chunks: 8
+Tiny chunks (<20 lines): 1
+Lines: 11-128 (mean 91.9)
+
+=== CHUNK 1 ===
+Breadcrumb: rush-lib:EnvironmentConfiguration.ts:[fallback-split]
+Type: code
+Kind: content
+Symbol: None
+Lines: 1-128
+Size: 5410 chars
+Text preview (5 lines):
+// Copyright (c) Microsoft Corporation. All rights reserved. Licensed under the MIT license.
+// See LICENSE in the project root for license information.
+
+import * as path from 'node:path';
+
+
+=== CHUNK 2 ===
+Breadcrumb: rush-lib:EnvironmentConfiguration.ts:[fallback-split]
+Type: variable
+Kind: content
+Symbol: None
+Lines: 129-249
+Size: 5295 chars
+Text preview (5 lines):
+
+  /**
+   * Setting this environment variable overrides the value of `buildCacheEnabled` in the `build-cache.json`
+   * configuration file.
+   *
+
+=== CHUNK 3 ===
+Breadcrumb: rush-lib:EnvironmentConfiguration.ts:[fallback-split]
+Type: code
+Kind: content
+Symbol: None
+Lines: 250-358
+Size: 3974 chars
+Text preview (5 lines):
+
+/**
+ * Provides Rush-specific environment variable data. All Rush environment variables must start with "RUSH_". This class
+ * is designed to be used by RushConfiguration.
+ * @beta
+
+=== CHUNK 4 ===
+Breadcrumb: rush-lib:EnvironmentConfiguration.ts:EnvironmentConfiguration:[fallback-split]
+Type: class
+Kind: content
+Symbol: Some("EnvironmentConfiguration")
+Lines: 359-472
+Size: 4536 chars
+Text preview (5 lines):
+
+  /**
+   * Overrides the location of the `~/.rush` global folder where Rush stores temporary files.
+   * See {@link EnvironmentVariableNames.RUSH_GLOBAL_FOLDER}
+   */
+
+=== CHUNK 5 ===
+Breadcrumb: rush-lib:EnvironmentConfiguration.ts:EnvironmentConfiguration:[fallback-split]
+Type: class
+Kind: content
+Symbol: Some("EnvironmentConfiguration")
+Lines: 473-483
+Size: 554 chars
+Text preview (5 lines):
+
+  /**
+   * Reads and validates environment variables. If any are invalid, this function will throw.
+   */
+  public static validate(options: IEnvironmentConfigurationInitializeOptions = {}): void {
+
+=== CHUNK 6 ===
+Breadcrumb: rush-lib:EnvironmentConfiguration.ts:validate:[fallback-split]
+Type: function
+Kind: content
+Symbol: Some("validate")
+Lines: 484-570
+Size: 3676 chars
+Text preview (5 lines):
+        // Environment variables are only case-insensitive on Windows
+        const normalizedEnvVarName: string = IS_WINDOWS ? envVarName.toUpperCase() : envVarName;
+        switch (normalizedEnvVarName) {
+          case EnvironmentVariableNames.RUSH_TEMP_FOLDER: {
+            EnvironmentConfiguration._rushTempFolderOverride =
+
+=== CHUNK 7 ===
+Breadcrumb: rush-lib:EnvironmentConfiguration.ts:validate:[fallback-split]
+Type: function
+Kind: content
+Symbol: Some("validate")
+Lines: 571-657
+Size: 3255 chars
+Text preview (5 lines):
+            EnvironmentConfiguration._buildCacheOverrideJson = value;
+            break;
+          }
+
+          case EnvironmentVariableNames.RUSH_BUILD_CACHE_OVERRIDE_JSON_FILE_PATH: {
+
+=== CHUNK 8 ===
+Breadcrumb: rush-lib:EnvironmentConfiguration.ts:EnvironmentConfiguration:[fallback-split]
+Type: class
+Kind: content
+Symbol: Some("EnvironmentConfiguration")
+Lines: 658-735
+Size: 2938 chars
+Text preview (5 lines):
+
+  /**
+   * Resets EnvironmentConfiguration into an un-initialized state.
+   */
+  public static reset(): void {

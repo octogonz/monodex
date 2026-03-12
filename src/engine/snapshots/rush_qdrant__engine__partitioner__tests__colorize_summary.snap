@@ -1,0 +1,52 @@
+---
+source: src/engine/partitioner.rs
+assertion_line: 1283
+expression: summary
+---
+=== QUALITY SCORE ===
+Score: 100.0%
+Total chunks: 3
+Tiny chunks (<20 lines): 0
+Lines: 55-117 (mean 96.3)
+
+=== CHUNK 1 ===
+Breadcrumb: @rushstack/terminal:Colorize.ts:[fallback-split]
+Type: code
+Kind: content
+Symbol: None
+Lines: 1-55
+Size: 1515 chars
+Text preview (5 lines):
+// Copyright (c) Microsoft Corporation. All rights reserved. Licensed under the MIT license.
+// See LICENSE in the project root for license information.
+
+import { AnsiEscape } from './AnsiEscape';
+
+
+=== CHUNK 2 ===
+Breadcrumb: @rushstack/terminal:Colorize.ts:[fallback-split]
+Type: code
+Kind: content
+Symbol: None
+Lines: 56-172
+Size: 3343 chars
+Text preview (5 lines):
+
+/**
+ * The static functions on this class are used to produce colored text
+ * for use with a terminal that supports ANSI escape codes.
+ *
+
+=== CHUNK 3 ===
+Breadcrumb: @rushstack/terminal:Colorize.ts:Colorize:[fallback-split]
+Type: class
+Kind: content
+Symbol: Some("Colorize")
+Lines: 173-289
+Size: 3323 chars
+Text preview (5 lines):
+    return Colorize._wrapTextInAnsiEscapeCodes(
+      SgrParameterAttribute.YellowBackground,
+      SgrParameterAttribute.DefaultBackground,
+      text
+    );

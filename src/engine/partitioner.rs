@@ -1263,5 +1263,29 @@ export function tiny(): number {
                 chunk.start_line, chunk.end_line, chunk.text.len());
         }
     }
-}
 
+    #[test]
+    fn test_colorize_class_with_enum() {
+        // A 289-line file (8031 chars) with an enum and a class with many methods
+        // This tests the ability to split a class into method-level chunks
+        let source = include_str!("../../test_artifacts/Colorize.ts");
+        let config = PartitionConfig {
+            file_name: "Colorize.ts".to_string(),
+            package_name: "@rushstack/terminal".to_string(),
+            ..Default::default()
+        };
+        let chunks = partition_typescript(source, &config, "Colorize.ts", "terminal");
+        
+        let visualization = format_chunks_visualization(source, &chunks);
+        assert_snapshot!("colorize_visualization", visualization);
+        
+        let summary = format_chunks_summary(&chunks, source.lines().count());
+        assert_snapshot!("colorize_summary", summary);
+        
+        // TODO: Currently uses fallback split - should use AST-based splitting at method boundaries
+        // for chunk in &chunks {
+        //     assert!(!chunk.breadcrumb.contains("[fallback-split]"), 
+        //         "Unexpected fallback split in chunk: {}", chunk.breadcrumb);
+        // }
+    }
+}

@@ -816,8 +816,9 @@ fn run_dump_chunks(file: &PathBuf, target_size: usize) -> anyhow::Result<()> {
     println!("Small chunks (<200): {}", undersized);
     
     // Quality score
-    let report = ChunkQualityReport::from_chunks(&chunks);
-    println!("Quality score: {:.3} (lower is better)", report.score);
+    let file_lines = source.lines().count();
+    let report = ChunkQualityReport::from_chunks(&chunks, file_lines);
+    println!("Quality score: {:.1}%", report.score);
     println!("  Tiny chunks (<20 lines): {}", report.tiny_chunks);
     
     Ok(())
@@ -869,13 +870,14 @@ fn run_sample_quality(count: usize, dir: Option<String>) -> anyhow::Result<()> {
                 ..Default::default()
             };
             let chunks = partition_typescript(&source, &config, path.to_str().unwrap(), "rushstack");
-            let report = ChunkQualityReport::from_chunks(&chunks);
+            let file_lines = source.lines().count();
+            let report = ChunkQualityReport::from_chunks(&chunks, file_lines);
             Some((path, report, chunks))
         })
         .collect();
     
-    // Sort by score (worst first)
-    results.sort_by(|a, b| b.1.score.partial_cmp(&a.1.score).unwrap());
+    // Sort by score (worst first - ascending since higher is better)
+    results.sort_by(|a, b| a.1.score.partial_cmp(&b.1.score).unwrap());
     
     println!("\n=== Quality Scores (worst first) ===\n");
     for (i, (path, report, _)) in results.iter().enumerate() {

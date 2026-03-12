@@ -25,22 +25,86 @@
 use tree_sitter::{Node, Parser};
 use super::util::compute_hash;
 
-/// Quality score for chunking results.
-/// Uses inverse square of line counts: Σ (1 / lines²)
-/// This penalizes tiny chunks heavily while large chunks contribute negligibly.
-pub fn chunk_quality_score(chunks: &[PartitionedChunk]) -> f64 {
-    chunks
+/// Target chunk size in lines (derived from 6000 char target, ~50 chars/line)
+const TARGET_LINES: usize = 120;
+
+/// Compute quality score for chunking results (0-100%, higher is better).
+///
+/// The score combines two factors:
+/// 1. Count badness: How many more chunks than ideal (0 if at ideal, 1 if all 1-line chunks)
+/// 2. Micro-chunk badness: How small the chunks are relative to ideal (0 if all at max size)
+///
+/// Final score = 100 × (1 - count_badness) × (1 - micro_badness)³
+pub fn chunk_quality_score(chunks: &[PartitionedChunk], file_lines: usize) -> f64 {
+    if chunks.is_empty() || file_lines == 0 {
+        return 100.0;
+    }
+    
+    let max_chunk_size = TARGET_LINES.min(file_lines);
+    let chunk_count = chunks.len();
+    
+    // Compute chunk sizes
+    let chunk_sizes: Vec<usize> = chunks
         .iter()
-        .map(|chunk| {
-            let lines = chunk.end_line - chunk.start_line + 1;
-            1.0 / (lines as f64).powi(2)
-        })
-        .sum()
+        .map(|c| c.end_line - c.start_line + 1)
+        .collect();
+    
+    let total_lines: usize = chunk_sizes.iter().sum();
+    
+    // Ideal number of chunks
+    let ideal_chunk_count = (total_lines + max_chunk_size - 1) / max_chunk_size; // ceil division
+    
+    // 1) Count badness: 0 at ideal chunk count, 1 at all 1-line chunks
+    let count_badness = if total_lines == ideal_chunk_count {
+        0.0
+    } else {
+        (chunk_count as f64 - ideal_chunk_count as f64) / (total_lines as f64 - ideal_chunk_count as f64)
+    };
+    
+    // Helper: chunk badness (0 at max size or larger, 1 at 1 line)
+    let chunk_badness = |size: usize| -> f64 {
+        if size >= max_chunk_size {
+            0.0
+        } else {
+            ((max_chunk_size - size) as f64 / (max_chunk_size - 1) as f64).powi(2)
+        }
+    };
+    
+    // 2) Micro-chunk badness relative to ideal partition
+    let ideal_last_chunk_size = total_lines - max_chunk_size * (ideal_chunk_count.saturating_sub(1));
+    let ideal_partition_badness = if ideal_chunk_count == 0 {
+        0.0
+    } else if ideal_chunk_count == 1 {
+        chunk_badness(ideal_last_chunk_size)
+    } else {
+        // All but last chunk are at max size (badness 0), last chunk may be smaller
+        chunk_badness(ideal_last_chunk_size)
+    };
+    
+    let actual_partition_badness: f64 = chunk_sizes.iter().map(|&s| chunk_badness(s)).sum();
+    let worst_partition_badness = total_lines as f64; // all 1-line chunks, each with badness 1
+    
+    let micro_badness = if worst_partition_badness == ideal_partition_badness {
+        0.0
+    } else {
+        (actual_partition_badness - ideal_partition_badness) / (worst_partition_badness - ideal_partition_badness)
+    };
+    
+    // Clamp for numerical safety
+    let count_badness = count_badness.clamp(0.0, 1.0);
+    let micro_badness = micro_badness.clamp(0.0, 1.0);
+    
+    // Final score: weight micro_badness more heavily (beta=3)
+    let alpha = 1.0;
+    let beta = 3.0;
+    let score = 100.0 * (1.0 - count_badness).powf(alpha) * (1.0 - micro_badness).powf(beta);
+    
+    score.clamp(0.0, 100.0)
 }
 
 /// Quality report for chunking results
 pub struct ChunkQualityReport {
-    /// Quality score (lower is better)
+    /// Quality score (0-100%, higher is better)
     pub score: f64,
     /// Total number of chunks
     pub total_chunks: usize,
@@ -55,10 +119,10 @@ pub struct ChunkQualityReport {
 }
 
 impl ChunkQualityReport {
-    pub fn from_chunks(chunks: &[PartitionedChunk]) -> Self {
+    pub fn from_chunks(chunks: &[PartitionedChunk], file_lines: usize) -> Self {
         if chunks.is_empty() {
             return Self {
-                score: 0.0,
+                score: 100.0,
                 total_chunks: 0,
                 tiny_chunks: 0,
                 min_lines: 0,
@@ -73,7 +137,7 @@ impl ChunkQualityReport {
             .collect();
         
         Self {
-            score: chunk_quality_score(chunks),
+            score: chunk_quality_score(chunks, file_lines),
             total_chunks: chunks.len(),
             tiny_chunks: line_counts.iter().filter(|&&l| l < 20).count(),
             min_lines: *line_counts.iter().min().unwrap(),
@@ -84,7 +148,7 @@ impl ChunkQualityReport {
     
     pub fn format(&self) -> String {
         format!(
-            "Score: {:.3} | Chunks: {} | Tiny (<20 lines): {} | Lines: {}-{} (mean {:.1})",
+            "Score: {:.1}% | Chunks: {} | Tiny (<20 lines): {} | Lines: {}-{} (mean {:.1})",
             self.score,
             self.total_chunks,
             self.tiny_chunks,
@@ -654,10 +718,10 @@ mod tests {
     use super::*;
     use insta::assert_snapshot;
 
-    fn format_chunks_summary(chunks: &[PartitionedChunk]) -> String {
-        let report = ChunkQualityReport::from_chunks(chunks);
+    fn format_chunks_summary(chunks: &[PartitionedChunk], file_lines: usize) -> String {
+        let report = ChunkQualityReport::from_chunks(chunks, file_lines);
         let mut result = format!(
-            "=== QUALITY SCORE ===\nScore: {:.3}\nTotal chunks: {}\nTiny chunks (<20 lines): {}\nLines: {}-{} (mean {:.1})\n\n",
+            "=== QUALITY SCORE ===\nScore: {:.1}%\nTotal chunks: {}\nTiny chunks (<20 lines): {}\nLines: {}-{} (mean {:.1})\n\n",
             report.score,
             report.total_chunks,
             report.tiny_chunks,
@@ -721,7 +785,7 @@ export function add(a: number, b: number): number {
         };
         let chunks = partition_typescript(source, &config, "test.ts", "test");
         assert_snapshot!(chunks.len());
-        assert_snapshot!(format_chunks_summary(&chunks));
+        assert_snapshot!(format_chunks_summary(&chunks, source.lines().count()));
     }
     
     #[test]
@@ -759,7 +823,7 @@ export class Calculator {
             ..Default::default()
         };
         let chunks = partition_typescript(source, &config, "Calculator.ts", "math");
-        assert_snapshot!(format_chunks_summary(&chunks));
+        assert_snapshot!(format_chunks_summary(&chunks, source.lines().count()));
     }
     
     #[test]
@@ -777,7 +841,30 @@ export class Calculator {
         assert_snapshot!("jsonfile_visualization", visualization);
         
         // Snapshot 2: Metadata summary
-        let summary = format_chunks_summary(&chunks);
+        let summary = format_chunks_summary(&chunks, source.lines().count());
         assert_snapshot!("jsonfile_summary", summary);
+    }
+    
+    #[test]
+    fn test_small_file_not_penalized() {
+        // A 10-line file with one chunk should score 100%
+        // (not penalized for being "tiny" since the whole file is tiny)
+        let source = r#"// Small test file
+export function tiny(): number {
+    return 42;
+}
+"#;
+        let config = PartitionConfig {
+            file_name: "tiny.ts".to_string(),
+            package_name: "@test/package".to_string(),
+            ..Default::default()
+        };
+        let chunks = partition_typescript(source, &config, "tiny.ts", "test");
+        let file_lines = source.lines().count();
+        let score = chunk_quality_score(&chunks, file_lines);
+        
+        // Small file with one chunk should score 100%
+        assert_eq!(chunks.len(), 1);
+        assert!(score > 99.0, "Small file with one chunk should score ~100%, got {:.1}%", score);
     }
 }

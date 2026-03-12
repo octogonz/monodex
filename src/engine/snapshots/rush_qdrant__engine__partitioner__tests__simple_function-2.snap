@@ -1,10 +1,10 @@
 ---
 source: src/engine/partitioner.rs
-assertion_line: 724
-expression: format_chunks_summary(&chunks)
+assertion_line: 784
+expression: "format_chunks_summary(&chunks, source.lines().count())"
 ---
 === QUALITY SCORE ===
-Score: 0.062
+Score: 100.0%
 Total chunks: 1
 Tiny chunks (<20 lines): 1
 Lines: 4-4 (mean 4.0)

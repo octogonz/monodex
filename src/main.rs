@@ -85,8 +85,12 @@ enum Commands {
         file: PathBuf,
         
         /// Target chunk size in chars
-        #[arg(long, default_value = "1800")]
+        #[arg(long, default_value = "6000")]
         target_size: usize,
+        
+        /// Show visualization mode (full chunk contents)
+        #[arg(long)]
+        visualize: bool,
     },
     
     /// Search with compact blurb output (for AI assistants)
@@ -126,8 +130,8 @@ enum Commands {
         catalog: Option<String>,
     },
     
-    /// Sample random files and compute chunking quality scores
-    SampleQuality {
+    /// Audit chunking quality across multiple files
+    AuditChunks {
         /// Number of files to sample
         #[arg(long, default_value = "20")]
         count: usize,
@@ -193,8 +197,8 @@ fn main() -> anyhow::Result<()> {
         Commands::Purge { catalog, all } => {
             run_purge(&config, catalog.as_deref(), all)?;
         }
-        Commands::DumpChunks { file, target_size } => {
-            run_dump_chunks(&file, target_size)?;
+        Commands::DumpChunks { file, target_size, visualize } => {
+            run_dump_chunks(&file, target_size, visualize)?;
         }
         Commands::Search { text, limit, catalog } => {
             run_search(&config, &text, limit, catalog.as_deref())?;
@@ -205,8 +209,8 @@ fn main() -> anyhow::Result<()> {
         Commands::Query { text, limit, catalog } => {
             run_query(&config, &text, limit, catalog.as_deref())?;
         }
-        Commands::SampleQuality { count, dir } => {
-            run_sample_quality(count, dir)?;
+        Commands::AuditChunks { count, dir } => {
+            run_audit_chunks(count, dir)?;
         }
     }
 
@@ -795,7 +799,7 @@ fn is_text_file(path: &str) -> bool {
 }
 
 /// Run chunking diagnostics on a TypeScript file
-fn run_dump_chunks(file: &PathBuf, target_size: usize) -> anyhow::Result<()> {
+fn run_dump_chunks(file: &PathBuf, target_size: usize, visualize: bool) -> anyhow::Result<()> {
     println!("📦 Chunks for: {}", file.display());
     println!();
     
@@ -822,69 +826,94 @@ fn run_dump_chunks(file: &PathBuf, target_size: usize) -> anyhow::Result<()> {
     // Partition
     let chunks = partition_typescript(&source, &config, &file_path, &package_name);
     
-    // Display results
-    println!("Total chunks: {}", chunks.len());
-    println!("Target size: {} chars", target_size);
-    println!();
-    
-    let mut total_chars = 0;
-    let mut oversized = 0;
-    let mut undersized = 0;
-    
-    for (i, chunk) in chunks.iter().enumerate() {
-        let text_size = chunk.text.len();
-        let total_size = chunk.breadcrumb.len() + chunk.text.len();
-        total_chars += total_size;
-        
-        if text_size > target_size {
-            oversized += 1;
-        } else if text_size < 200 {
-            undersized += 1;
-        }
-        
-        println!("━━━━━ Chunk {} ━━━━━", i + 1);
-        println!("Breadcrumb: {}", chunk.breadcrumb);
-        println!("Type: {}", chunk.chunk_type);
-        if let Some(symbol) = &chunk.symbol_name {
-            println!("Symbol: {}", symbol);
-        }
-        println!("Lines: {}-{}", chunk.start_line, chunk.end_line);
-        println!("Size: {} chars (text: {}, breadcrumb: {})", 
-            total_size, text_size, chunk.breadcrumb.len());
-        if text_size > target_size {
-            println!("⚠️  OVERSIZED (target: {}, actual: {})", target_size, text_size);
-        } else if text_size < 200 {
-            println!("⚡ Small chunk");
-        }
-        println!();
-        println!("Preview (first 8 lines):");
-        for line in chunk.text.lines().take(8) {
-            println!("  {}", line);
-        }
-        if chunk.text.lines().count() > 8 {
-            println!("  ... ({} more lines)", chunk.text.lines().count() - 8);
-        }
-        println!();
-    }
-    
-    println!("━━━━━ Summary ━━━━━");
-    println!("Total chunks: {}", chunks.len());
-    println!("Total chars: {}", total_chars);
-    println!("Average size: {:.0} chars", total_chars as f64 / chunks.len() as f64);
-    println!("Oversized chunks (>{}): {}", target_size, oversized);
-    println!("Small chunks (<200): {}", undersized);
-    
     // Quality score
     let file_lines = source.lines().count();
     let report = ChunkQualityReport::from_chunks(&chunks, file_lines);
-    println!("Quality score: {:.1}%", report.score);
-    println!("  Tiny chunks (<20 lines): {}", report.tiny_chunks);
+    
+    if visualize {
+        // Visualization mode: show full chunk contents
+        let lines: Vec<&str> = source.lines().collect();
+        
+        for (i, chunk) in chunks.iter().enumerate() {
+            let line_count = chunk.end_line - chunk.start_line + 1;
+            let size = chunk.text.len();
+            
+            println!("-- [CHUNK {}] [{} lines] [{} chars] --", i + 1, line_count, size);
+            
+            for line_num in chunk.start_line..=chunk.end_line {
+                if line_num > 0 && line_num <= lines.len() {
+                    println!("{}", lines[line_num - 1]);
+                }
+            }
+            println!();
+        }
+        
+        println!("=== QUALITY SCORE ===");
+        println!("Score: {:.1}%", report.score);
+        println!("Total chunks: {}", chunks.len());
+        println!("Tiny chunks (<20 lines): {}", report.tiny_chunks);
+        println!("Lines: {}-{} (mean {:.1})", report.min_lines, report.max_lines, report.mean_lines);
+    } else {
+        // Default mode: show summary with previews
+        println!("Total chunks: {}", chunks.len());
+        println!("Target size: {} chars", target_size);
+        println!();
+        
+        let mut total_chars = 0;
+        let mut oversized = 0;
+        let mut undersized = 0;
+        
+        for (i, chunk) in chunks.iter().enumerate() {
+            let text_size = chunk.text.len();
+            let total_size = chunk.breadcrumb.len() + chunk.text.len();
+            total_chars += total_size;
+            
+            if text_size > target_size {
+                oversized += 1;
+            } else if text_size < 200 {
+                undersized += 1;
+            }
+            
+            println!("━━━━━ Chunk {} ━━━━━", i + 1);
+            println!("Breadcrumb: {}", chunk.breadcrumb);
+            println!("Type: {}", chunk.chunk_type);
+            if let Some(symbol) = &chunk.symbol_name {
+                println!("Symbol: {}", symbol);
+            }
+            println!("Lines: {}-{}", chunk.start_line, chunk.end_line);
+            println!("Size: {} chars (text: {}, breadcrumb: {})", 
+                total_size, text_size, chunk.breadcrumb.len());
+            if text_size > target_size {
+                println!("⚠️  OVERSIZED (target: {}, actual: {})", target_size, text_size);
+            } else if text_size < 200 {
+                println!("⚡ Small chunk");
+            }
+            println!();
+            println!("Preview (first 8 lines):");
+            for line in chunk.text.lines().take(8) {
+                println!("  {}", line);
+            }
+            if chunk.text.lines().count() > 8 {
+                println!("  ... ({} more lines)", chunk.text.lines().count() - 8);
+            }
+            println!();
+        }
+        
+        println!("━━━━━ Summary ━━━━━");
+        println!("Total chunks: {}", chunks.len());
+        println!("Total chars: {}", total_chars);
+        println!("Average size: {:.0} chars", total_chars as f64 / chunks.len() as f64);
+        println!("Oversized chunks (>{}): {}", target_size, oversized);
+        println!("Small chunks (<200): {}", undersized);
+        println!("Quality score: {:.1}%", report.score);
+        println!("  Tiny chunks (<20 lines): {}", report.tiny_chunks);
+    }
     
     Ok(())
 }
 
-/// Run quality sampling on random files
-fn run_sample_quality(count: usize, dir: Option<String>) -> anyhow::Result<()> {
+/// Audit chunking quality across multiple files
+fn run_audit_chunks(count: usize, dir: Option<String>) -> anyhow::Result<()> {
     use rand::seq::IndexedRandom;
     
     let base_dir = dir.unwrap_or_else(|| "/Users/bytedance/ai/qdrant/rushstack".to_string());

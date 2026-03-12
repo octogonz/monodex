@@ -80,9 +80,20 @@ rush-qdrant view --id 30440fb2ecd5fa62,a1b2c3d4e5f67890
 ### Debug chunking algorithm
 
 ```bash
-# See how a file gets chunked
+# See how a file gets chunked (summary with previews)
 rush-qdrant dump-chunks --file ./src/JsonFile.ts
+
+# Visualize mode - show full chunk contents
+rush-qdrant dump-chunks --file ./src/JsonFile.ts --visualize
+
+# Audit chunking quality across multiple files
+rush-qdrant audit-chunks --count 20
+
+# Audit from a specific directory
+rush-qdrant audit-chunks --count 50 --dir /path/to/project
 ```
+
+**Chunk Quality Score**: 0-100%, higher is better. Scores below 95% may indicate chunking issues.
 
 ### Verbose query (for debugging)
 

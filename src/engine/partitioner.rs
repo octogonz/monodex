@@ -991,12 +991,7 @@ fn is_meaningful_split_point(node: Node, source: &[u8]) -> bool {
         "function_declaration" | "class_declaration" | "interface_declaration" |
         "type_alias_declaration" | "enum_declaration" => true,
         
-        "export_statement" => {
-            let mut cursor = node.walk();
-            node.children(&mut cursor).any(|c| matches!(c.kind(),
-                "function_declaration" | "class_declaration" | "interface_declaration" |
-                "type_alias_declaration" | "enum_declaration"))
-        }
+        "export_statement" => true,
         
         "method_definition" => true,
         
@@ -1414,4 +1409,5 @@ export function tiny(): number {
                 "Unexpected fallback split in chunk: {}", chunk.breadcrumb);
         }
     }
+    
 }

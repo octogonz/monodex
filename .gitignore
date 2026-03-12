@@ -19,3 +19,4 @@ Thumbs.db
 
 # Test outputs
 /test-output/
+.rush-qdrant-warnings-*.json

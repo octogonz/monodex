@@ -1,6 +1,6 @@
 ---
 source: src/engine/partitioner.rs
-assertion_line: 939
+assertion_line: 1195
 expression: visualization
 ---
 -- [CHUNK 1] [49 lines] [1920 chars] --
@@ -53,7 +53,7 @@ export async function tunneledBrowserConnection(
   let remoteSocket: WebSocket | undefined;
   let handshakeAck: boolean = false;
   let handshakeSent: boolean = false;
--- [CHUNK 2] [91 lines] [3604 chars] --
+-- [CHUNK 2] [98 lines] [3959 chars] --
 
   function maybeSendHandshake(): void {
     if (!handshakeSent && remoteSocket && browserName && launchOptions) {
@@ -145,7 +145,6 @@ export async function tunneledBrowserConnection(
         logger.writeDebugLine(
           `  Connection state at close: handshakeSent=${handshakeSent}, handshakeAck=${handshakeAck}`
         );
--- [CHUNK 3] [91 lines] [3604 chars] --
         logger.writeDebugLine(`  Buffered messages pending: ${bufferedLocalMessages.length}`);
       });
       ws.on('error', (err: Error) => {
@@ -153,6 +152,7 @@ export async function tunneledBrowserConnection(
         logger.writeErrorLine(`  Socket readyState: ${getWebSocketReadyStateString(ws.readyState)}`);
       });
     });
+-- [CHUNK 3] [84 lines] [3249 chars] --
 
     localProxyWs.on('connection', (localWs, request) => {
       try {

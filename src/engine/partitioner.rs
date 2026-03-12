@@ -11,15 +11,30 @@
 //! - Knows the budget and when we're done
 //!
 //! **AST Land (structure/meaning):**
-//! - Recursively walks the syntax tree
+//! - Recursively walks the syntax tree using scope-based traversal
 //! - Provides candidate split points as line numbers
 //! - "Meaningful" = doesn't break semantic units
+//!
+//! **Scope-Based Traversal:**
+//! - Split scopes: nodes whose direct children define split boundaries
+//!   (program, class_body, statement_block, switch_body)
+//! - Transparent conduits: wrapper nodes to pass through when descending
+//!   (if_statement, function_declaration, return_statement, etc.)
+//! - Core rule: choose the shallowest split scope that yields a usable partition
+//!
+//! **Minimum Size Constraints:**
+//! - Minimum chunk size: 20% of target (prevents tiny fragments)
+//! - Tiny nestedscopes (<30 lines) are filtered out as split candidates
+//! - Large expression statements (>500 bytes) are treated as meaningful
 //!
 //! **Coordination:**
 //! 1. Start with one chunk = entire file
 //! 2. While any chunk exceeds budget:
-//!    a. AST land provides meaningful split points within that chunk
-//!    b. Chunk land picks the best split and divides the chunk
+//!    a. Find the shallowest split scope spanning the chunk
+//!    b. Get candidate boundaries from that scope's direct children
+//!    c. If usable split found, divide the chunk
+//!    d. Otherwise, descend through transparent conduits to nested scopes
+//!    e. If no AST split works, fall back to line-based splitting
 //! 3. Done - all chunks fit budget
 
 use tree_sitter::{Node, Parser};
@@ -27,6 +42,34 @@ use super::util::compute_hash;
 
 /// Target chunk size in lines (derived from 6000 char target, ~50 chars/line)
 const TARGET_LINES: usize = 120;
+
+/// Minimum chunk size as ratio of target (20%)
+const MIN_CHUNK_RATIO: f64 = 0.20;
+
+/// Check if a node is a split scope - direct children define split boundaries.
+fn is_split_scope(kind: &str) -> bool {
+    matches!(kind,
+        "program" | "source_file" |
+        "class_body" | "declaration_list" | "object_type" |
+        "statement_block" | "switch_body"
+    )
+}
+
+/// Check if a node is a transparent conduit - pass through to nested scopes.
+fn is_transparent_conduit(kind: &str) -> bool {
+    matches!(kind,
+        "export_statement" |
+        "function_declaration" | "method_definition" | "arrow_function" |
+        "if_statement" | "try_statement" | "catch_clause" |
+        "for_statement" | "for_in_statement" | "for_of_statement" |
+        "while_statement" | "do_statement" |
+        "switch_statement" | "switch_case" |
+        "return_statement" | "throw_statement" |
+        "expression_statement" |
+        // Expression wrappers that may contain nested scopes
+        "await_expression" | "new_expression" | "arguments" | "call_expression"
+    )
+}
 
 /// Compute quality score for chunking results (0-100%, higher is better).
 ///
@@ -222,6 +265,363 @@ struct ChunkRange {
     end_line: usize,    // 1-indexed, inclusive
 }
 
+/// Result of attempting to split a chunk
+enum SplitResult {
+    /// Found a valid AST-based split at this line
+    Split(usize),
+    /// No valid AST split, using fallback line-based split
+    Fallback(usize),
+    /// Cannot split this chunk any further
+    CannotSplit,
+}
+
+/// Find the best split point for an oversized chunk using scope-based approach.
+fn find_best_split(
+    root: Node,
+    start_line: usize,
+    end_line: usize,
+    chunk_size: usize,
+    target_size: usize,
+    min_chunk_size: usize,
+    source: &[u8],
+) -> SplitResult {
+    // Find the shallowest split scope that spans this chunk
+    let initial_scope = find_shallowest_split_scope(root, start_line, end_line, source);
+    
+    // Track the least-bad AST split seen during descent
+    let mut least_bad_split: Option<(usize, usize)> = None;
+    let ideal_first_size = chunk_size / 2;
+    
+    // Walk the chain of nested split scopes
+    let mut current_scope = Some(initial_scope);
+    
+    while let Some(scope) = current_scope {
+        // Get candidate boundaries from this scope's direct children
+        let candidates = get_scope_candidates(scope, source, start_line, end_line);
+        
+        if !candidates.is_empty() {
+            // Check if this scope yields a usable partition
+            if let Some(split_line) = find_usable_split(
+                &candidates, start_line, end_line, chunk_size, target_size, min_chunk_size,
+            ) {
+                return SplitResult::Split(split_line);
+            }
+            
+            // No usable partition - record the least-bad split from this scope
+            // But only if it respects min_chunk_size (don't record tiny splits)
+            for &split_line in &candidates {
+                let lines_before = split_line - start_line + 1;
+                let total_lines = end_line - start_line + 1;
+                let estimated_first_size = (chunk_size * lines_before) / total_lines;
+                let estimated_second_size = chunk_size - estimated_first_size;
+                
+                // Skip splits that create chunks below minimum size
+                if estimated_first_size < min_chunk_size || estimated_second_size < min_chunk_size {
+                    continue;
+                }
+                
+                let badness = compute_split_badness(
+                    split_line, start_line, end_line, chunk_size, ideal_first_size,
+                );
+                if least_bad_split.map_or(true, |(_, b)| badness < b) {
+                    least_bad_split = Some((split_line, badness));
+                }
+            }
+        }
+        
+        // Descend to a nested split scope
+        current_scope = find_nested_split_scope(scope, start_line, end_line, source);
+    }
+    
+    // No usable partition found - use least-bad AST split if available
+    if let Some((split_line, _)) = least_bad_split {
+        return SplitResult::Split(split_line);
+    }
+    
+    // No AST split at all - use line-based fallback
+    let mid_line = start_line + (end_line - start_line) / 2;
+    if mid_line > start_line && mid_line < end_line {
+        SplitResult::Fallback(mid_line)
+    } else {
+        SplitResult::CannotSplit
+    }
+}
+
+/// Find the shallowest split scope that spans the given line range.
+fn find_shallowest_split_scope<'a>(
+    node: Node<'a>,
+    start_line: usize,
+    end_line: usize,
+    source: &[u8],
+) -> Node<'a> {
+    let node_start = node.start_position().row + 1;
+    let node_end = node.end_position().row + 1;
+    
+    if node_start > start_line || node_end < end_line {
+        return node;
+    }
+    
+    // If this is a split scope, return it (shallowest wins)
+    if is_split_scope(node.kind()) {
+        return node;
+    }
+    
+    // If transparent conduit, pass through to the child that spans the range
+    if is_transparent_conduit(node.kind()) {
+        let mut cursor = node.walk();
+        for child in node.children(&mut cursor) {
+            let child_start = child.start_position().row + 1;
+            let child_end = child.end_position().row + 1;
+            if child_start <= start_line && child_end >= end_line {
+                return find_shallowest_split_scope(child, start_line, end_line, source);
+            }
+        }
+    }
+    
+    // Check for single meaningful child to descend into
+    let meaningful = get_meaningful_children(node, source);
+    if meaningful.len() == 1 {
+        let child = meaningful[0];
+        let child_start = child.start_position().row + 1;
+        let child_end = child.end_position().row + 1;
+        if child_start <= start_line && child_end >= end_line {
+            return find_shallowest_split_scope(child, start_line, end_line, source);
+        }
+    }
+    
+    node
+}
+
+/// Find a nested split scope to descend into.
+/// Recursively descends through chains of transparent conduits until finding a split scope.
+fn find_nested_split_scope<'a>(
+    node: Node<'a>,
+    start_line: usize,
+    end_line: usize,
+    source: &[u8],
+) -> Option<Node<'a>> {
+    let mut cursor = node.walk();
+    let mut best_child: Option<Node<'a>> = None;
+    let mut best_score = i32::MIN;
+    
+    for child in node.children(&mut cursor) {
+        let child_start = child.start_position().row + 1;
+        let child_end = child.end_position().row + 1;
+        
+        // Must overlap the chunk range
+        if child_end < start_line || child_start > end_line {
+            continue;
+        }
+        
+        // Check if this child is a split scope or transparent conduit
+        if is_split_scope(child.kind()) || is_transparent_conduit(child.kind()) {
+            let overlap_start = child_start.max(start_line);
+            let overlap_end = child_end.min(end_line);
+            let overlap = (overlap_end - overlap_start) as i32;
+            
+            // Prefer children that are split scopes and centered in the range
+            let center_score = if is_split_scope(child.kind()) { 1000 } else { 0 };
+            let total_score = center_score + overlap;
+            
+            if total_score > best_score {
+                best_score = total_score;
+                best_child = Some(child);
+            }
+        }
+    }
+    
+    // If we found a transparent conduit, recursively descend through it
+    // to find a nested split scope
+    if let Some(child) = best_child {
+        if is_transparent_conduit(child.kind()) {
+            // Try to find a deeper split scope inside this conduit
+            if let Some(deeper) = find_deepest_split_scope(child, start_line, end_line, source) {
+                return Some(deeper);
+            }
+        }
+    }
+    
+    best_child
+}
+
+/// Find a usable split scope within a transparent conduit chain.
+/// Descends through layers of transparent conduits until finding a split scope
+/// that has meaningful children in the given line range.
+/// 
+/// Key constraint: the scope must be substantial (≥30 lines) to filter out
+/// tiny nested functions/callbacks that would create micro-chunks.
+fn find_deepest_split_scope<'a>(
+    node: Node<'a>,
+    start_line: usize,
+    end_line: usize,
+    source: &[u8],
+) -> Option<Node<'a>> {
+    let node_start = node.start_position().row + 1;
+    let node_end = node.end_position().row + 1;
+    
+    // Must overlap the chunk range
+    if node_end < start_line || node_start > end_line {
+        return None;
+    }
+    
+    // If this is a split scope, check if it has meaningful children
+    if is_split_scope(node.kind()) {
+        let children = get_meaningful_children(node, source);
+        let overlapping: Vec<Node> = children
+            .into_iter()
+            .filter(|child| {
+                let child_start = child.start_position().row + 1;
+                let child_end = child.end_position().row + 1;
+                child_end >= start_line && child_start <= end_line
+            })
+            .collect();
+        
+        // If it has 2+ overlapping meaningful children, check if this scope
+        // overlaps the chunk range substantially (at least 30 lines or 80% of the scope)
+        if overlapping.len() >= 2 {
+            let overlap_start = node_start.max(start_line);
+            let overlap_end = node_end.min(end_line);
+            let overlap_lines = overlap_end - overlap_start + 1;
+            let scope_lines = node_end - node_start + 1;
+            
+            // Only accept if the scope overlaps at least 30 lines AND
+            // the scope is at least 30 lines (to filter out tiny nested scopes)
+            if overlap_lines >= 30 && scope_lines >= 30 {
+                return Some(node);
+            }
+        }
+    }
+    
+    // If transparent conduit or split scope with insufficient children, descend further
+    let mut cursor = node.walk();
+    for child in node.children(&mut cursor) {
+        let child_start = child.start_position().row + 1;
+        let child_end = child.end_position().row + 1;
+        
+        if child_end < start_line || child_start > end_line {
+            continue;
+        }
+        
+        // Recursively descend into transparent conduits or split scopes
+        if is_transparent_conduit(child.kind()) || is_split_scope(child.kind()) {
+            if let Some(deeper) = find_deepest_split_scope(child, start_line, end_line, source) {
+                return Some(deeper);
+            }
+        }
+    }
+    
+    None
+}
+
+/// Get candidate split boundaries from a scope's direct children.
+fn get_scope_candidates(
+    scope: Node,
+    source: &[u8],
+    chunk_start: usize,
+    chunk_end: usize,
+) -> Vec<usize> {
+    let children = get_meaningful_children(scope, source);
+    
+    let overlapping: Vec<Node> = children
+        .into_iter()
+        .filter(|child| {
+            let child_start = child.start_position().row + 1;
+            let child_end = child.end_position().row + 1;
+            child_end >= chunk_start && child_start <= chunk_end
+        })
+        .collect();
+    
+    if overlapping.len() < 2 {
+        return Vec::new();
+    }
+    
+    let mut candidates: Vec<usize> = Vec::new();
+    for i in 1..overlapping.len() {
+        let prev_child = overlapping[i - 1];
+        let split_line = prev_child.end_position().row + 1;
+        if split_line >= chunk_start && split_line < chunk_end {
+            candidates.push(split_line);
+        }
+    }
+    candidates
+}
+
+/// Find a usable split from the candidates.
+fn find_usable_split(
+    candidates: &[usize],
+    start_line: usize,
+    end_line: usize,
+    chunk_size: usize,
+    _target_size: usize,
+    min_chunk_size: usize,
+) -> Option<usize> {
+    if candidates.is_empty() {
+        return None;
+    }
+    
+    let ideal_first_size = chunk_size / 2;
+    let mut best_split: Option<usize> = None;
+    let mut best_distance = usize::MAX;
+    
+    for &split_line in candidates {
+        let lines_before = split_line - start_line + 1;
+        let total_lines = end_line - start_line + 1;
+        let estimated_first_size = (chunk_size * lines_before) / total_lines;
+        let estimated_second_size = chunk_size - estimated_first_size;
+        
+        // Skip splits that create tiny chunks (below minimum size)
+        // Note: We don't require chunks to be below target_size here,
+        // because the greedy loop will split oversized chunks in subsequent iterations.
+        if estimated_first_size < min_chunk_size || estimated_second_size < min_chunk_size {
+            continue;
+        }
+        
+        // Prefer splits closest to middle
+        let distance = if estimated_first_size > ideal_first_size {
+            estimated_first_size - ideal_first_size
+        } else {
+            ideal_first_size - estimated_first_size
+        };
+        
+        if distance < best_distance {
+            best_distance = distance;
+            best_split = Some(split_line);
+        }
+    }
+    best_split
+}
+
+/// Compute badness score for a split (lower is better).
+fn compute_split_badness(
+    split_line: usize,
+    start_line: usize,
+    end_line: usize,
+    chunk_size: usize,
+    ideal_first_size: usize,
+) -> usize {
+    let lines_before = split_line - start_line + 1;
+    let total_lines = end_line - start_line + 1;
+    let estimated_first_size = (chunk_size * lines_before) / total_lines;
+    
+    let distance = if estimated_first_size > ideal_first_size {
+        estimated_first_size - ideal_first_size
+    } else {
+        ideal_first_size - estimated_first_size
+    };
+    
+    // Add penalty for small chunks
+    let estimated_second_size = chunk_size - estimated_first_size;
+    let tiny_penalty = if estimated_first_size < 500 || estimated_second_size < 500 {
+        10000
+    } else if estimated_first_size < 1000 || estimated_second_size < 1000 {
+        5000
+    } else {
+        0
+    };
+    
+    distance + tiny_penalty
+}
+
 /// Partition a TypeScript/TSX file into chunks
 pub fn partition_typescript(
     source: &str, 
@@ -256,6 +656,7 @@ pub fn partition_typescript(
     let import_end_line = extract_imports_end_line(root, source.as_bytes());
     
     // Step 2: Iteratively split chunks that exceed budget
+    let min_chunk_size = (config.target_size as f64 * MIN_CHUNK_RATIO) as usize;
     let mut used_fallback_split = false;
     let mut changed = true;
     while changed {
@@ -269,79 +670,28 @@ pub fn partition_typescript(
             if chunk_size <= config.target_size {
                 new_chunks.push(chunk_range.clone());
             } else {
-                // Chunk is too big - find the deepest node spanning this range
-                let spanning = find_spanning_node(root, chunk_range.start_line, chunk_range.end_line);
-                
-                // Get meaningful children of the spanning node
-                let mut children = get_meaningful_children(spanning, source.as_bytes());
-                
-                // Filter to children that are within the chunk range
-                children.retain(|child| {
-                    let child_start = child.start_position().row + 1;
-                    let child_end = child.end_position().row + 1;
-                    child_end >= chunk_range.start_line && child_start <= chunk_range.end_line
-                });
-                
-                // Keep diving until we find 2+ meaningful children or can't go deeper
-                // This handles: export_statement -> class_declaration -> class_body -> methods
-                let mut current_node = if children.len() == 1 { Some(children[0]) } else { None };
-                
-                while let Some(node) = current_node {
-                    let mut inner_children = get_meaningful_children(node, source.as_bytes());
-                    
-                    // If no meaningful children, look inside structural containers
-                    if inner_children.is_empty() {
-                        inner_children = find_children_in_container(node);
+                // Chunk is too big - use scope-based splitting
+                match find_best_split(
+                    root,
+                    chunk_range.start_line,
+                    chunk_range.end_line,
+                    chunk_size,
+                    config.target_size,
+                    min_chunk_size,
+                    source.as_bytes(),
+                ) {
+                    SplitResult::Split(split_line) => {
+                        new_chunks.push(ChunkRange { start_line: chunk_range.start_line, end_line: split_line });
+                        new_chunks.push(ChunkRange { start_line: split_line + 1, end_line: chunk_range.end_line });
+                        changed = true;
                     }
-                    
-                    if inner_children.len() >= 2 {
-                        // Found 2+ children - use them as split candidates
-                        children = inner_children;
-                        break;
-                    } else if inner_children.len() == 1 {
-                        // Only 1 child - keep diving
-                        current_node = Some(inner_children[0]);
-                    } else {
-                        // No children - can't go deeper
-                        break;
+                    SplitResult::Fallback(split_line) => {
+                        used_fallback_split = true;
+                        new_chunks.push(ChunkRange { start_line: chunk_range.start_line, end_line: split_line });
+                        new_chunks.push(ChunkRange { start_line: split_line + 1, end_line: chunk_range.end_line });
+                        changed = true;
                     }
-                }
-                
-                if children.len() < 2 {
-                    // Can't split using AST - fallback to line-based splitting
-                    let mid_line = chunk_range.start_line + (chunk_range.end_line - chunk_range.start_line) / 2;
-                    
-                    // Split at the middle line
-                    used_fallback_split = true;
-                    new_chunks.push(ChunkRange { 
-                        start_line: chunk_range.start_line, 
-                        end_line: mid_line 
-                    });
-                    new_chunks.push(ChunkRange { 
-                        start_line: mid_line + 1, 
-                        end_line: chunk_range.end_line 
-                    });
-                    changed = true;
-                } else {
-                    // Find split points between these siblings
-                    let split_points: Vec<usize> = children
-                        .iter()
-                        .take(children.len() - 1)
-                        .map(|child| child.end_position().row + 1)
-                        .filter(|&line| line >= chunk_range.start_line && line < chunk_range.end_line)
-                        .collect();
-                    
-                    let best_split = pick_best_split(&split_points, chunk_range.start_line, chunk_range.end_line, chunk_size, config.target_size);
-                    
-                    if let Some(split_line) = best_split {
-                        if split_line >= chunk_range.start_line && split_line < chunk_range.end_line {
-                            new_chunks.push(ChunkRange { start_line: chunk_range.start_line, end_line: split_line });
-                            new_chunks.push(ChunkRange { start_line: split_line + 1, end_line: chunk_range.end_line });
-                            changed = true;
-                        } else {
-                            new_chunks.push(chunk_range.clone());
-                        }
-                    } else {
+                    SplitResult::CannotSplit => {
                         new_chunks.push(chunk_range.clone());
                     }
                 }
@@ -528,6 +878,14 @@ fn get_lines_text(lines: &[&str], start_line: usize, end_line: usize) -> String 
     lines[start_line - 1..end].join("\n")
 }
 
+/// Determine if an AST node represents a meaningful split boundary.
+///
+/// Meaningful nodes are those that can serve as split points between chunks.
+/// This includes declarations (functions, classes, interfaces, etc.) and
+/// large expression statements (e.g., event handler registrations).
+///
+/// Small nodes (like 1-line variable declarations) are technically meaningful
+/// but may be filtered out later if they would create tiny chunks.
 fn is_meaningful_split_point(node: Node, source: &[u8]) -> bool {
     match node.kind() {
         "function_declaration" | "class_declaration" | "interface_declaration" |
@@ -549,6 +907,12 @@ fn is_meaningful_split_point(node: Node, source: &[u8]) -> bool {
         "lexical_declaration" | "variable_declaration" => {
             let text = String::from_utf8_lossy(&source[node.start_byte()..node.end_byte()]);
             text.starts_with("const") || text.starts_with("let") || text.starts_with("var")
+        }
+        
+        // Expression statements are meaningful if they're large enough
+        // (e.g., event handlers like `ws.on('connection', ...)`)
+        "expression_statement" => {
+            node.end_byte() - node.start_byte() > 500
         }
         
         _ => false,
@@ -900,3 +1264,4 @@ export function tiny(): number {
         }
     }
 }
+

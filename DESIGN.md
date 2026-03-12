@@ -369,11 +369,36 @@ The algorithm coordinates two separate concerns:
 3. Done - all chunks fit budget
 ```
 
-#### Why This Works
+#### Scope-Based Splitting
 
-- **Wrapper lines stay attached:** Split points are line numbers, not AST nodes. `export class A {` stays with its chunk naturally—no special handling needed.
-- **Siblings group together:** If methods A, B, C total 5,000 chars (under budget), they remain one chunk. We split at **A** meaningful boundary, not **EVERY** boundary.
-- **No gaps:** Splitting a line range creates two line ranges that cover exactly the original range. Nothing is lost.
+The AST traversal uses two key concepts:
+
+**Split Scopes:** AST nodes whose direct children define split boundaries:
+- `program` / `source_file` (top-level)
+- `class_body`, `declaration_list`, `object_type` (type bodies)
+- `statement_block`, `switch_body` (code blocks)
+
+**Transparent Conduits:** Wrapper nodes to pass through when looking for split scopes:
+- Control flow: `if_statement`, `try_statement`, loops, `switch_case`
+- Declarations: `function_declaration`, `method_definition`, `arrow_function`
+- Expressions: `return_statement`, `throw_statement`, `expression_statement`
+- Expression wrappers: `await_expression`, `new_expression`, `arguments`, `call_expression`
+
+**Core rule:** Choose the **shallowest split scope** that yields a usable partition.
+
+This means:
+1. Start at the shallowest scope spanning the chunk
+2. If its children don't yield usable splits, descend through transparent conduits
+3. Continue until finding a scope with meaningful boundaries
+
+#### Minimum Size Constraints
+
+To avoid pathological splits:
+
+- **Minimum chunk size:** 20% of target (1200 chars for 6000 target)
+- Both resulting chunks must meet the minimum
+- Tiny nested scopes (< 30 lines) are not considered as split candidates
+- Large expression statements (> 500 bytes) are treated as meaningful boundaries
 
 #### What "Meaningful" Means
 
@@ -382,11 +407,13 @@ Split points are between AST siblings that don't share a semantic relationship:
 - Between methods in a class
 - Between properties in an interface
 - Between statements in a function body
+- Between large expression statements (e.g., event handlers)
 
 NOT meaningful:
 - Mid-expression
 - Between a comment and its target code
 - Inside a parameter list or type definition
+- Inside tiny nested functions or callbacks
 
 #### Wrapper Lines (Critical Detail)
 

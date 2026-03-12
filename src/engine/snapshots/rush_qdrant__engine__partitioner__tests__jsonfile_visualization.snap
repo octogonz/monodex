@@ -1,6 +1,6 @@
 ---
 source: src/engine/partitioner.rs
-assertion_line: 878
+assertion_line: 1059
 expression: visualization
 ---
 -- [CHUNK 1] [101 lines] [4046 chars] --
@@ -105,7 +105,7 @@ export enum JsonSyntax {
    */
   Json5 = 'json5'
 }
--- [CHUNK 2] [70 lines] [2599 chars] --
+-- [CHUNK 2] [99 lines] [3515 chars] --
 
 /**
  * Options for {@link JsonFile.parseString}, {@link JsonFile.load}, and {@link JsonFile.loadAsync}.
@@ -176,7 +176,6 @@ export interface IJsonFileStringifyOptions extends IJsonFileParseOptions {
    */
   headerComment?: string;
 }
--- [CHUNK 3] [29 lines] [915 chars] --
 
 /**
  * Options for {@link JsonFile.save} and {@link JsonFile.saveAsync}.
@@ -206,7 +205,7 @@ export interface IJsonFileSaveOptions extends IJsonFileStringifyOptions {
 }
 
 const DEFAULT_ENCODING: 'utf8' = 'utf8';
--- [CHUNK 4] [130 lines] [4141 chars] --
+-- [CHUNK 3] [102 lines] [3177 chars] --
 
 /**
  * Utilities for reading/writing JSON files.
@@ -309,6 +308,7 @@ export class JsonFile {
   ): JsonObject {
     const jsonObject: JsonObject = JsonFile.load(jsonFilename, options);
     jsonSchema.validateObjectWithCallback(jsonObject, errorCallback);
+-- [CHUNK 4] [102 lines] [3476 chars] --
 
     return jsonObject;
   }
@@ -337,7 +337,6 @@ export class JsonFile {
   public static stringify(jsonObject: JsonObject, options?: IJsonFileStringifyOptions): string {
     return JsonFile.updateString('', jsonObject, options);
   }
--- [CHUNK 5] [123 lines] [4083 chars] --
 
   /**
    * Serializes the specified JSON object to a string buffer.
@@ -412,6 +411,7 @@ export class JsonFile {
    * @returns false if ISaveJsonFileOptions.onlyIfChanged didn't save anything; true otherwise
    */
   public static save(
+-- [CHUNK 5] [102 lines] [3273 chars] --
     jsonObject: JsonObject,
     jsonFilename: string,
     options: IJsonFileSaveOptions = {}
@@ -461,7 +461,6 @@ export class JsonFile {
     */
     return true;
   }
--- [CHUNK 6] [154 lines] [4933 chars] --
 
   /**
    * An async version of {@link JsonFile.save}.
@@ -515,6 +514,7 @@ export class JsonFile {
     }
     */
     return true;
+-- [CHUNK 6] [101 lines] [3230 chars] --
   }
 
   /**

@@ -114,7 +114,8 @@ fn is_split_scope(kind: &str) -> bool {
         "class_body" | "declaration_list" | "object_type" |
         "interface_body" |  // Interface body (contains property_signature children)
         "statement_block" | "switch_body" |
-        "object"  // Object literals (contain 'pair' children)
+        "object" |  // Object literals (contain 'pair' children)
+        "jsx_element" | "jsx_fragment"  // JSX elements can be split at child boundaries
     )
 }
 
@@ -142,7 +143,9 @@ fn is_transparent_conduit(kind: &str) -> bool {
         "member_expression" |  // e.g., `new Promise(...).finally(...)` - need to descend to find Promise executor
         "as_expression" |  // `expr as const` wraps object literals
         // Object literal pairs may contain nested functions/objects
-        "pair"  // Object property with function value that needs splitting
+        "pair" |  // Object property with function value that needs splitting
+        // JSX expression containers (wrap expressions inside JSX)
+        "jsx_expression"
     )
 }
 
@@ -811,8 +814,16 @@ pub fn partition_typescript(
     let content_hash = compute_hash(source);
     
     let mut parser = Parser::new();
-    parser.set_language(&tree_sitter_typescript::language_typescript())
-        .expect("Failed to set TypeScript language");
+    
+    // Use TSX grammar for .tsx files, TypeScript grammar for .ts files
+    let is_tsx = file_path.ends_with(".tsx");
+    if is_tsx {
+        parser.set_language(&tree_sitter_typescript::language_tsx())
+            .expect("Failed to set TSX language");
+    } else {
+        parser.set_language(&tree_sitter_typescript::language_typescript())
+            .expect("Failed to set TypeScript language");
+    }
     
     let tree = parser.parse(source, None)
         .expect("Failed to parse TypeScript");
@@ -1097,9 +1108,22 @@ fn is_meaningful_split_point(node: Node, source: &[u8]) -> bool {
             node.end_byte() - node.start_byte() > 50
         }
         
-        // Object literal properties (key-value pairs) and interface property signatures
-        // These are meaningful split points for large objects/interfaces
-        "pair" | "property_signature" => true,
+        // Object literal properties (key-value pairs)
+        // Only meaningful if large enough or contains complex nested structure
+        "pair" => {
+            let size = node.end_byte() - node.start_byte();
+            if size > 200 {
+                return true;
+            }
+            // Check if the value contains complex structure (function, object, array)
+            pair_has_complex_value(node)
+        }
+        
+        // Interface property signatures - smaller threshold since interface members
+        // are more naturally separable than runtime object-literal properties
+        "property_signature" => {
+            node.end_byte() - node.start_byte() > 100
+        }
         
         "lexical_declaration" | "variable_declaration" => {
             let text = String::from_utf8_lossy(&source[node.start_byte()..node.end_byte()]);
@@ -1128,8 +1152,60 @@ fn is_meaningful_split_point(node: Node, source: &[u8]) -> bool {
             node.end_byte() - node.start_byte() > 300
         }
         
+        // JSX elements are meaningful split points for large JSX
+        // Each JSX element is a logical unit that can be split independently
+        "jsx_element" => true,
+        
         _ => false,
     }
+}
+
+/// Check if a pair node contains a complex value (function, object, array)
+/// that would make it a meaningful split boundary.
+fn pair_has_complex_value(pair_node: Node) -> bool {
+    // A pair has the structure: key : value
+    // We want to check if the value part contains complex structure
+    for i in 0..pair_node.child_count() {
+        if let Some(child) = pair_node.child(i) {
+            match child.kind() {
+                // Direct complex value types
+                "arrow_function" | "function_expression" | "function_declaration" |
+                "object" | "array" | "jsx_element" | "jsx_self_closing_element" => {
+                    return true;
+                }
+                // Nested expression might wrap a complex value
+                "parenthesized_expression" | "as_expression" => {
+                    // Check if this expression contains complex structure
+                    if node_contains_complex_structure(child) {
+                        return true;
+                    }
+                }
+                _ => {}
+            }
+        }
+    }
+    false
+}
+
+/// Check if a node recursively contains complex structure
+fn node_contains_complex_structure(node: Node) -> bool {
+    for i in 0..node.child_count() {
+        if let Some(child) = node.child(i) {
+            match child.kind() {
+                "arrow_function" | "function_expression" | "function_declaration" |
+                "object" | "array" | "jsx_element" | "jsx_self_closing_element" => {
+                    return true;
+                }
+                _ => {
+                    // Recursively check children
+                    if node_contains_complex_structure(child) {
+                        return true;
+                    }
+                }
+            }
+        }
+    }
+    false
 }
 
 /// Get chunk metadata (type, symbol name, breadcrumb suffix) for a line range
@@ -1699,6 +1775,32 @@ export function* parseGitStatus() {
         assert_snapshot!("project_watcher_summary", summary);
         
         // Nested functions inside methods should be recognized as split points
+        for chunk in &chunks {
+            assert!(!chunk.breadcrumb.contains("[fallback-split]"), 
+                "Unexpected fallback split in chunk: {}", chunk.breadcrumb);
+        }
+    }
+    
+    #[test]
+    fn test_parameter_form_tsx() {
+        // A TSX file with React hooks and JSX elements.
+        // The file should use the TSX grammar (not TypeScript) and
+        // split at JSX element boundaries.
+        let source = include_str!("../../test_artifacts/ParameterForm.tsx");
+        let config = PartitionConfig {
+            file_name: "ParameterForm.tsx".to_string(),
+            package_name: "@rushstack/rush-vscode-command-webview".to_string(),
+            ..Default::default()
+        };
+        let chunks = partition_typescript(source, &config, "ParameterForm.tsx", "@rushstack/rush-vscode-command-webview");
+        
+        let visualization = format_chunks_visualization(source, &chunks);
+        assert_snapshot!("parameter_form_visualization", visualization);
+        
+        let summary = format_chunks_summary(&chunks, source.len());
+        assert_snapshot!("parameter_form_summary", summary);
+        
+        // TSX files should split cleanly without fallback
         for chunk in &chunks {
             assert!(!chunk.breadcrumb.contains("[fallback-split]"), 
                 "Unexpected fallback split in chunk: {}", chunk.breadcrumb);

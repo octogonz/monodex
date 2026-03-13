@@ -129,6 +129,7 @@ fn is_transparent_conduit(kind: &str) -> bool {
         // Function declarations (hold statement_block with nested functions)
         "function_declaration" | "generator_function_declaration" |
         "method_definition" | "arrow_function" |
+        "function_expression" |  // Named or anonymous function passed as argument (callback)
         "if_statement" | "try_statement" | "catch_clause" |
         "else_clause" |  // else clause of if statements (contains statement_block or nested if)
         "for_statement" | "for_in_statement" | "for_of_statement" |
@@ -1134,8 +1135,16 @@ fn is_meaningful_split_point(node: Node, source: &[u8]) -> bool {
         
         // Expression statements are meaningful if they're large enough
         // (e.g., event handlers like `ws.on('connection', ...)`)
+        // OR if they contain nested functions (callback registrations)
         "expression_statement" => {
-            node.end_byte() - node.start_byte() > 500
+            let size = node.end_byte() - node.start_byte();
+            if size > 500 {
+                return true;
+            }
+            // Check if it contains a nested function (callback registration)
+            // This makes callback registrations like `obj.on('event', () => {...})` 
+            // meaningful split points regardless of total size
+            node_contains_complex_structure(node)
         }
         
         // Switch cases are meaningful split points for large switch statements

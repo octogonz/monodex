@@ -3,10 +3,10 @@ source: src/engine/partitioner.rs
 expression: summary
 ---
 === QUALITY SCORE ===
-Score: 68.6%
-Total chunks: 4
+Score: 79.4%
+Total chunks: 3
 Small chunks (<500 chars): 0
-Chars: 1880-3344 (mean 2459)
+Chars: 1943-5151 (mean 3279)
 
 === CHUNK 1 ===
 Breadcrumb: @rushstack/rush-vscode-command-webview:ParameterForm.tsx
@@ -27,8 +27,8 @@ Breadcrumb: @rushstack/rush-vscode-command-webview:ParameterForm.tsx
 Type: code
 Kind: content
 Symbol: None
-Lines: 42-90
-Size: 1936 chars
+Lines: 42-115
+Size: 2800 chars
 Text preview (5 lines):
 
 export const ParameterForm = (): React.ReactElement => {
@@ -37,29 +37,15 @@ export const ParameterForm = (): React.ReactElement => {
   const filteredParameters: ICommandLineParameter[] = useFilteredParameters();
 
 === CHUNK 3 ===
-Breadcrumb: @rushstack/rush-vscode-command-webview:ParameterForm.tsx:[fallback-split]
+Breadcrumb: @rushstack/rush-vscode-command-webview:ParameterForm.tsx
 Type: variable
 Kind: content
 Symbol: None
-Lines: 91-173
-Size: 2743 chars
+Lines: 116-256
+Size: 5207 chars
 Text preview (5 lines):
-  useEffect(() => {
-    dispatch(
-      setFormValidateAsync(() => {
-        return form.trigger();
-      })
 
-=== CHUNK 4 ===
-Breadcrumb: @rushstack/rush-vscode-command-webview:ParameterForm.tsx:[fallback-split]
-Type: variable
-Kind: content
-Symbol: None
-Lines: 174-256
-Size: 3417 chars
-Text preview (5 lines):
-          switch (parameter.kind) {
-            case CommandLineParameterKind.Choice: {
-              const { alternatives, defaultValue }: CommandLineChoiceParameter =
-                parameter as CommandLineChoiceParameter;
-              const options: { key: string; text: string }[] = [];
+  useEffect(() => {
+    if (!userSelectdParameterName) {
+      return;
+    }

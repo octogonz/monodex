@@ -3,10 +3,10 @@ source: src/engine/partitioner.rs
 expression: summary
 ---
 === QUALITY SCORE ===
-Score: 82.2%
+Score: 80.0%
 Total chunks: 6
 Small chunks (<500 chars): 0
-Chars: 1248-5424 (mean 3960)
+Chars: 1248-5807 (mean 3960)
 
 === CHUNK 1 ===
 Breadcrumb: @rushstack/webpack5-module-minifier-plugin:ModuleMinifierPlugin.ts
@@ -41,8 +41,8 @@ Breadcrumb: @rushstack/webpack5-module-minifier-plugin:ModuleMinifierPlugin.ts:M
 Type: class
 Kind: content
 Symbol: Some("ModuleMinifierPlugin")
-Lines: 210-336
-Size: 5285 chars
+Lines: 210-349
+Size: 5894 chars
 Text preview (5 lines):
 
   public apply(compiler: Compiler): void {
@@ -51,32 +51,32 @@ Text preview (5 lines):
     }
 
 === CHUNK 4 ===
-Breadcrumb: @rushstack/webpack5-module-minifier-plugin:ModuleMinifierPlugin.ts:[fallback-split]
+Breadcrumb: @rushstack/webpack5-module-minifier-plugin:ModuleMinifierPlugin.ts
 Type: code
 Kind: content
 Symbol: None
-Lines: 337-413
-Size: 3171 chars
+Lines: 350-400
+Size: 2123 chars
 Text preview (5 lines):
-      javascriptHooks.renderModuleContent.tap(TAP_AFTER, (source) => {
-        // Clear the identification state of the current module.
-        nextModule = undefined;
-        return source;
-      });
+      javascriptHooks.renderModulePackage.tap(
+        TAP_AFTER,
+        /**
+         * Extracts the code for the module and sends it to be minified.
+         */
 
 === CHUNK 5 ===
-Breadcrumb: @rushstack/webpack5-module-minifier-plugin:ModuleMinifierPlugin.ts:[fallback-split]
+Breadcrumb: @rushstack/webpack5-module-minifier-plugin:ModuleMinifierPlugin.ts
 Type: code
 Kind: content
 Symbol: None
-Lines: 414-489
-Size: 3644 chars
+Lines: 401-489
+Size: 4049 chars
 Text preview (5 lines):
-              (result: IModuleMinificationResult) => {
-                if (isMinificationResultError(result)) {
-                  compilation.errors.push(result.error as WebpackError);
-                } else {
-                  try {
+          metadata.hashByChunk.set(chunkRenderContext.chunk, hash);
+          if (!submittedModules.has(hash)) {
+            submittedModules.add(hash);
+
+            ++pendingMinificationRequests;
 
 === CHUNK 6 ===
 Breadcrumb: @rushstack/webpack5-module-minifier-plugin:ModuleMinifierPlugin.ts:ModuleMinifierPlugin

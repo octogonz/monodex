@@ -44,7 +44,7 @@ import { RunButton } from '../../Toolbar/RunButton';
 const formStyle: CSSProperties = {
   // width: '430px'
 };
--- [CHUNK 2] [49 lines] [1880 chars] --
+-- [CHUNK 2] [74 lines] [2744 chars] --
 
 export const ParameterForm = (): React.ReactElement => {
   const commandName: string = useAppSelector((state) => state.parameter.commandName);
@@ -94,7 +94,6 @@ export const ParameterForm = (): React.ReactElement => {
     shouldFocusError: true,
     shouldUnregister: true
   });
--- [CHUNK 3] [83 lines] [2670 chars] --
   useEffect(() => {
     dispatch(
       setFormValidateAsync(() => {
@@ -120,6 +119,7 @@ export const ParameterForm = (): React.ReactElement => {
     reset(defaultValues);
     dispatch(onChangeFormDefaultValues(defaultValues));
   }, [commandName, reset, defaultValues]);
+-- [CHUNK 3] [141 lines] [5151 chars] --
 
   useEffect(() => {
     if (!userSelectdParameterName) {
@@ -178,7 +178,6 @@ export const ParameterForm = (): React.ReactElement => {
             };
           }
 
--- [CHUNK 4] [83 lines] [3344 chars] --
           switch (parameter.kind) {
             case CommandLineParameterKind.Choice: {
               const { alternatives, defaultValue }: CommandLineChoiceParameter =

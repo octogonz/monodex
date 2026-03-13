@@ -213,7 +213,7 @@ export class ModuleMinifierPlugin implements WebpackPluginInstance {
   public static getCompilationStatistics(compilation: Compilation): IModuleMinifierPluginStats | undefined {
     return compilationMetadataMap.get(compilation);
   }
--- [CHUNK 3] [127 lines] [5198 chars] --
+-- [CHUNK 3] [140 lines] [5807 chars] --
 
   public apply(compiler: Compiler): void {
     for (const enhancer of this._enhancers) {
@@ -341,7 +341,6 @@ export class ModuleMinifierPlugin implements WebpackPluginInstance {
        */
       let nextModule: Module | undefined;
       const sourceCache: WeakMap<sources.Source, ISourceCacheEntry> = new WeakMap();
--- [CHUNK 4] [77 lines] [3088 chars] --
       javascriptHooks.renderModuleContent.tap(TAP_AFTER, (source) => {
         // Clear the identification state of the current module.
         nextModule = undefined;
@@ -355,6 +354,7 @@ export class ModuleMinifierPlugin implements WebpackPluginInstance {
         }
         return source;
       });
+-- [CHUNK 4] [51 lines] [2057 chars] --
       javascriptHooks.renderModulePackage.tap(
         TAP_AFTER,
         /**
@@ -406,6 +406,7 @@ export class ModuleMinifierPlugin implements WebpackPluginInstance {
 
           const wrappedCode: string = wrappedCodeRaw.toString();
           const hash: string = hashCodeFragment(wrappedCode);
+-- [CHUNK 5] [89 lines] [3983 chars] --
           metadata.hashByChunk.set(chunkRenderContext.chunk, hash);
           if (!submittedModules.has(hash)) {
             submittedModules.add(hash);
@@ -419,7 +420,6 @@ export class ModuleMinifierPlugin implements WebpackPluginInstance {
                 nameForMap: useSourceMaps ? nameForMap : undefined,
                 externals: undefined
               },
--- [CHUNK 5] [76 lines] [3561 chars] --
               (result: IModuleMinificationResult) => {
                 if (isMinificationResultError(result)) {
                   compilation.errors.push(result.error as WebpackError);

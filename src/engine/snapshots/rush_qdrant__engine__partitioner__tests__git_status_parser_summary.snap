@@ -1,0 +1,79 @@
+---
+source: src/engine/partitioner.rs
+expression: summary
+---
+=== QUALITY SCORE ===
+Score: 99.7%
+Total chunks: 5
+Tiny chunks (<20 lines): 0
+Lines: 67-103 (mean 74.4)
+
+=== CHUNK 1 ===
+Breadcrumb: rush-lib:GitStatusParser.ts:[fallback-split]
+Type: code
+Kind: content
+Symbol: None
+Lines: 1-103
+Size: 2756 chars
+Text preview (5 lines):
+// Copyright (c) Microsoft Corporation. All rights reserved. Licensed under the MIT license.
+// See LICENSE in the project root for license information.
+
+export interface IGitStatusEntryBase {
+  kind: 'untracked' | 'changed' | 'unmerged' | 'renamed' | 'copied';
+
+=== CHUNK 2 ===
+Breadcrumb: rush-lib:GitStatusParser.ts:[fallback-split]
+Type: code
+Kind: content
+Symbol: None
+Lines: 104-171
+Size: 3349 chars
+Text preview (5 lines):
+
+export function* parseGitStatus(gitStatusOutput: string): Iterable<IGitStatusEntry> {
+  // See reference https://git-scm.com/docs/git-status?msclkid=1cff552bcdce11ecadf77a086eded66c#_porcelain_format_version_2
+
+  let pos: number = 0;
+
+=== CHUNK 3 ===
+Breadcrumb: rush-lib:GitStatusParser.ts:parseGitStatus:[fallback-split]
+Type: code
+Kind: content
+Symbol: Some("parseGitStatus")
+Lines: 172-238
+Size: 3881 chars
+Text preview (5 lines):
+    // 1 MM N... 100644 100644 100644 d20c7e41acf4295db610f395f50a554145b4ece7 8299b2a7d657ec1211649f14c85737d68a920d9e path/b.ts\0
+    //                                ^
+    const headObjectName: string = getFieldAndAdvancePos(' ');
+    // 1 MM N... 100644 100644 100644 d20c7e41acf4295db610f395f50a554145b4ece7 8299b2a7d657ec1211649f14c85737d68a920d9e path/b.ts\0
+    //                                                                         ^
+
+=== CHUNK 4 ===
+Breadcrumb: rush-lib:GitStatusParser.ts:parseGitStatus:[fallback-split]
+Type: code
+Kind: content
+Symbol: Some("parseGitStatus")
+Lines: 239-305
+Size: 3811 chars
+Text preview (5 lines):
+    const renameOrCopyMode: string = renameOrCopyScoreField.charAt(0);
+    const rawRenameOrCopyScore: string = renameOrCopyScoreField.substring(1);
+    const renameOrCopyScore: number = parseInt(rawRenameOrCopyScore, 10);
+    let kind: 'renamed' | 'copied';
+    if (renameOrCopyMode === 'R') {
+
+=== CHUNK 5 ===
+Breadcrumb: rush-lib:GitStatusParser.ts:parseGitStatus:[fallback-split]
+Type: code
+Kind: content
+Symbol: Some("parseGitStatus")
+Lines: 306-372
+Size: 2594 chars
+Text preview (5 lines):
+    //                                ^
+    const worktreeFileMode: string = getFieldAndAdvancePos(' ');
+
+    // u .M N... 100644 100644 100644 100644 07b1571a387db3072be485e6cc5591fef35bf666 63f37aa0393e142e2c8329593eb0f78e4cc77032 ebac91ffe8227e6e9b99d9816ce0a6d166b4a524 path/unmerged.ts\0
+    //                                       ^

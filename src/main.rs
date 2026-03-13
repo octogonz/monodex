@@ -102,6 +102,10 @@ enum Commands {
         /// where the partitioner failed to find good split points.
         #[arg(long)]
         with_fallback: bool,
+        
+        /// Enable debug logging for partitioning decisions
+        #[arg(long)]
+        debug: bool,
     },
     
     /// Search with compact blurb output (for AI assistants)
@@ -210,8 +214,8 @@ fn main() -> anyhow::Result<()> {
         Commands::Purge { catalog, all } => {
             run_purge(&config, catalog.as_deref(), all)?;
         }
-        Commands::DumpChunks { file, target_size, visualize, with_fallback } => {
-            run_dump_chunks(&file, target_size, visualize, with_fallback)?;
+        Commands::DumpChunks { file, target_size, visualize, with_fallback, debug } => {
+            run_dump_chunks(&file, target_size, visualize, with_fallback, debug)?;
         }
         Commands::Search { text, limit, catalog } => {
             run_search(&config, &text, limit, catalog.as_deref())?;
@@ -812,7 +816,7 @@ fn is_text_file(path: &str) -> bool {
 }
 
 /// Run chunking diagnostics on a TypeScript file
-fn run_dump_chunks(file: &PathBuf, target_size: usize, visualize: bool, with_fallback: bool) -> anyhow::Result<()> {
+fn run_dump_chunks(file: &PathBuf, target_size: usize, visualize: bool, with_fallback: bool, enable_debug: bool) -> anyhow::Result<()> {
     println!("📦 Chunks for: {}", file.display());
     if !with_fallback {
         println!("🔍 Strict mode: AST-only (fallback disabled)");
@@ -837,7 +841,7 @@ fn run_dump_chunks(file: &PathBuf, target_size: usize, visualize: bool, with_fal
         target_size,
         file_name: file_name.to_string(),
         package_name: package_name.clone(),
-        debug: PartitionDebug::default(),
+        debug: PartitionDebug { enabled: enable_debug },
         allow_fallback: with_fallback,  // AST-only by default, enable fallback with flag
     };
     

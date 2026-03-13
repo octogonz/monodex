@@ -138,7 +138,7 @@ export interface IPackageJsonExports {
    */
   production?: string | IPackageJsonExports;
 }
--- [CHUNK 2] [183 lines] [5481 chars] --
+-- [CHUNK 2] [100 lines] [2826 chars] --
 
 /**
  * An interface for accessing common fields from a package.json file whose version field may be missing.
@@ -239,6 +239,7 @@ export interface INodePackageJson {
    * build this package.
    */
   devDependencies?: IPackageJsonDependencyTable;
+-- [CHUNK 3] [103 lines] [3454 chars] --
 
   /**
    * An array of dependencies that must be installed by a consumer of this package,
@@ -322,7 +323,6 @@ export interface INodePackageJson {
    */
   files?: string[];
 }
--- [CHUNK 3] [20 lines] [799 chars] --
 
 /**
  * An interface for accessing common fields from a package.json file.

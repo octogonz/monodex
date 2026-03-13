@@ -3,10 +3,10 @@ source: src/engine/partitioner.rs
 expression: summary
 ---
 === QUALITY SCORE ===
-Score: 74.0%
+Score: 84.4%
 Total chunks: 3
 Small chunks (<500 chars): 0
-Chars: 799-5481 (mean 3437)
+Chars: 2826-4030 (mean 3437)
 
 === CHUNK 1 ===
 Breadcrumb: @rushstack/node-core-library:IPackageJson.ts
@@ -23,12 +23,12 @@ Text preview (5 lines):
  * This interface is part of the {@link IPackageJson} file format.  It is used for the
 
 === CHUNK 2 ===
-Breadcrumb: @rushstack/node-core-library:IPackageJson.ts:[degraded-ast-split]
+Breadcrumb: @rushstack/node-core-library:IPackageJson.ts
 Type: code
 Kind: content
 Symbol: None
-Lines: 136-318
-Size: 5546 chars
+Lines: 136-235
+Size: 2870 chars
 Text preview (5 lines):
 
 /**
@@ -37,15 +37,15 @@ Text preview (5 lines):
  * @remarks
 
 === CHUNK 3 ===
-Breadcrumb: @rushstack/node-core-library:IPackageJson.ts:[degraded-ast-split]
+Breadcrumb: @rushstack/node-core-library:IPackageJson.ts
 Type: code
 Kind: content
 Symbol: None
-Lines: 319-338
-Size: 864 chars
+Lines: 236-338
+Size: 3498 chars
 Text preview (5 lines):
 
-/**
- * An interface for accessing common fields from a package.json file.
- *
- * @remarks
+  /**
+   * An array of dependencies that must be installed by a consumer of this package,
+   * but which will not be automatically installed by this package.
+   */

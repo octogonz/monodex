@@ -112,6 +112,7 @@ fn is_split_scope(kind: &str) -> bool {
     matches!(kind,
         "program" | "source_file" |
         "class_body" | "declaration_list" | "object_type" |
+        "interface_body" |  // Interface body (contains property_signature children)
         "statement_block" | "switch_body" |
         "object"  // Object literals (contain 'pair' children)
     )
@@ -128,6 +129,7 @@ fn is_transparent_conduit(kind: &str) -> bool {
         "function_declaration" | "generator_function_declaration" |
         "method_definition" | "arrow_function" |
         "if_statement" | "try_statement" | "catch_clause" |
+        "else_clause" |  // else clause of if statements (contains statement_block or nested if)
         "for_statement" | "for_in_statement" | "for_of_statement" |
         "while_statement" | "do_statement" |
         "switch_statement" | "switch_case" |
@@ -138,7 +140,9 @@ fn is_transparent_conduit(kind: &str) -> bool {
         // Expression wrappers that may contain nested scopes
         "await_expression" | "new_expression" | "arguments" | "call_expression" |
         "member_expression" |  // e.g., `new Promise(...).finally(...)` - need to descend to find Promise executor
-        "as_expression"  // `expr as const` wraps object literals
+        "as_expression" |  // `expr as const` wraps object literals
+        // Object literal pairs may contain nested functions/objects
+        "pair"  // Object property with function value that needs splitting
     )
 }
 

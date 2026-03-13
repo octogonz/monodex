@@ -1,21 +1,20 @@
 ---
 source: src/engine/partitioner.rs
-assertion_line: 1444
 expression: summary
 ---
 === QUALITY SCORE ===
-Score: 99.7%
-Total chunks: 8
-Tiny chunks (<20 lines): 1
-Lines: 11-128 (mean 91.9)
+Score: 100.0%
+Total chunks: 7
+Tiny chunks (<20 lines): 0
+Lines: 78-128 (mean 105.0)
 
 === CHUNK 1 ===
-Breadcrumb: rush-lib:EnvironmentConfiguration.ts:[fallback-split]
+Breadcrumb: rush-lib:EnvironmentConfiguration.ts
 Type: code
 Kind: content
 Symbol: None
 Lines: 1-128
-Size: 5410 chars
+Size: 5393 chars
 Text preview (5 lines):
 // Copyright (c) Microsoft Corporation. All rights reserved. Licensed under the MIT license.
 // See LICENSE in the project root for license information.
@@ -24,12 +23,12 @@ import * as path from 'node:path';
 
 
 === CHUNK 2 ===
-Breadcrumb: rush-lib:EnvironmentConfiguration.ts:[fallback-split]
+Breadcrumb: rush-lib:EnvironmentConfiguration.ts
 Type: variable
 Kind: content
 Symbol: None
 Lines: 129-249
-Size: 5295 chars
+Size: 5278 chars
 Text preview (5 lines):
 
   /**
@@ -38,12 +37,12 @@ Text preview (5 lines):
    *
 
 === CHUNK 3 ===
-Breadcrumb: rush-lib:EnvironmentConfiguration.ts:[fallback-split]
+Breadcrumb: rush-lib:EnvironmentConfiguration.ts
 Type: code
 Kind: content
 Symbol: None
 Lines: 250-358
-Size: 3974 chars
+Size: 3957 chars
 Text preview (5 lines):
 
 /**
@@ -52,12 +51,12 @@ Text preview (5 lines):
  * @beta
 
 === CHUNK 4 ===
-Breadcrumb: rush-lib:EnvironmentConfiguration.ts:EnvironmentConfiguration:[fallback-split]
+Breadcrumb: rush-lib:EnvironmentConfiguration.ts:EnvironmentConfiguration
 Type: class
 Kind: content
 Symbol: Some("EnvironmentConfiguration")
 Lines: 359-472
-Size: 4536 chars
+Size: 4519 chars
 Text preview (5 lines):
 
   /**
@@ -66,12 +65,12 @@ Text preview (5 lines):
    */
 
 === CHUNK 5 ===
-Breadcrumb: rush-lib:EnvironmentConfiguration.ts:EnvironmentConfiguration:[fallback-split]
+Breadcrumb: rush-lib:EnvironmentConfiguration.ts:EnvironmentConfiguration
 Type: class
 Kind: content
 Symbol: Some("EnvironmentConfiguration")
-Lines: 473-483
-Size: 554 chars
+Lines: 473-568
+Size: 4077 chars
 Text preview (5 lines):
 
   /**
@@ -80,40 +79,26 @@ Text preview (5 lines):
   public static validate(options: IEnvironmentConfigurationInitializeOptions = {}): void {
 
 === CHUNK 6 ===
-Breadcrumb: rush-lib:EnvironmentConfiguration.ts:validate:[fallback-split]
+Breadcrumb: rush-lib:EnvironmentConfiguration.ts:validate
 Type: function
 Kind: content
 Symbol: Some("validate")
-Lines: 484-570
-Size: 3676 chars
+Lines: 569-657
+Size: 3313 chars
 Text preview (5 lines):
-        // Environment variables are only case-insensitive on Windows
-        const normalizedEnvVarName: string = IS_WINDOWS ? envVarName.toUpperCase() : envVarName;
-        switch (normalizedEnvVarName) {
-          case EnvironmentVariableNames.RUSH_TEMP_FOLDER: {
-            EnvironmentConfiguration._rushTempFolderOverride =
 
-=== CHUNK 7 ===
-Breadcrumb: rush-lib:EnvironmentConfiguration.ts:validate:[fallback-split]
-Type: function
-Kind: content
-Symbol: Some("validate")
-Lines: 571-657
-Size: 3255 chars
-Text preview (5 lines):
+          case EnvironmentVariableNames.RUSH_BUILD_CACHE_OVERRIDE_JSON: {
             EnvironmentConfiguration._buildCacheOverrideJson = value;
             break;
           }
 
-          case EnvironmentVariableNames.RUSH_BUILD_CACHE_OVERRIDE_JSON_FILE_PATH: {
-
-=== CHUNK 8 ===
-Breadcrumb: rush-lib:EnvironmentConfiguration.ts:EnvironmentConfiguration:[fallback-split]
+=== CHUNK 7 ===
+Breadcrumb: rush-lib:EnvironmentConfiguration.ts:EnvironmentConfiguration
 Type: class
 Kind: content
 Symbol: Some("EnvironmentConfiguration")
 Lines: 658-735
-Size: 2938 chars
+Size: 2921 chars
 Text preview (5 lines):
 
   /**

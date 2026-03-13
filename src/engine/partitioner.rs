@@ -1032,6 +1032,22 @@ fn is_meaningful_split_point(node: Node, source: &[u8]) -> bool {
             node.end_byte() - node.start_byte() > 500
         }
         
+        // Switch cases are meaningful split points for large switch statements
+        // Each case is a logical unit that can be split independently
+        "switch_case" => true,
+        
+        // If statements are meaningful split points when large enough
+        // This helps split large methods with complex control flow
+        "if_statement" => {
+            node.end_byte() - node.start_byte() > 500
+        }
+        
+        // For loops are meaningful split points when large enough
+        // This helps split large methods with multiple sequential loops
+        "for_statement" | "for_in_statement" | "for_of_statement" => {
+            node.end_byte() - node.start_byte() > 300
+        }
+        
         _ => false,
     }
 }

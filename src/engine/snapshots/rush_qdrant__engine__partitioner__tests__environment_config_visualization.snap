@@ -1,6 +1,5 @@
 ---
 source: src/engine/partitioner.rs
-assertion_line: 1441
 expression: visualization
 ---
 -- [CHUNK 1] [128 lines] [5357 chars] --
@@ -479,7 +478,7 @@ export class EnvironmentConfiguration {
       return normalizedValue;
     }
   }
--- [CHUNK 5] [11 lines] [476 chars] --
+-- [CHUNK 5] [96 lines] [4016 chars] --
 
   /**
    * Reads and validates environment variables. If any are invalid, this function will throw.
@@ -491,7 +490,6 @@ export class EnvironmentConfiguration {
     for (const envVarName in process.env) {
       if (process.env.hasOwnProperty(envVarName) && envVarName.match(/^RUSH_/i)) {
         const value: string | undefined = process.env[envVarName];
--- [CHUNK 6] [87 lines] [3614 chars] --
         // Environment variables are only case-insensitive on Windows
         const normalizedEnvVarName: string = IS_WINDOWS ? envVarName.toUpperCase() : envVarName;
         switch (normalizedEnvVarName) {
@@ -577,9 +575,9 @@ export class EnvironmentConfiguration {
               );
             break;
           }
+-- [CHUNK 6] [89 lines] [3268 chars] --
 
           case EnvironmentVariableNames.RUSH_BUILD_CACHE_OVERRIDE_JSON: {
--- [CHUNK 7] [87 lines] [3193 chars] --
             EnvironmentConfiguration._buildCacheOverrideJson = value;
             break;
           }
@@ -667,7 +665,7 @@ export class EnvironmentConfiguration {
 
     EnvironmentConfiguration._hasBeenValidated = true;
   }
--- [CHUNK 8] [78 lines] [2860 chars] --
+-- [CHUNK 7] [78 lines] [2860 chars] --
 
   /**
    * Resets EnvironmentConfiguration into an un-initialized state.

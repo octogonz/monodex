@@ -1,0 +1,52 @@
+---
+source: src/engine/partitioner.rs
+assertion_line: 1885
+expression: summary
+---
+=== QUALITY SCORE ===
+Score: 86.5%
+Total chunks: 3
+Small chunks (<500 chars): 0
+Chars: 1183-3644 (mean 2566)
+
+=== CHUNK 1 ===
+Breadcrumb: @microsoft/rush-lib:ExperimentsConfiguration.ts
+Type: code
+Kind: content
+Symbol: None
+Lines: 1-70
+Size: 2918 chars
+Text preview (5 lines):
+// Copyright (c) Microsoft Corporation. All rights reserved. Licensed under the MIT license.
+// See LICENSE in the project root for license information.
+
+import { JsonFile, JsonSchema, FileSystem } from '@rushstack/node-core-library';
+import { Colorize } from '@rushstack/terminal';
+
+=== CHUNK 2 ===
+Breadcrumb: @microsoft/rush-lib:ExperimentsConfiguration.ts:IExperimentsJson
+Type: interface
+Kind: content
+Symbol: Some("IExperimentsJson")
+Lines: 71-139
+Size: 3708 chars
+Text preview (5 lines):
+
+  /**
+   * If true, Rush will not allow node_modules in the repo folder or in parent folders.
+   */
+  forbidPhantomResolvableNodeModulesFolders?: boolean;
+
+=== CHUNK 3 ===
+Breadcrumb: @microsoft/rush-lib:ExperimentsConfiguration.ts
+Type: code
+Kind: content
+Symbol: None
+Lines: 140-181
+Size: 1230 chars
+Text preview (5 lines):
+
+const _EXPERIMENTS_JSON_SCHEMA: JsonSchema = JsonSchema.fromLoadedObject(schemaJson);
+
+/**
+ * Use this class to load the "common/config/rush/experiments.json" config file.

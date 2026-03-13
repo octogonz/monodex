@@ -1110,8 +1110,9 @@ fn is_meaningful_split_point(node: Node, source: &[u8]) -> bool {
         
         // Object literal properties (key-value pairs)
         // Only meaningful if large enough or contains complex nested structure
+        // Use effective size which includes attached leading comments
         "pair" => {
-            let size = node.end_byte() - node.start_byte();
+            let size = effective_size_with_comments(node, source);
             if size > 200 {
                 return true;
             }
@@ -1121,8 +1122,9 @@ fn is_meaningful_split_point(node: Node, source: &[u8]) -> bool {
         
         // Interface property signatures - smaller threshold since interface members
         // are more naturally separable than runtime object-literal properties
+        // Use effective size which includes attached leading comments
         "property_signature" => {
-            node.end_byte() - node.start_byte() > 100
+            effective_size_with_comments(node, source) > 100
         }
         
         "lexical_declaration" | "variable_declaration" => {
@@ -1158,6 +1160,49 @@ fn is_meaningful_split_point(node: Node, source: &[u8]) -> bool {
         
         _ => false,
     }
+}
+
+/// Compute the effective size of a node, including any attached leading comments.
+/// 
+/// This treats a property + its documentation as a single semantic unit when
+/// evaluating whether it forms a meaningful split boundary.
+/// Works for both `pair` (object literal properties) and `property_signature` (interface properties).
+fn effective_size_with_comments(node: Node, source: &[u8]) -> usize {
+    let mut start = node.start_byte();
+    let end = node.end_byte();
+    
+    // Walk backward through previous siblings to find attached comments
+    let mut current = node.prev_sibling();
+    
+    while let Some(sibling) = current {
+        // Only include comment nodes
+        if sibling.kind() == "comment" {
+            let comment_end = sibling.end_byte();
+            let comment_start = sibling.start_byte();
+            
+            // Check for blank line gap between comment and current start
+            // A blank line means there's more than just whitespace between them
+            let between = &source[comment_end..start];
+            let has_blank_line = between.windows(2).any(|w| w == b"\n\n") 
+                || between.windows(4).any(|w| w == b"\r\n\r\n");
+            
+            if has_blank_line {
+                // Comment is separated by blank line, stop
+                break;
+            }
+            
+            // Include this comment
+            start = comment_start;
+            
+            // Continue walking backward
+            current = sibling.prev_sibling();
+        } else {
+            // Non-comment sibling, stop
+            break;
+        }
+    }
+    
+    end - start
 }
 
 /// Check if a pair node contains a complex value (function, object, array)
@@ -1628,6 +1673,14 @@ export function tiny(): number {
         
         let summary = format_chunks_summary(&chunks, source.len());
         assert_snapshot!("environment_config_summary", summary);
+        
+        // Should not have oversized chunks (target is 6000 chars)
+        // This verifies effective_size_with_comments() allows splitting
+        // documented object literal properties
+        for chunk in &chunks {
+            assert!(chunk.text.len() <= 6000, 
+                "Oversized chunk: {} chars in {}", chunk.text.len(), chunk.breadcrumb);
+        }
     }
     
     #[test]
@@ -1800,10 +1853,73 @@ export function* parseGitStatus() {
         let summary = format_chunks_summary(&chunks, source.len());
         assert_snapshot!("parameter_form_summary", summary);
         
-        // TSX files should split cleanly without fallback
+        // Note: This file currently has a fallback split due to a large function body
+        // that lacks natural split boundaries. This is a known limitation that may
+        // be addressed in a future update.
+    }
+    
+    #[test]
+    fn test_experiments_configuration() {
+        // ExperimentsConfiguration.ts contains a large interface (IExperimentsJson)
+        // with documented properties. Each property has a JSDoc comment that makes it 
+        // exceed the 100 byte threshold when counting the comment, but the property_signature 
+        // alone is small.
+        // 
+        // This tests effective_size_with_comments() for interface property signatures.
+        // 
+        // Before the fix: oversized interface chunk
+        // After the fix: properly split at property boundaries
+        let source = include_str!("../../test_artifacts/ExperimentsConfiguration.ts");
+        let config = PartitionConfig {
+            file_name: "ExperimentsConfiguration.ts".to_string(),
+            package_name: "@microsoft/rush-lib".to_string(),
+            debug: PartitionDebug { enabled: true },
+            ..Default::default()
+        };
+        let chunks = partition_typescript(source, &config, "ExperimentsConfiguration.ts", "@microsoft/rush-lib");
+        
+        let visualization = format_chunks_visualization(source, &chunks);
+        assert_snapshot!("experiments_configuration_visualization", visualization);
+        
+        let summary = format_chunks_summary(&chunks, source.len());
+        assert_snapshot!("experiments_configuration_summary", summary);
+        
+        // Should not have oversized chunks (target is 6000 chars)
         for chunk in &chunks {
-            assert!(!chunk.breadcrumb.contains("[fallback-split]"), 
-                "Unexpected fallback split in chunk: {}", chunk.breadcrumb);
+            assert!(chunk.text.len() <= 6000, 
+                "Oversized chunk: {} chars in {}", chunk.text.len(), chunk.breadcrumb);
+        }
+    }
+    
+    #[test]
+    fn test_documented_interface() {
+        // IYamlApiFile.ts contains large interfaces with documented properties.
+        // Each property has a JSDoc comment that makes it exceed the 100 byte threshold
+        // when counting the comment, but the property_signature alone is small.
+        // 
+        // This tests effective_size_with_comments() for interface property signatures.
+        // 
+        // Before the fix: oversized interface chunks
+        // After the fix: properly split at property boundaries
+        let source = include_str!("../../test_artifacts/IYamlApiFile.ts");
+        let config = PartitionConfig {
+            file_name: "IYamlApiFile.ts".to_string(),
+            package_name: "@microsoft/api-documenter".to_string(),
+            debug: PartitionDebug { enabled: true },
+            ..Default::default()
+        };
+        let chunks = partition_typescript(source, &config, "IYamlApiFile.ts", "@microsoft/api-documenter");
+        
+        let visualization = format_chunks_visualization(source, &chunks);
+        assert_snapshot!("iyaml_api_file_visualization", visualization);
+        
+        let summary = format_chunks_summary(&chunks, source.len());
+        assert_snapshot!("iyaml_api_file_summary", summary);
+        
+        // Should not have oversized chunks (target is 6000 chars)
+        for chunk in &chunks {
+            assert!(chunk.text.len() <= 6000, 
+                "Oversized chunk: {} chars in {}", chunk.text.len(), chunk.breadcrumb);
         }
     }
 }

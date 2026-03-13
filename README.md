@@ -121,8 +121,7 @@ rush-qdrant/
 │       ├── parallel_embedder.rs   # Parallel embedding with multiple ONNX sessions
 │       ├── package_lookup.rs      # Package name resolution (walk up to package.json)
 │       ├── uploader.rs            # Qdrant HTTP client
-│       ├── util.rs                # Hash utilities for chunk IDs
-│       └── snapshots/             # Embedded model files
+│       └── util.rs                # Hash utilities for chunk IDs
 ├── Cargo.toml                     # Dependencies
 ├── DESIGN.md                      # Design documentation
 └── README.md

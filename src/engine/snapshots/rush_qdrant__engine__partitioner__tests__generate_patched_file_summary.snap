@@ -1,12 +1,13 @@
 ---
 source: src/engine/partitioner.rs
+assertion_line: 2041
 expression: summary
 ---
 === QUALITY SCORE ===
-Score: 82.8%
-Total chunks: 5
+Score: 59.4%
+Total chunks: 4
 Small chunks (<500 chars): 0
-Chars: 1760-3230 (mean 2819)
+Chars: 1760-6037 (mean 3524)
 
 === CHUNK 1 ===
 Breadcrumb: @rushstack/eslint-patch:generate-patched-file.ts
@@ -37,12 +38,12 @@ Text preview (5 lines):
    * @returns -1 if public method does not exist or index of next public method
 
 === CHUNK 3 ===
-Breadcrumb: @rushstack/eslint-patch:generate-patched-file.ts:generatePatchedLinterJsFileIfDoesNotExist:[fallback-split]
+Breadcrumb: @rushstack/eslint-patch:generate-patched-file.ts:generatePatchedLinterJsFileIfDoesNotExist
 Type: function
 Kind: content
 Symbol: Some("generatePatchedLinterJsFileIfDoesNotExist")
-Lines: 180-269
-Size: 3082 chars
+Lines: 180-358
+Size: 6127 chars
 Text preview (5 lines):
   outputFile += `--- END MONKEY PATCH ---
 `;
@@ -51,20 +52,6 @@ Text preview (5 lines):
     if (minorVersion >= 37) {
 
 === CHUNK 4 ===
-Breadcrumb: @rushstack/eslint-patch:generate-patched-file.ts:generatePatchedLinterJsFileIfDoesNotExist:[fallback-split]
-Type: function
-Kind: content
-Symbol: Some("generatePatchedLinterJsFileIfDoesNotExist")
-Lines: 270-358
-Size: 3168 chars
-Text preview (5 lines):
-    outputFile += scanUntilMarker(');');
-  } else {
-    outputFile += scanUntilMarker('const problem = reportTranslator(...args);');
-  }
-
-
-=== CHUNK 5 ===
 Breadcrumb: @rushstack/eslint-patch:generate-patched-file.ts:generatePatchedLinterJsFileIfDoesNotExist
 Type: function
 Kind: content

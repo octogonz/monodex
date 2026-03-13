@@ -1436,6 +1436,7 @@ export function add(a: number, b: number): number {
         let config = PartitionConfig {
             file_name: "test.ts".to_string(),
             package_name: "@test/package".to_string(),
+            allow_fallback: false,
             ..Default::default()
         };
         let chunks = partition_typescript(source, &config, "test.ts", "test");
@@ -1479,6 +1480,7 @@ export class Calculator {
         let config = PartitionConfig {
             file_name: "Calculator.ts".to_string(),
             package_name: "@math/package".to_string(),
+            allow_fallback: false,
             ..Default::default()
         };
         let chunks = partition_typescript(source, &config, "Calculator.ts", "math");
@@ -1496,6 +1498,7 @@ export class Calculator {
         let config = PartitionConfig {
             file_name: "JsonFile.ts".to_string(),
             package_name: "@rushstack/node-core-library".to_string(),
+            allow_fallback: false,
             ..Default::default()
         };
         let chunks = partition_typescript(source, &config, "JsonFile.ts", "node-core-library");
@@ -1519,6 +1522,7 @@ export function tiny(): number {
         let config = PartitionConfig {
             file_name: "tiny.ts".to_string(),
             package_name: "@test/package".to_string(),
+            allow_fallback: false,
             ..Default::default()
         };
         let chunks = partition_typescript(source, &config, "tiny.ts", "test");
@@ -1538,6 +1542,7 @@ export function tiny(): number {
         let config = PartitionConfig {
             file_name: "rollup.d.ts".to_string(),
             package_name: "api-extractor-scenarios".to_string(),
+            allow_fallback: false,
             ..Default::default()
         };
         let chunks = partition_typescript(source, &config, "rollup.d.ts", "api-extractor-scenarios");
@@ -1557,6 +1562,7 @@ export function tiny(): number {
         let config = PartitionConfig {
             file_name: "TunneledBrowserConnection.ts".to_string(),
             package_name: "@rushstack/playwright-browser-tunnel".to_string(),
+            allow_fallback: false,
             ..Default::default()
         };
         let chunks = partition_typescript(source, &config, "TunneledBrowserConnection.ts", "playwright-browser-tunnel");
@@ -1587,6 +1593,7 @@ export function tiny(): number {
         let config = PartitionConfig {
             file_name: "long_string.ts".to_string(),
             package_name: "test".to_string(),
+            allow_fallback: true,  // This test explicitly tests fallback behavior
             ..Default::default()
         };
         let chunks = partition_typescript(&source, &config, "long_string.ts", "test");
@@ -1616,6 +1623,7 @@ export function tiny(): number {
         let config = PartitionConfig {
             file_name: "Colorize.ts".to_string(),
             package_name: "@rushstack/terminal".to_string(),
+            allow_fallback: false,
             ..Default::default()
         };
         let chunks = partition_typescript(source, &config, "Colorize.ts", "terminal");
@@ -1642,6 +1650,7 @@ export function tiny(): number {
             file_name: "IPackageJson.ts".to_string(),
             package_name: "@rushstack/node-core-library".to_string(),
             debug: PartitionDebug { enabled: true },
+            allow_fallback: false,
             ..Default::default()
         };
         let chunks = partition_typescript(source, &config, "IPackageJson.ts", "node-core-library");
@@ -1673,6 +1682,7 @@ export function tiny(): number {
             file_name: "EnvironmentConfiguration.ts".to_string(),
             package_name: "rush-lib".to_string(),
             debug: PartitionDebug { enabled: true },
+            allow_fallback: false,
             ..Default::default()
         };
         let chunks = partition_typescript(source, &config, "EnvironmentConfiguration.ts", "rush-lib");
@@ -1702,6 +1712,7 @@ export function tiny(): number {
             file_name: "NestedFunctions.ts".to_string(),
             package_name: "test".to_string(),
             debug: PartitionDebug { enabled: true },
+            allow_fallback: false,
             ..Default::default()
         };
         let chunks = partition_typescript(source, &config, "NestedFunctions.ts", "test");
@@ -1735,6 +1746,7 @@ export function tiny(): number {
             file_name: "GitStatusParser.ts".to_string(),
             package_name: "rush-lib".to_string(),
             debug: PartitionDebug { enabled: true },
+            allow_fallback: false,
             ..Default::default()
         };
         let chunks = partition_typescript(source, &config, "GitStatusParser.ts", "rush-lib");
@@ -1826,6 +1838,7 @@ export function* parseGitStatus() {
             file_name: "ProjectWatcher.ts".to_string(),
             package_name: "rush-lib".to_string(),
             debug: PartitionDebug { enabled: true },
+            allow_fallback: false,
             ..Default::default()
         };
         let chunks = partition_typescript(source, &config, "ProjectWatcher.ts", "rush-lib");
@@ -1852,6 +1865,7 @@ export function* parseGitStatus() {
         let config = PartitionConfig {
             file_name: "ParameterForm.tsx".to_string(),
             package_name: "@rushstack/rush-vscode-command-webview".to_string(),
+            allow_fallback: false,
             ..Default::default()
         };
         let chunks = partition_typescript(source, &config, "ParameterForm.tsx", "@rushstack/rush-vscode-command-webview");
@@ -1883,6 +1897,7 @@ export function* parseGitStatus() {
             file_name: "ExperimentsConfiguration.ts".to_string(),
             package_name: "@microsoft/rush-lib".to_string(),
             debug: PartitionDebug { enabled: true },
+            allow_fallback: false,
             ..Default::default()
         };
         let chunks = partition_typescript(source, &config, "ExperimentsConfiguration.ts", "@microsoft/rush-lib");
@@ -1915,6 +1930,7 @@ export function* parseGitStatus() {
             file_name: "IYamlApiFile.ts".to_string(),
             package_name: "@microsoft/api-documenter".to_string(),
             debug: PartitionDebug { enabled: true },
+            allow_fallback: false,
             ..Default::default()
         };
         let chunks = partition_typescript(source, &config, "IYamlApiFile.ts", "@microsoft/api-documenter");
@@ -1948,6 +1964,7 @@ export function* parseGitStatus() {
             file_name: "ModuleMinifierPlugin.ts".to_string(),
             package_name: "@rushstack/webpack5-module-minifier-plugin".to_string(),
             debug: PartitionDebug { enabled: true },
+            allow_fallback: false,
             ..Default::default()
         };
         let chunks = partition_typescript(source, &config, "ModuleMinifierPlugin.ts", "@rushstack/webpack5-module-minifier-plugin");
@@ -1979,6 +1996,7 @@ export function* parseGitStatus() {
             file_name: "ParameterForm.tsx".to_string(),
             package_name: "@rushstack/rush-vscode-command-webview".to_string(),
             debug: PartitionDebug { enabled: true },
+            allow_fallback: false,
             ..Default::default()
         };
         let chunks = partition_typescript(source, &config, "ParameterForm.tsx", "@rushstack/rush-vscode-command-webview");
@@ -2011,6 +2029,7 @@ export function* parseGitStatus() {
             file_name: "generate-patched-file.ts".to_string(),
             package_name: "@rushstack/eslint-patch".to_string(),
             debug: PartitionDebug { enabled: true },
+            allow_fallback: false,
             ..Default::default()
         };
         let chunks = partition_typescript(source, &config, "generate-patched-file.ts", "@rushstack/eslint-patch");

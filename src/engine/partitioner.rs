@@ -1569,4 +1569,31 @@ export function* parseGitStatus() {
         print_tree(tree.root_node(), 0);
     }
     
+    #[test]
+    fn test_project_watcher() {
+        // A real-world file with nested functions inside async methods.
+        // The waitForChangeAsync method contains several nested functions:
+        // - onError, addWatcher, innerListener, changeListener
+        // These should be recognized as meaningful split points.
+        let source = include_str!("../../test_artifacts/ProjectWatcher.ts");
+        let config = PartitionConfig {
+            file_name: "ProjectWatcher.ts".to_string(),
+            package_name: "rush-lib".to_string(),
+            debug: PartitionDebug { enabled: true },
+            ..Default::default()
+        };
+        let chunks = partition_typescript(source, &config, "ProjectWatcher.ts", "rush-lib");
+        
+        let visualization = format_chunks_visualization(source, &chunks);
+        assert_snapshot!("project_watcher_visualization", visualization);
+        
+        let summary = format_chunks_summary(&chunks, source.lines().count());
+        assert_snapshot!("project_watcher_summary", summary);
+        
+        // TODO: Nested functions inside methods should be recognized as split points
+        // for chunk in &chunks {
+        //     assert!(!chunk.breadcrumb.contains("[fallback-split]"), 
+        //         "Unexpected fallback split in chunk: {}", chunk.breadcrumb);
+        // }
+    }
 }

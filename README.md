@@ -136,6 +136,11 @@ rush-qdrant/
 - Handles oversized functions by splitting at statement blocks
 - Full breadcrumb context: `package:file:Class.method`
 
+**Quality indicators in breadcrumbs:**
+- No marker: Successful AST split with good chunk geometry
+- `:[degraded-ast-split]`: AST split with poor geometry (tiny chunks)
+- `:[fallback-split]`: No AST split found, used line-based recovery (failure mode)
+
 **Markdown files** are split by heading hierarchy.
 
 **JSON files** are skipped (low value for semantic search).

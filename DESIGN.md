@@ -408,8 +408,31 @@ To avoid pathological splits:
 
 - **Minimum chunk size:** 20% of target (1200 chars for 6000 target)
 - Both resulting chunks must meet the minimum
-- Tiny nested scopes (< 30 lines) are not considered as split candidates
-- Large expression statements (> 500 bytes) are treated as meaningful boundaries
+- Tiny nested scopes that cannot produce viable candidates (meeting `min_chunk_size`) are not considered for descent
+
+#### Split Outcome Categories
+
+The algorithm distinguishes three possible outcomes when attempting to split:
+
+1. **Good AST split** (success)
+   - Semantically meaningful split point found
+   - Both resulting chunks respect `min_chunk_size`
+   - This is the intended behavior
+
+2. **Degraded AST split** (quality failure)
+   - Semantically meaningful split point found
+   - But one or both resulting chunks are below `min_chunk_size`
+   - Marked in output with `:[degraded-ast-split]` breadcrumb suffix
+   - Still preferable to fallback in production, but indicates partitioning difficulty
+
+3. **Fallback split** (algorithm failure)
+   - No acceptable AST split point found
+   - Line-based midpoint splitting used instead
+   - Marked in output with `:[fallback-split]` breadcrumb suffix
+   - This is **not** a heuristic choice — it is an explicit failure mode
+   - When fallback occurs, the partitioner could not find any semantic structure to use
+
+**Design principle:** Fallback means the AST algorithm failed to produce an acceptable semantic split. A degraded AST split means the algorithm found structure, but not a high-quality partition. A good AST split means the algorithm succeeded.
 
 #### What "Meaningful" Means
 
@@ -530,9 +553,9 @@ The chunking system has two separate quality signals that serve different purpos
 
 **Gate 1: Correctness/Coverage**
 - Question: "Can AST-based chunking handle this file without fallback?"
-- Signal: **Warnings during crawl**
-- Meaning: The partitioner failed to find AST split points and used emergency line-based splitting
-- Action: Fix the partitioner to handle this file
+- Signal: **Warnings during crawl** (fallback or degraded AST splits)
+- Meaning: The partitioner either failed to find AST split points (fallback) or found only poor-quality ones (degraded)
+- Action: Fix the partitioner to handle this file better
 
 **Gate 2: Quality/Optimization**
 - Question: "Given AST-based chunking, are the chunk boundaries good?"
@@ -559,14 +582,23 @@ To make scores meaningful, `audit-chunks` and `dump-chunks` (by default) disable
 6. **Run audit-chunks** to find suboptimal but AST-valid chunking (Gate 2)
 7. **Use dump-chunks --debug** to inspect why split points were chosen
 
-### Breadcrumb Fallback Marker
+### Breadcrumb Quality Markers
 
-When fallback splitting creates a chunk, its breadcrumb includes `:[fallback-split]`:
+When chunking produces non-ideal outcomes, breadcrumbs include markers for visibility:
+
+**Fallback split** (algorithm failure):
 ```
 @microsoft/rush-lib:WorkspaceInstallManager.ts:prepareCommonTempAsync:[fallback-split]
 ```
 
-This marker is **per-chunk**, not file-level. Only chunks actually created by fallback get marked. In production crawling, the marker is stripped before storage (it's only used to trigger warnings).
+**Degraded AST split** (quality failure):
+```
+@rushstack/node-core-library:IPackageJson.ts:[degraded-ast-split]
+```
+
+These markers are **per-chunk**, not file-level. Only chunks actually created by the indicated method get marked.
+
+**Important:** Fallback is a failure mode, not part of the correctly functioning heuristic. When fallback occurs, it means the partitioner could not find any semantic structure to use. The fallback provides damage control for production, but the warning should trigger investigation.
 
 ### Sticky Warning Recrawl
 

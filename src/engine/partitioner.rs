@@ -24,8 +24,17 @@
 //!
 //! **Minimum Size Constraints:**
 //! - Minimum chunk size: 20% of target (prevents tiny fragments)
-//! - Tiny nestedscopes (<30 lines) are filtered out as split candidates
+//! - Nested scopes are filtered by viability: only descend if they have at least
+//!   one candidate that produces chunks meeting min_chunk_size
 //! - Large expression statements (>500 bytes) are treated as meaningful
+//!
+//! **Split Outcome Categories:**
+//! 1. Good AST split (success): semantically meaningful, respects min_chunk_size
+//! 2. Degraded AST split (quality failure): semantically meaningful but poor geometry
+//! 3. Fallback split (algorithm failure): no acceptable AST split found
+//!
+//! **Important:** Fallback is NOT a heuristic choice. It is an explicit failure mode
+//! indicating the AST-based partitioner could not find any semantic structure to use.
 //!
 //! **Coordination:**
 //! 1. Start with one chunk = entire file
@@ -34,7 +43,8 @@
 //!    b. Get candidate boundaries from that scope's direct children
 //!    c. If usable split found, divide the chunk
 //!    d. Otherwise, descend through transparent conduits to nested scopes
-//!    e. If no AST split works, fall back to line-based splitting
+//!    e. If no viable nested scope or no usable split, use least-bad AST split
+//!    f. If no AST candidates at all, fall back to line-based splitting
 //! 3. Done - all chunks fit budget
 
 use tree_sitter::{Node, Parser};
@@ -347,13 +357,29 @@ struct ChunkRange {
     start_line: usize,  // 1-indexed, inclusive
     end_line: usize,    // 1-indexed, inclusive
     from_fallback: bool, // This chunk was created by a fallback split
+    from_degraded_ast_split: bool, // This chunk was created by a degraded AST split
 }
 
-/// Result of attempting to split a chunk
+/// Result of attempting to split a chunk.
+///
+/// The algorithm distinguishes three outcomes:
+/// 1. Good AST split (success) - semantically meaningful, respects min_chunk_size
+/// 2. Degraded AST split (quality failure) - semantically meaningful but poor geometry
+/// 3. Fallback split (algorithm failure) - no acceptable AST split found
+///
+/// Important: Fallback is NOT a heuristic choice. It is an explicit failure mode
+/// indicating that the AST-based partitioner could not find any semantic structure
+/// to use. It provides damage control for production but should trigger investigation.
 enum SplitResult {
-    /// Found a valid AST-based split at this line
+    /// Successful AST split: semantically meaningful with good chunk geometry
     Split(usize),
-    /// No valid AST split, using fallback line-based split
+    /// Degraded AST split: semantically meaningful but poor chunk geometry (tiny chunks)
+    /// This is a quality failure, but still preferable to fallback in production.
+    /// Marked in output with `:[degraded-ast-split]` breadcrumb suffix.
+    DegradedSplit(usize),
+    /// Fallback split: no acceptable AST split found, using line-based recovery.
+    /// This is explicit failure of semantic partitioning, not a heuristic choice.
+    /// Marked in output with `:[fallback-split]` breadcrumb suffix.
     Fallback(usize),
     /// Cannot split this chunk any further
     CannotSplit,
@@ -413,8 +439,9 @@ fn find_best_split(
                 let estimated_second_size = chunk_size - estimated_first_size;
                 
                 // Compute badness for this split
-                // Note: We include ALL candidates, even those that create tiny chunks,
-                // because a semantically-meaningful split is better than line-based fallback.
+                // Note: We include ALL candidates, even those that create tiny chunks.
+                // A degraded AST split may be preferable operationally to fallback,
+                // but it is still a quality failure distinct from a successful AST split.
                 // The badness calculation already penalizes small chunks heavily.
                 let badness = compute_split_badness(
                     split_line, start_line, end_line, chunk_size, ideal_first_size,
@@ -436,13 +463,26 @@ fn find_best_split(
         }
         
         // Descend to a nested split scope
-        current_scope = find_nested_split_scope(scope, start_line, end_line, source, debug);
+        current_scope = find_nested_split_scope(scope, start_line, end_line, chunk_size, min_chunk_size, source, debug);
     }
     
     // No usable partition found - use least-bad AST split if available
+    // A degraded AST split may be preferable operationally to fallback,
+    // but it is still a quality failure distinct from a successful AST split.
     if let Some((split_line, badness)) = least_bad_split {
-        debug.log_split_decision(&format!("Least-bad AST split (badness {})", badness), Some(split_line));
-        return SplitResult::Split(split_line);
+        // Check if this is a degraded split (creates tiny chunks)
+        let lines_before = split_line - start_line + 1;
+        let total_lines = end_line - start_line + 1;
+        let estimated_first_size = (chunk_size * lines_before) / total_lines;
+        let estimated_second_size = chunk_size - estimated_first_size;
+        
+        if estimated_first_size < min_chunk_size || estimated_second_size < min_chunk_size {
+            debug.log_split_decision(&format!("DEGRADED AST SPLIT (badness {}, tiny chunk)", badness), Some(split_line));
+            return SplitResult::DegradedSplit(split_line);
+        } else {
+            debug.log_split_decision(&format!("LEAST-BAD AST SPLIT (badness {})", badness), Some(split_line));
+            return SplitResult::Split(split_line);
+        }
     }
     
     // No AST split at all - use line-based fallback
@@ -503,12 +543,16 @@ fn find_shallowest_split_scope<'a>(
 }
 
 /// Find a nested split scope to descend into.
-/// Recursively descends through chains of transparent conduits until finding a split scope.
+/// Selects the best child (split scope or transparent conduit) and delegates to
+/// `find_deepest_split_scope()` to validate viability before returning.
+/// Only returns a scope that has at least one viable candidate (meets min_chunk_size).
 fn find_nested_split_scope<'a>(
     node: Node<'a>,
     start_line: usize,
     end_line: usize,
-    _source: &[u8],
+    chunk_size: usize,
+    min_chunk_size: usize,
+    source: &[u8],
     debug: &PartitionDebug,
 ) -> Option<Node<'a>> {
     let mut cursor = node.walk();
@@ -541,32 +585,31 @@ fn find_nested_split_scope<'a>(
         }
     }
     
-    // If we found a transparent conduit, recursively descend through it
-    // to find a nested split scope
+    // If we found a child, validate it before returning
     if let Some(child) = best_child {
         debug.log(&format!("Descending to child '{}' at lines {}-{}", 
             child.kind(), child.start_position().row + 1, child.end_position().row + 1));
-        if is_transparent_conduit(child.kind()) {
-            // Try to find a deeper split scope inside this conduit
-            if let Some(deeper) = find_deepest_split_scope(child, start_line, end_line, _source, debug) {
-                return Some(deeper);
-            }
+        
+        // Both transparent conduits AND split scopes must pass through viability check
+        if is_transparent_conduit(child.kind()) || is_split_scope(child.kind()) {
+            // find_deepest_split_scope will validate viability before returning
+            return find_deepest_split_scope(child, start_line, end_line, chunk_size, min_chunk_size, source, debug);
         }
     }
     
-    best_child
+    None
 }
 
 /// Find a usable split scope within a transparent conduit chain.
 /// Descends through layers of transparent conduits until finding a split scope
-/// that has meaningful children in the given line range.
-/// 
-/// Key constraint: the scope must be substantial (≥30 lines) to filter out
-/// tiny nested functions/callbacks that would create micro-chunks.
+/// that has meaningful children in the given line range AND yields at least one
+/// viable split candidate (not just any split scope, but one that produces healthy chunks).
 fn find_deepest_split_scope<'a>(
     node: Node<'a>,
     start_line: usize,
     end_line: usize,
+    chunk_size: usize,
+    min_chunk_size: usize,
     source: &[u8],
     debug: &PartitionDebug,
 ) -> Option<Node<'a>> {
@@ -578,7 +621,7 @@ fn find_deepest_split_scope<'a>(
         return None;
     }
     
-    // If this is a split scope, check if it has meaningful children
+    // If this is a split scope, check if it has viable candidates
     if is_split_scope(node.kind()) {
         let children = get_meaningful_children(node, source, debug);
         let overlapping: Vec<Node> = children
@@ -590,31 +633,40 @@ fn find_deepest_split_scope<'a>(
             })
             .collect();
         
-        // If it has 2+ overlapping meaningful children, check if this scope
-        // overlaps the chunk range substantially (at least 30 lines or 80% of the scope)
+        // Need at least 2 overlapping children to have split candidates
         if overlapping.len() >= 2 {
-            let overlap_start = node_start.max(start_line);
-            let overlap_end = node_end.min(end_line);
-            let overlap_lines = overlap_end - overlap_start + 1;
-            let scope_lines = node_end - node_start + 1;
+            // Generate candidate split lines (same logic as get_scope_candidates)
+            let mut candidates: Vec<usize> = Vec::new();
+            for i in 1..overlapping.len() {
+                let prev_child = overlapping[i - 1];
+                let split_line = prev_child.end_position().row + 1;
+                if split_line >= start_line && split_line < end_line {
+                    candidates.push(split_line);
+                }
+            }
             
-            debug.log(&format!("  Split scope '{}' has {} overlapping children, scope_lines={}, overlap_lines={}",
-                node.kind(), overlapping.len(), scope_lines, overlap_lines));
+            // Check if any candidate produces chunks that meet min_chunk_size
+            let has_viable_candidate = candidates.iter().any(|&split_line| {
+                let lines_before = split_line - start_line + 1;
+                let total_lines = end_line - start_line + 1;
+                let estimated_first_size = (chunk_size * lines_before) / total_lines;
+                let estimated_second_size = chunk_size - estimated_first_size;
+                
+                estimated_first_size >= min_chunk_size && estimated_second_size >= min_chunk_size
+            });
             
-            // Only accept if the scope overlaps at least 30 lines AND
-            // the scope is at least 30 lines (to filter out tiny nested scopes)
-            if overlap_lines >= 30 && scope_lines >= 30 {
-                debug.log(&format!("  -> Accepted split scope '{}' at lines {}-{}", 
+            if has_viable_candidate {
+                debug.log(&format!("  -> Accepted split scope '{}' at lines {}-{} (has viable candidates)", 
                     node.kind(), node_start, node_end));
                 return Some(node);
             } else {
-                debug.log(&format!("  -> Rejected: overlap_lines ({}) < 30 or scope_lines ({}) < 30", 
-                    overlap_lines, scope_lines));
+                debug.log(&format!("  -> Rejected split scope '{}' at lines {}-{} (no viable candidates)", 
+                    node.kind(), node_start, node_end));
             }
         }
     }
     
-    // If transparent conduit or split scope with insufficient children, descend further
+    // If transparent conduit or split scope without viable candidates, descend further
     let mut cursor = node.walk();
     for child in node.children(&mut cursor) {
         let child_start = child.start_position().row + 1;
@@ -626,7 +678,7 @@ fn find_deepest_split_scope<'a>(
         
         // Recursively descend into transparent conduits or split scopes
         if is_transparent_conduit(child.kind()) || is_split_scope(child.kind()) {
-            if let Some(deeper) = find_deepest_split_scope(child, start_line, end_line, source, debug) {
+            if let Some(deeper) = find_deepest_split_scope(child, start_line, end_line, chunk_size, min_chunk_size, source, debug) {
                 return Some(deeper);
             }
         }
@@ -773,7 +825,7 @@ pub fn partition_typescript(
     };
     
     // Step 1: Start with the whole file as one chunk
-    let mut chunks: Vec<ChunkRange> = vec![ChunkRange { start_line: 1, end_line: total_lines, from_fallback: false }];
+    let mut chunks: Vec<ChunkRange> = vec![ChunkRange { start_line: 1, end_line: total_lines, from_fallback: false, from_degraded_ast_split: false }];
     
     // Also extract imports end line for chunk_kind metadata (but don't pre-split)
     let import_end_line = extract_imports_end_line(root, source.as_bytes());
@@ -804,14 +856,21 @@ pub fn partition_typescript(
                     &config.debug,
                 ) {
                     SplitResult::Split(split_line) => {
-                        new_chunks.push(ChunkRange { start_line: chunk_range.start_line, end_line: split_line, from_fallback: false });
-                        new_chunks.push(ChunkRange { start_line: split_line + 1, end_line: chunk_range.end_line, from_fallback: false });
+                        new_chunks.push(ChunkRange { start_line: chunk_range.start_line, end_line: split_line, from_fallback: false, from_degraded_ast_split: false });
+                        new_chunks.push(ChunkRange { start_line: split_line + 1, end_line: chunk_range.end_line, from_fallback: false, from_degraded_ast_split: false });
+                        changed = true;
+                    }
+                    SplitResult::DegradedSplit(split_line) => {
+                        // Degraded AST split: semantically meaningful but poor geometry
+                        // Mark as degraded for visibility in diagnostics
+                        new_chunks.push(ChunkRange { start_line: chunk_range.start_line, end_line: split_line, from_fallback: false, from_degraded_ast_split: true });
+                        new_chunks.push(ChunkRange { start_line: split_line + 1, end_line: chunk_range.end_line, from_fallback: false, from_degraded_ast_split: true });
                         changed = true;
                     }
                     SplitResult::Fallback(split_line) => {
                         if config.allow_fallback {
-                            new_chunks.push(ChunkRange { start_line: chunk_range.start_line, end_line: split_line, from_fallback: true });
-                            new_chunks.push(ChunkRange { start_line: split_line + 1, end_line: chunk_range.end_line, from_fallback: true });
+                            new_chunks.push(ChunkRange { start_line: chunk_range.start_line, end_line: split_line, from_fallback: true, from_degraded_ast_split: false });
+                            new_chunks.push(ChunkRange { start_line: split_line + 1, end_line: chunk_range.end_line, from_fallback: true, from_degraded_ast_split: false });
                             changed = true;
                         } else {
                             // In strict mode, leave oversized chunks as-is
@@ -846,6 +905,8 @@ pub fn partition_typescript(
 
         if chunk_range.from_fallback {
             breadcrumb.push_str(":[fallback-split]");
+        } else if chunk_range.from_degraded_ast_split {
+            breadcrumb.push_str(":[degraded-ast-split]");
         }
         
         let chunk_kind = if import_end_line > 0 && chunk_range.end_line <= import_end_line {

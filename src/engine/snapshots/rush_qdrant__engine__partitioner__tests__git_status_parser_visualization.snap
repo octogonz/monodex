@@ -106,7 +106,7 @@ function _parseIsInSubmodule(submoduleState: string): boolean {
     throw new Error(`Unexpected submodule state: ${submoduleState}`);
   }
 }
--- [CHUNK 2] [68 lines] [3305 chars] --
+-- [CHUNK 2] [93 lines] [4415 chars] --
 
 export function* parseGitStatus(gitStatusOutput: string): Iterable<IGitStatusEntry> {
   // See reference https://git-scm.com/docs/git-status?msclkid=1cff552bcdce11ecadf77a086eded66c#_porcelain_format_version_2
@@ -175,7 +175,6 @@ export function* parseGitStatus(gitStatusOutput: string): Iterable<IGitStatusEnt
     //                         ^
     const worktreeFileMode: string = getFieldAndAdvancePos(' ');
 
--- [CHUNK 3] [67 lines] [3822 chars] --
     // 1 MM N... 100644 100644 100644 d20c7e41acf4295db610f395f50a554145b4ece7 8299b2a7d657ec1211649f14c85737d68a920d9e path/b.ts\0
     //                                ^
     const headObjectName: string = getFieldAndAdvancePos(' ');
@@ -201,6 +200,7 @@ export function* parseGitStatus(gitStatusOutput: string): Iterable<IGitStatusEnt
     };
     return entry;
   }
+-- [CHUNK 3] [77 lines] [4195 chars] --
 
   /**
    * @example
@@ -243,7 +243,6 @@ export function* parseGitStatus(gitStatusOutput: string): Iterable<IGitStatusEnt
     // 2 R. N... 100644 100644 100644 451de43c5cb012af55a79cc3463849ab3cfa0457 451de43c5cb012af55a79cc3463849ab3cfa0457 R100 path/e.ts\0e2.ts\0
     //                                                                                                                  ^
     const renameOrCopyScoreField: string = getFieldAndAdvancePos(' ');
--- [CHUNK 4] [67 lines] [3752 chars] --
     const renameOrCopyMode: string = renameOrCopyScoreField.charAt(0);
     const rawRenameOrCopyScore: string = renameOrCopyScoreField.substring(1);
     const renameOrCopyScore: number = parseInt(rawRenameOrCopyScore, 10);
@@ -279,6 +278,7 @@ export function* parseGitStatus(gitStatusOutput: string): Iterable<IGitStatusEnt
     };
     return entry;
   }
+-- [CHUNK 4] [99 lines] [4805 chars] --
 
   /**
    * @example
@@ -311,7 +311,6 @@ export function* parseGitStatus(gitStatusOutput: string): Iterable<IGitStatusEnt
     //                         ^
     const stage3FileMode: string = getFieldAndAdvancePos(' ');
     // u .M N... 100644 100644 100644 100644 07b1571a387db3072be485e6cc5591fef35bf666 63f37aa0393e142e2c8329593eb0f78e4cc77032 ebac91ffe8227e6e9b99d9816ce0a6d166b4a524 path/unmerged.ts\0
--- [CHUNK 5] [67 lines] [2535 chars] --
     //                                ^
     const worktreeFileMode: string = getFieldAndAdvancePos(' ');
 

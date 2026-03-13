@@ -111,7 +111,9 @@ fn is_transparent_conduit(kind: &str) -> bool {
         // Declaration containers (hold class_body, object_type, etc.)
         "class_declaration" | "abstract_class_declaration" | "interface_declaration" |
         "type_alias_declaration" | "enum_declaration" |
-        "function_declaration" | "method_definition" | "arrow_function" |
+        // Function declarations (hold statement_block with nested functions)
+        "function_declaration" | "generator_function_declaration" |
+        "method_definition" | "arrow_function" |
         "if_statement" | "try_statement" | "catch_clause" |
         "for_statement" | "for_in_statement" | "for_of_statement" |
         "while_statement" | "do_statement" |
@@ -1503,6 +1505,68 @@ export function tiny(): number {
         //     assert!(!chunk.breadcrumb.contains("[fallback-split]"), 
         //         "Unexpected fallback split in chunk: {}", chunk.breadcrumb);
         // }
+    }
+    
+    #[test]
+    fn debug_nested_function_ast() {
+        // Debug test to understand AST structure of nested functions
+        let source = r#"
+function* generator() {
+  function nested1() {
+    return 1;
+  }
+  function nested2() {
+    return 2;
+  }
+}
+"#;
+        
+        let mut parser = Parser::new();
+        parser.set_language(&tree_sitter_typescript::language_typescript()).unwrap();
+        let tree = parser.parse(source, None).unwrap();
+        
+        fn print_tree(node: Node, indent: usize) {
+            let kind = node.kind();
+            let start = node.start_position();
+            let end = node.end_position();
+            println!("{:indent$}{} [{},{}]", "", kind, start.row + 1, end.row + 1, indent = indent);
+            for i in 0..node.child_count() {
+                print_tree(node.child(i).unwrap(), indent + 2);
+            }
+        }
+        
+        print_tree(tree.root_node(), 0);
+    }
+    
+    #[test]
+    fn debug_exported_generator_ast() {
+        // Debug test to understand AST structure of exported generator
+        let source = r#"
+export function* parseGitStatus() {
+  function nested1() {
+    return 1;
+  }
+  function nested2() {
+    return 2;
+  }
+}
+"#;
+        
+        let mut parser = Parser::new();
+        parser.set_language(&tree_sitter_typescript::language_typescript()).unwrap();
+        let tree = parser.parse(source, None).unwrap();
+        
+        fn print_tree(node: Node, indent: usize) {
+            let kind = node.kind();
+            let start = node.start_position();
+            let end = node.end_position();
+            println!("{:indent$}{} [{},{}]", "", kind, start.row + 1, end.row + 1, indent = indent);
+            for i in 0..node.child_count() {
+                print_tree(node.child(i).unwrap(), indent + 2);
+            }
+        }
+        
+        print_tree(tree.root_node(), 0);
     }
     
 }

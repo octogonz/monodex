@@ -228,7 +228,7 @@ export class ProjectWatcher {
 
     const watchers: Map<string, fs.FSWatcher> = new Map();
     const closePromises: Promise<void>[] = [];
--- [CHUNK 4] [104 lines] [3509 chars] --
+-- [CHUNK 4] [108 lines] [3603 chars] --
 
     const watchedResult: IProjectChangeResult = await new Promise(
       (resolve: (result: IProjectChangeResult) => void, reject: (err: Error) => void) => {
@@ -333,11 +333,11 @@ export class ProjectWatcher {
             return;
           }
 
--- [CHUNK 5] [103 lines] [3268 chars] --
           terminated = true;
           terminal.writeLine();
           reject(err);
         }
+-- [CHUNK 5] [99 lines] [3174 chars] --
 
         function addWatcher(watchedPath: string, recursive: boolean): void {
           if (watchers.has(watchedPath)) {

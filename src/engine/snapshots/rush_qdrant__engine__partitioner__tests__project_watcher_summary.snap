@@ -9,12 +9,12 @@ Tiny chunks (<20 lines): 0
 Lines: 46-116 (mean 91.0)
 
 === CHUNK 1 ===
-Breadcrumb: rush-lib:ProjectWatcher.ts:[fallback-split]
+Breadcrumb: rush-lib:ProjectWatcher.ts
 Type: code
 Kind: content
 Symbol: None
 Lines: 1-46
-Size: 1656 chars
+Size: 1639 chars
 Text preview (5 lines):
 // Copyright (c) Microsoft Corporation. All rights reserved. Licensed under the MIT license.
 // See LICENSE in the project root for license information.
@@ -23,12 +23,12 @@ import * as fs from 'node:fs';
 import * as os from 'node:os';
 
 === CHUNK 2 ===
-Breadcrumb: rush-lib:ProjectWatcher.ts:[fallback-split]
+Breadcrumb: rush-lib:ProjectWatcher.ts
 Type: code
 Kind: content
 Symbol: None
 Lines: 47-152
-Size: 3709 chars
+Size: 3692 chars
 Text preview (5 lines):
 
 /**
@@ -37,12 +37,12 @@ Text preview (5 lines):
  * We are manually using fs.watch() instead of `chokidar` because all we want from the file system watcher is a boolean
 
 === CHUNK 3 ===
-Breadcrumb: rush-lib:ProjectWatcher.ts:ProjectWatcher:[fallback-split]
+Breadcrumb: rush-lib:ProjectWatcher.ts:ProjectWatcher
 Type: class
 Kind: content
 Symbol: Some("ProjectWatcher")
 Lines: 153-223
-Size: 3383 chars
+Size: 3366 chars
 Text preview (5 lines):
 
   /**
@@ -51,12 +51,12 @@ Text preview (5 lines):
    * If no change is currently present, watches the source tree of all selected projects for file changes.
 
 === CHUNK 4 ===
-Breadcrumb: rush-lib:ProjectWatcher.ts:waitForChangeAsync:[fallback-split]
+Breadcrumb: rush-lib:ProjectWatcher.ts:waitForChangeAsync
 Type: function
 Kind: content
 Symbol: Some("waitForChangeAsync")
-Lines: 224-327
-Size: 3571 chars
+Lines: 224-331
+Size: 3648 chars
 Text preview (5 lines):
 
     const watchedResult: IProjectChangeResult = await new Promise(
@@ -65,26 +65,26 @@ Text preview (5 lines):
         let terminated: boolean = false;
 
 === CHUNK 5 ===
-Breadcrumb: rush-lib:ProjectWatcher.ts:waitForChangeAsync:[fallback-split]
+Breadcrumb: rush-lib:ProjectWatcher.ts:waitForChangeAsync
 Type: function
 Kind: content
 Symbol: Some("waitForChangeAsync")
-Lines: 328-430
-Size: 3330 chars
+Lines: 332-430
+Size: 3219 chars
 Text preview (5 lines):
-          terminated = true;
-          terminal.writeLine();
-          reject(err);
-        }
 
+        function addWatcher(watchedPath: string, recursive: boolean): void {
+          if (watchers.has(watchedPath)) {
+            return;
+          }
 
 === CHUNK 6 ===
-Breadcrumb: rush-lib:ProjectWatcher.ts:ProjectWatcher:[fallback-split]
+Breadcrumb: rush-lib:ProjectWatcher.ts:ProjectWatcher
 Type: class
 Kind: content
 Symbol: Some("ProjectWatcher")
 Lines: 431-546
-Size: 3408 chars
+Size: 3391 chars
 Text preview (5 lines):
 
   private _setStatus(status: string): void {

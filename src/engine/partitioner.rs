@@ -124,6 +124,7 @@ fn is_transparent_conduit(kind: &str) -> bool {
         "lexical_declaration" | "variable_declarator" |
         // Expression wrappers that may contain nested scopes
         "await_expression" | "new_expression" | "arguments" | "call_expression" |
+        "member_expression" |  // e.g., `new Promise(...).finally(...)` - need to descend to find Promise executor
         "as_expression"  // `expr as const` wraps object literals
     )
 }
@@ -1590,10 +1591,10 @@ export function* parseGitStatus() {
         let summary = format_chunks_summary(&chunks, source.lines().count());
         assert_snapshot!("project_watcher_summary", summary);
         
-        // TODO: Nested functions inside methods should be recognized as split points
-        // for chunk in &chunks {
-        //     assert!(!chunk.breadcrumb.contains("[fallback-split]"), 
-        //         "Unexpected fallback split in chunk: {}", chunk.breadcrumb);
-        // }
+        // Nested functions inside methods should be recognized as split points
+        for chunk in &chunks {
+            assert!(!chunk.breadcrumb.contains("[fallback-split]"), 
+                "Unexpected fallback split in chunk: {}", chunk.breadcrumb);
+        }
     }
 }

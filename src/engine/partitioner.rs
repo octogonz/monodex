@@ -40,8 +40,11 @@
 use tree_sitter::{Node, Parser};
 use super::util::compute_hash;
 
-/// Target chunk size in lines (derived from 6000 char target, ~50 chars/line)
-const TARGET_LINES: usize = 120;
+/// Target chunk size in characters (same as runtime chunker's target_size)
+pub const TARGET_CHARS: usize = 6000;
+
+/// Threshold for "small" chunks in characters (roughly 20 lines × 50 chars)
+pub const SMALL_CHUNK_CHARS: usize = 500;
 
 /// Minimum chunk size as ratio of target (20%)
 const MIN_CHUNK_RATIO: f64 = 0.20;
@@ -136,43 +139,46 @@ fn is_transparent_conduit(kind: &str) -> bool {
 /// 2. Micro-chunk badness: How small the chunks are relative to ideal (0 if all at max size)
 ///
 /// Final score = 100 × (1 - count_badness) × (1 - micro_badness)³
-pub fn chunk_quality_score(chunks: &[PartitionedChunk], file_lines: usize) -> f64 {
-    if chunks.is_empty() || file_lines == 0 {
+pub fn chunk_quality_score(chunks: &[PartitionedChunk], file_chars: usize) -> f64 {
+    if chunks.is_empty() || file_chars == 0 {
         return 100.0;
     }
     
-    let max_chunk_size = TARGET_LINES.min(file_lines);
+    let max_chunk_size = TARGET_CHARS.min(file_chars);
     let chunk_count = chunks.len();
     
-    // Compute chunk sizes
+    // Compute chunk sizes in characters
     let chunk_sizes: Vec<usize> = chunks
         .iter()
-        .map(|c| c.end_line - c.start_line + 1)
+        .map(|c| c.text.len())
         .collect();
     
-    let total_lines: usize = chunk_sizes.iter().sum();
+    let total_chars: usize = chunk_sizes.iter().sum();
     
     // Ideal number of chunks
-    let ideal_chunk_count = (total_lines + max_chunk_size - 1) / max_chunk_size; // ceil division
+    let ideal_chunk_count = (total_chars + max_chunk_size - 1) / max_chunk_size; // ceil division
     
-    // 1) Count badness: 0 at ideal chunk count, 1 at all 1-line chunks
-    let count_badness = if total_lines == ideal_chunk_count {
+    // 1) Count badness: 0 at ideal chunk count, 1 at all 1-char chunks
+    let count_badness = if total_chars == ideal_chunk_count {
         0.0
     } else {
-        (chunk_count as f64 - ideal_chunk_count as f64) / (total_lines as f64 - ideal_chunk_count as f64)
+        (chunk_count as f64 - ideal_chunk_count as f64) / (total_chars as f64 - ideal_chunk_count as f64)
     };
     
-    // Helper: chunk badness (0 at max size or larger, 1 at 1 line)
+    // Helper: chunk badness (0 at max size, 1 at 1 char)
+    // For oversized chunks, weight by how much work is unfinished
     let chunk_badness = |size: usize| -> f64 {
         if size >= max_chunk_size {
-            0.0
+            // Estimate: if we could split correctly, we'd get N chunks
+            // Weight the badness as if there were N unsplittable chunks
+            (size as f64 / max_chunk_size as f64).max(1.0)
         } else {
             ((max_chunk_size - size) as f64 / (max_chunk_size - 1) as f64).powi(2)
         }
     };
     
     // 2) Micro-chunk badness relative to ideal partition
-    let ideal_last_chunk_size = total_lines - max_chunk_size * (ideal_chunk_count.saturating_sub(1));
+    let ideal_last_chunk_size = total_chars - max_chunk_size * (ideal_chunk_count.saturating_sub(1));
     let ideal_partition_badness = if ideal_chunk_count == 0 {
         0.0
     } else if ideal_chunk_count == 1 {
@@ -183,21 +189,29 @@ pub fn chunk_quality_score(chunks: &[PartitionedChunk], file_lines: usize) -> f6
     };
     
     let actual_partition_badness: f64 = chunk_sizes.iter().map(|&s| chunk_badness(s)).sum();
-    let worst_partition_badness = total_lines as f64; // all 1-line chunks, each with badness 1
     
-    let micro_badness = if worst_partition_badness == ideal_partition_badness {
+    // Normalize by number of chunks, not total chars
+    // This gives an average badness per chunk, which is more meaningful
+    // Worst case: each chunk has badness 1.0 (either tiny or oversized with ratio 1.0)
+    let avg_badness = actual_partition_badness / chunk_count.max(1) as f64;
+    
+    // Also compute worst case normalized similarly
+    let ideal_avg_badness = ideal_partition_badness / ideal_chunk_count.max(1) as f64;
+    let worst_avg_badness = 1.0; // a chunk with badness 1.0 is the worst reasonable case
+    
+    let micro_badness = if worst_avg_badness == ideal_avg_badness {
         0.0
     } else {
-        (actual_partition_badness - ideal_partition_badness) / (worst_partition_badness - ideal_partition_badness)
+        (avg_badness - ideal_avg_badness) / (worst_avg_badness - ideal_avg_badness)
     };
     
     // Clamp for numerical safety
     let count_badness = count_badness.clamp(0.0, 1.0);
     let micro_badness = micro_badness.clamp(0.0, 1.0);
     
-    // Final score: weight micro_badness more heavily (beta=3)
+    // Final score: weight micro_badness (beta=1 gives linear penalty)
     let alpha = 1.0;
-    let beta = 3.0;
+    let beta = 1.0;
     let score = 100.0 * (1.0 - count_badness).powf(alpha) * (1.0 - micro_badness).powf(beta);
     
     score.clamp(0.0, 100.0)
@@ -209,53 +223,54 @@ pub struct ChunkQualityReport {
     pub score: f64,
     /// Total number of chunks
     pub total_chunks: usize,
-    /// Number of chunks under 20 lines (likely problematic)
-    pub tiny_chunks: usize,
-    /// Smallest chunk in lines
-    pub min_lines: usize,
-    /// Largest chunk in lines
-    pub max_lines: usize,
-    /// Mean chunk size in lines
-    pub mean_lines: f64,
+    /// Number of small chunks under SMALL_CHUNK_CHARS (likely problematic)
+    pub small_chunks: usize,
+    /// Smallest chunk in characters
+    pub min_chars: usize,
+    /// Largest chunk in characters
+    pub max_chars: usize,
+    /// Mean chunk size in characters
+    pub mean_chars: f64,
 }
 
 impl ChunkQualityReport {
-    pub fn from_chunks(chunks: &[PartitionedChunk], file_lines: usize) -> Self {
+    pub fn from_chunks(chunks: &[PartitionedChunk], file_chars: usize) -> Self {
         if chunks.is_empty() {
             return Self {
                 score: 100.0,
                 total_chunks: 0,
-                tiny_chunks: 0,
-                min_lines: 0,
-                max_lines: 0,
-                mean_lines: 0.0,
+                small_chunks: 0,
+                min_chars: 0,
+                max_chars: 0,
+                mean_chars: 0.0,
             };
         }
         
-        let line_counts: Vec<usize> = chunks
+        let char_counts: Vec<usize> = chunks
             .iter()
-            .map(|c| c.end_line - c.start_line + 1)
+            .map(|c| c.text.len())
             .collect();
         
         Self {
-            score: chunk_quality_score(chunks, file_lines),
+            score: chunk_quality_score(chunks, file_chars),
             total_chunks: chunks.len(),
-            tiny_chunks: line_counts.iter().filter(|&&l| l < 20).count(),
-            min_lines: *line_counts.iter().min().unwrap(),
-            max_lines: *line_counts.iter().max().unwrap(),
-            mean_lines: line_counts.iter().sum::<usize>() as f64 / line_counts.len() as f64,
+            small_chunks: char_counts.iter().filter(|&&c| c < SMALL_CHUNK_CHARS).count(),
+            min_chars: *char_counts.iter().min().unwrap(),
+            max_chars: *char_counts.iter().max().unwrap(),
+            mean_chars: char_counts.iter().sum::<usize>() as f64 / char_counts.len() as f64,
         }
     }
     
     pub fn format(&self) -> String {
         format!(
-            "Score: {:.1}% | Chunks: {} | Tiny (<20 lines): {} | Lines: {}-{} (mean {:.1})",
+            "Score: {:.1}% | Chunks: {} | Small (<{} chars): {} | Chars: {}-{} (mean {:.0})",
             self.score,
             self.total_chunks,
-            self.tiny_chunks,
-            self.min_lines,
-            self.max_lines,
-            self.mean_lines
+            SMALL_CHUNK_CHARS,
+            self.small_chunks,
+            self.min_chars,
+            self.max_chars,
+            self.mean_chars
         )
     }
 }
@@ -1162,16 +1177,17 @@ mod tests {
     use super::*;
     use insta::assert_snapshot;
 
-    fn format_chunks_summary(chunks: &[PartitionedChunk], file_lines: usize) -> String {
-        let report = ChunkQualityReport::from_chunks(chunks, file_lines);
+    fn format_chunks_summary(chunks: &[PartitionedChunk], file_chars: usize) -> String {
+        let report = ChunkQualityReport::from_chunks(chunks, file_chars);
         let mut result = format!(
-            "=== QUALITY SCORE ===\nScore: {:.1}%\nTotal chunks: {}\nTiny chunks (<20 lines): {}\nLines: {}-{} (mean {:.1})\n\n",
+            "=== QUALITY SCORE ===\nScore: {:.1}%\nTotal chunks: {}\nSmall chunks (<{} chars): {}\nChars: {}-{} (mean {:.0})\n\n",
             report.score,
             report.total_chunks,
-            report.tiny_chunks,
-            report.min_lines,
-            report.max_lines,
-            report.mean_lines
+            SMALL_CHUNK_CHARS,
+            report.small_chunks,
+            report.min_chars,
+            report.max_chars,
+            report.mean_chars
         );
         for (i, chunk) in chunks.iter().enumerate() {
             result.push_str(&format!(
@@ -1232,7 +1248,7 @@ export function add(a: number, b: number): number {
         let visualization = format_chunks_visualization(source, &chunks);
         assert_snapshot!("simple_function_visualization", visualization);
         
-        let summary = format_chunks_summary(&chunks, source.lines().count());
+        let summary = format_chunks_summary(&chunks, source.len());
         assert_snapshot!("simple_function_summary", summary);
     }
     
@@ -1275,7 +1291,7 @@ export class Calculator {
         let visualization = format_chunks_visualization(source, &chunks);
         assert_snapshot!("class_with_methods_visualization", visualization);
         
-        let summary = format_chunks_summary(&chunks, source.lines().count());
+        let summary = format_chunks_summary(&chunks, source.len());
         assert_snapshot!("class_with_methods_summary", summary);
     }
     
@@ -1292,7 +1308,7 @@ export class Calculator {
         let visualization = format_chunks_visualization(source, &chunks);
         assert_snapshot!("jsonfile_visualization", visualization);
         
-        let summary = format_chunks_summary(&chunks, source.lines().count());
+        let summary = format_chunks_summary(&chunks, source.len());
         assert_snapshot!("jsonfile_summary", summary);
     }
     
@@ -1315,7 +1331,7 @@ export function tiny(): number {
         let visualization = format_chunks_visualization(source, &chunks);
         assert_snapshot!("small_file_visualization", visualization);
         
-        let summary = format_chunks_summary(&chunks, source.lines().count());
+        let summary = format_chunks_summary(&chunks, source.len());
         assert_snapshot!("small_file_summary", summary);
     }
     
@@ -1334,7 +1350,7 @@ export function tiny(): number {
         let visualization = format_chunks_visualization(source, &chunks);
         assert_snapshot!("rollup_visualization", visualization);
         
-        let summary = format_chunks_summary(&chunks, source.lines().count());
+        let summary = format_chunks_summary(&chunks, source.len());
         assert_snapshot!("rollup_summary", summary);
     }
     
@@ -1353,7 +1369,7 @@ export function tiny(): number {
         let visualization = format_chunks_visualization(source, &chunks);
         assert_snapshot!("tunneled_visualization", visualization);
         
-        let summary = format_chunks_summary(&chunks, source.lines().count());
+        let summary = format_chunks_summary(&chunks, source.len());
         assert_snapshot!("tunneled_summary", summary);
     }
     
@@ -1383,7 +1399,7 @@ export function tiny(): number {
         let visualization = format_chunks_visualization(&source, &chunks);
         assert_snapshot!("long_string_visualization", visualization);
         
-        let summary = format_chunks_summary(&chunks, source.lines().count());
+        let summary = format_chunks_summary(&chunks, source.len());
         assert_snapshot!("long_string_summary", summary);
         
         // Verify that the long string was split despite having no AST split points
@@ -1412,7 +1428,7 @@ export function tiny(): number {
         let visualization = format_chunks_visualization(source, &chunks);
         assert_snapshot!("colorize_visualization", visualization);
         
-        let summary = format_chunks_summary(&chunks, source.lines().count());
+        let summary = format_chunks_summary(&chunks, source.len());
         assert_snapshot!("colorize_summary", summary);
         
         // Should NOT have fallback split - should use AST-based splitting at method boundaries
@@ -1438,7 +1454,7 @@ export function tiny(): number {
         let visualization = format_chunks_visualization(source, &chunks);
         assert_snapshot!("ipackagejson_visualization", visualization);
         
-        let summary = format_chunks_summary(&chunks, source.lines().count());
+        let summary = format_chunks_summary(&chunks, source.len());
         assert_snapshot!("ipackagejson_summary", summary);
         
         // Should not need fallback split for interface files
@@ -1469,7 +1485,7 @@ export function tiny(): number {
         let visualization = format_chunks_visualization(source, &chunks);
         assert_snapshot!("environment_config_visualization", visualization);
         
-        let summary = format_chunks_summary(&chunks, source.lines().count());
+        let summary = format_chunks_summary(&chunks, source.len());
         assert_snapshot!("environment_config_summary", summary);
     }
     
@@ -1490,7 +1506,7 @@ export function tiny(): number {
         let visualization = format_chunks_visualization(source, &chunks);
         assert_snapshot!("nested_functions_visualization", visualization);
         
-        let summary = format_chunks_summary(&chunks, source.lines().count());
+        let summary = format_chunks_summary(&chunks, source.len());
         assert_snapshot!("nested_functions_summary", summary);
         
         // TODO: Nested functions should be recognized as split points
@@ -1523,7 +1539,7 @@ export function tiny(): number {
         let visualization = format_chunks_visualization(source, &chunks);
         assert_snapshot!("git_status_parser_visualization", visualization);
         
-        let summary = format_chunks_summary(&chunks, source.lines().count());
+        let summary = format_chunks_summary(&chunks, source.len());
         assert_snapshot!("git_status_parser_summary", summary);
         
         // TODO: Nested functions should be recognized as split points
@@ -1614,7 +1630,7 @@ export function* parseGitStatus() {
         let visualization = format_chunks_visualization(source, &chunks);
         assert_snapshot!("project_watcher_visualization", visualization);
         
-        let summary = format_chunks_summary(&chunks, source.lines().count());
+        let summary = format_chunks_summary(&chunks, source.len());
         assert_snapshot!("project_watcher_summary", summary);
         
         // Nested functions inside methods should be recognized as split points

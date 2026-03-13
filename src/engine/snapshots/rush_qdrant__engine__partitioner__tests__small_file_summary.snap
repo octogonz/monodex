@@ -1,13 +1,12 @@
 ---
 source: src/engine/partitioner.rs
-assertion_line: 866
 expression: summary
 ---
 === QUALITY SCORE ===
 Score: 100.0%
 Total chunks: 1
-Tiny chunks (<20 lines): 1
-Lines: 4-4 (mean 4.0)
+Small chunks (<500 chars): 1
+Chars: 68-68 (mean 68)
 
 === CHUNK 1 ===
 Breadcrumb: @test/package:tiny.ts

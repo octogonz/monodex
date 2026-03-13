@@ -3,10 +3,10 @@ source: src/engine/partitioner.rs
 expression: summary
 ---
 === QUALITY SCORE ===
-Score: 99.4%
+Score: 74.0%
 Total chunks: 3
-Tiny chunks (<20 lines): 0
-Lines: 20-183 (mean 112.7)
+Small chunks (<500 chars): 0
+Chars: 799-5481 (mean 3437)
 
 === CHUNK 1 ===
 Breadcrumb: @rushstack/node-core-library:IPackageJson.ts

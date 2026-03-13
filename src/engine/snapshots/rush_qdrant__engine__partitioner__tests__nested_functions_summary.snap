@@ -5,8 +5,8 @@ expression: summary
 === QUALITY SCORE ===
 Score: 100.0%
 Total chunks: 2
-Tiny chunks (<20 lines): 0
-Lines: 85-180 (mean 132.5)
+Small chunks (<500 chars): 0
+Chars: 2060-4401 (mean 3230)
 
 === CHUNK 1 ===
 Breadcrumb: test:NestedFunctions.ts

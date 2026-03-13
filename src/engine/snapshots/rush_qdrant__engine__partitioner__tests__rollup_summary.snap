@@ -1,13 +1,12 @@
 ---
 source: src/engine/partitioner.rs
-assertion_line: 885
 expression: summary
 ---
 === QUALITY SCORE ===
 Score: 100.0%
 Total chunks: 1
-Tiny chunks (<20 lines): 1
-Lines: 12-12 (mean 12.0)
+Small chunks (<500 chars): 1
+Chars: 243-243 (mean 243)
 
 === CHUNK 1 ===
 Breadcrumb: api-extractor-scenarios:rollup.d.ts

@@ -3,10 +3,10 @@ source: src/engine/partitioner.rs
 expression: summary
 ---
 === QUALITY SCORE ===
-Score: 99.6%
+Score: 93.7%
 Total chunks: 6
-Tiny chunks (<20 lines): 0
-Lines: 46-116 (mean 91.0)
+Small chunks (<500 chars): 0
+Chars: 1613-3666 (mean 3122)
 
 === CHUNK 1 ===
 Breadcrumb: rush-lib:ProjectWatcher.ts

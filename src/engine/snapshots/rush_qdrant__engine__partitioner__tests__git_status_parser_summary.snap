@@ -3,10 +3,10 @@ source: src/engine/partitioner.rs
 expression: summary
 ---
 === QUALITY SCORE ===
-Score: 100.0%
+Score: 90.4%
 Total chunks: 4
-Tiny chunks (<20 lines): 0
-Lines: 77-103 (mean 93.0)
+Small chunks (<500 chars): 0
+Chars: 2712-4805 (mean 4032)
 
 === CHUNK 1 ===
 Breadcrumb: rush-lib:GitStatusParser.ts

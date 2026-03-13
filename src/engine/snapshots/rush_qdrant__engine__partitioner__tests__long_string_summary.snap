@@ -1,13 +1,12 @@
 ---
 source: src/engine/partitioner.rs
-assertion_line: 890
 expression: summary
 ---
 === QUALITY SCORE ===
 Score: 100.0%
 Total chunks: 2
-Tiny chunks (<20 lines): 0
-Lines: 102-102 (mean 102.0)
+Small chunks (<500 chars): 0
+Chars: 4355-4427 (mean 4391)
 
 === CHUNK 1 ===
 Breadcrumb: test:long_string.ts:[fallback-split]

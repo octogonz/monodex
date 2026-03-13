@@ -1,13 +1,12 @@
 ---
 source: src/engine/partitioner.rs
-assertion_line: 1198
 expression: summary
 ---
 === QUALITY SCORE ===
-Score: 98.9%
+Score: 83.2%
 Total chunks: 3
-Tiny chunks (<20 lines): 0
-Lines: 49-98 (mean 77.0)
+Small chunks (<500 chars): 0
+Chars: 1920-3959 (mean 3043)
 
 === CHUNK 1 ===
 Breadcrumb: @rushstack/playwright-browser-tunnel:TunneledBrowserConnection.ts

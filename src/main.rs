@@ -14,6 +14,7 @@ use engine::{
     ParallelEmbedder,
     partitioner::{partition_typescript, PartitionConfig, ChunkQualityReport, PartitionDebug},
     uploader::QdrantUploader,
+    SMALL_CHUNK_CHARS,
 };
 
 /// Qdrant configuration
@@ -844,8 +845,8 @@ fn run_dump_chunks(file: &PathBuf, target_size: usize, visualize: bool, with_fal
     let chunks = partition_typescript(&source, &config, &file_path, &package_name);
     
     // Quality score
-    let file_lines = source.lines().count();
-    let report = ChunkQualityReport::from_chunks(&chunks, file_lines);
+    let file_chars = source.len();
+    let report = ChunkQualityReport::from_chunks(&chunks, file_chars);
     
     if visualize {
         // Visualization mode: show full chunk contents
@@ -868,8 +869,8 @@ fn run_dump_chunks(file: &PathBuf, target_size: usize, visualize: bool, with_fal
         println!("=== QUALITY SCORE ===");
         println!("Score: {:.1}%", report.score);
         println!("Total chunks: {}", chunks.len());
-        println!("Tiny chunks (<20 lines): {}", report.tiny_chunks);
-        println!("Lines: {}-{} (mean {:.1})", report.min_lines, report.max_lines, report.mean_lines);
+        println!("Small chunks (<{} chars): {}", SMALL_CHUNK_CHARS, report.small_chunks);
+        println!("Chars: {}-{} (mean {:.0})", report.min_chars, report.max_chars, report.mean_chars);
     } else {
         // Default mode: show summary with previews
         println!("Total chunks: {}", chunks.len());
@@ -923,7 +924,7 @@ fn run_dump_chunks(file: &PathBuf, target_size: usize, visualize: bool, with_fal
         println!("Oversized chunks (>{}): {}", target_size, oversized);
         println!("Small chunks (<200): {}", undersized);
         println!("Quality score: {:.1}%", report.score);
-        println!("  Tiny chunks (<20 lines): {}", report.tiny_chunks);
+        println!("  Small chunks (<{} chars): {}", SMALL_CHUNK_CHARS, report.small_chunks);
     }
     
     Ok(())
@@ -978,8 +979,8 @@ fn run_audit_chunks(count: usize, dir: Option<String>) -> anyhow::Result<()> {
                 ..Default::default()
             };
             let chunks = partition_typescript(&source, &config, path.to_str().unwrap(), "rushstack");
-            let file_lines = source.lines().count();
-            let report = ChunkQualityReport::from_chunks(&chunks, file_lines);
+            let file_chars = source.len();
+            let report = ChunkQualityReport::from_chunks(&chunks, file_chars);
             Some((path, report, chunks))
         })
         .collect();

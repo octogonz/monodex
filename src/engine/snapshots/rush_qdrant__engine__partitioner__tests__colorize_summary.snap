@@ -1,13 +1,12 @@
 ---
 source: src/engine/partitioner.rs
-assertion_line: 1286
 expression: summary
 ---
 === QUALITY SCORE ===
-Score: 100.0%
+Score: 86.1%
 Total chunks: 3
-Tiny chunks (<20 lines): 0
-Lines: 55-119 (mean 96.3)
+Small chunks (<500 chars): 0
+Chars: 1467-3324 (mean 2676)
 
 === CHUNK 1 ===
 Breadcrumb: @rushstack/terminal:Colorize.ts

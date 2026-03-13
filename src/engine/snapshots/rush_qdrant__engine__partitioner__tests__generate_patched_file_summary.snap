@@ -1,13 +1,12 @@
 ---
 source: src/engine/partitioner.rs
-assertion_line: 2041
 expression: summary
 ---
 === QUALITY SCORE ===
-Score: 59.4%
+Score: 96.0%
 Total chunks: 4
 Small chunks (<500 chars): 0
-Chars: 1760-6037 (mean 3524)
+Chars: 3071-4141 (mean 3524)
 
 === CHUNK 1 ===
 Breadcrumb: @rushstack/eslint-patch:generate-patched-file.ts
@@ -42,8 +41,8 @@ Breadcrumb: @rushstack/eslint-patch:generate-patched-file.ts:generatePatchedLint
 Type: function
 Kind: content
 Symbol: Some("generatePatchedLinterJsFileIfDoesNotExist")
-Lines: 180-358
-Size: 6127 chars
+Lines: 180-285
+Size: 3746 chars
 Text preview (5 lines):
   outputFile += `--- END MONKEY PATCH ---
 `;
@@ -56,11 +55,11 @@ Breadcrumb: @rushstack/eslint-patch:generate-patched-file.ts:generatePatchedLint
 Type: function
 Kind: content
 Symbol: Some("generatePatchedLinterJsFileIfDoesNotExist")
-Lines: 359-399
-Size: 1850 chars
+Lines: 286-399
+Size: 4231 chars
 Text preview (5 lines):
 
-  const privateMethodNames: string[] = [];
-  let { index: indexOfNextMethod, isPublic } = getIndexOfNextMethod(inputIndex);
+  outputFile += `
+    // --- END MONKEY PATCH ---`;
 
-  while (indexOfNextMethod !== -1) {
+  //

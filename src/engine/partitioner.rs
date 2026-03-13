@@ -1154,7 +1154,7 @@ fn is_meaningful_split_point(node: Node, source: &[u8]) -> bool {
         // If statements are meaningful split points when large enough
         // This helps split large methods with complex control flow
         "if_statement" => {
-            node.end_byte() - node.start_byte() > 500
+            node.end_byte() - node.start_byte() > 400
         }
         
         // For loops are meaningful split points when large enough

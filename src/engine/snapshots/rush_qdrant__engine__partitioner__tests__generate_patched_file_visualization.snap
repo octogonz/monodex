@@ -1,5 +1,6 @@
 ---
 source: src/engine/partitioner.rs
+assertion_line: 2038
 expression: visualization
 ---
 -- [CHUNK 1] [91 lines] [3230 chars] --
@@ -183,7 +184,7 @@ const requireFromPathToLinterJS = bulkSuppressionsPatch.requireFromPathToLinterJ
     // Keep as-is
     return match;
   });
--- [CHUNK 3] [179 lines] [6037 chars] --
+-- [CHUNK 3] [106 lines] [3656 chars] --
   outputFile += `--- END MONKEY PATCH ---
 `;
 
@@ -290,6 +291,7 @@ const requireFromPathToLinterJS = bulkSuppressionsPatch.requireFromPathToLinterJ
     outputFile += `
     if (bulkSuppressionsPatch.shouldBulkSuppress({ filename, currentNode: args[0]?.node ?? currentNode, ruleId, problem })) return;`;
   }
+-- [CHUNK 4] [114 lines] [4141 chars] --
 
   outputFile += `
     // --- END MONKEY PATCH ---`;
@@ -363,7 +365,6 @@ const requireFromPathToLinterJS = bulkSuppressionsPatch.requireFromPathToLinterJ
     }
     // --- END MONKEY PATCH ---
 `;
--- [CHUNK 4] [41 lines] [1760 chars] --
 
   const privateMethodNames: string[] = [];
   let { index: indexOfNextMethod, isPublic } = getIndexOfNextMethod(inputIndex);

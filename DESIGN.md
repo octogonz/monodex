@@ -522,6 +522,61 @@ See "Issue 1: Overlap Between Chunks" above for rationale on why this is tabled.
 
 ---
 
+## Quality Gates and Investigation Workflow
+
+The chunking system has two separate quality signals that serve different purposes.
+
+### Two Quality Gates
+
+**Gate 1: Correctness/Coverage**
+- Question: "Can AST-based chunking handle this file without fallback?"
+- Signal: **Warnings during crawl**
+- Meaning: The partitioner failed to find AST split points and used emergency line-based splitting
+- Action: Fix the partitioner to handle this file
+
+**Gate 2: Quality/Optimization**
+- Question: "Given AST-based chunking, are the chunk boundaries good?"
+- Signal: **Scores in audit-chunks**
+- Meaning: The partitioner found split points, but they may be suboptimal
+- Action: Tune heuristics for better boundaries
+
+### Why Scores Need AST-Only Mode
+
+When fallback splitting is used, it cuts text at line midpoints, often producing chunks that happen to be near the target size. This can inflate quality scores even though the AST-based chunker failed.
+
+To make scores meaningful, `audit-chunks` and `dump-chunks` (by default) disable fallback:
+- Oversized chunks remain oversized
+- Score reflects AST-only partitioning quality
+- High score = "AST chunking worked well"
+
+### Investigation Workflow
+
+1. **Run crawl** over the entire corpus
+2. **Notice chunking warnings** - these are Gate 1 defects
+3. **Use dump-chunks** (AST-only mode) to see oversized chunks
+4. **Fix the partitioner** to handle those files
+5. **Re-crawl** to confirm warnings are gone
+6. **Run audit-chunks** to find suboptimal but AST-valid chunking (Gate 2)
+7. **Use dump-chunks --debug** to inspect why split points were chosen
+
+### Breadcrumb Fallback Marker
+
+When fallback splitting creates a chunk, its breadcrumb includes `:[fallback-split]`:
+```
+@microsoft/rush-lib:WorkspaceInstallManager.ts:prepareCommonTempAsync:[fallback-split]
+```
+
+This marker is **per-chunk**, not file-level. Only chunks actually created by fallback get marked. In production crawling, the marker is stripped before storage (it's only used to trigger warnings).
+
+### Sticky Warning Recrawl
+
+Files with chunking warnings are tracked in `.rush-qdrant-warnings-<catalog>.json`. This ensures:
+- Files with warnings are re-crawled even if content hash unchanged
+- After fixing the partitioner, re-crawl verifies the fix
+- Warning state is separate from Qdrant (operational ledger, not indexed content)
+
+---
+
 ## Schema Migration
 
 | Aspect | Old | New |

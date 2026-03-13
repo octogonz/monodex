@@ -273,6 +273,11 @@ pub struct PartitionConfig {
     
     /// Debug logging for partitioning decisions
     pub debug: PartitionDebug,
+    
+    /// When false, disable fallback line-based splitting. Oversized chunks that
+    /// cannot be split via AST will remain oversized. This is used by audit-chunks
+    /// to measure AST-only chunking quality.
+    pub allow_fallback: bool,
 }
 
 impl Default for PartitionConfig {
@@ -282,6 +287,7 @@ impl Default for PartitionConfig {
             file_name: "unknown.ts".to_string(),
             package_name: "unknown".to_string(),
             debug: PartitionDebug::default(),
+            allow_fallback: true,
         }
     }
 }
@@ -325,6 +331,7 @@ pub struct PartitionedChunk {
 struct ChunkRange {
     start_line: usize,  // 1-indexed, inclusive
     end_line: usize,    // 1-indexed, inclusive
+    from_fallback: bool, // This chunk was created by a fallback split
 }
 
 /// Result of attempting to split a chunk
@@ -751,14 +758,13 @@ pub fn partition_typescript(
     };
     
     // Step 1: Start with the whole file as one chunk
-    let mut chunks: Vec<ChunkRange> = vec![ChunkRange { start_line: 1, end_line: total_lines }];
+    let mut chunks: Vec<ChunkRange> = vec![ChunkRange { start_line: 1, end_line: total_lines, from_fallback: false }];
     
     // Also extract imports end line for chunk_kind metadata (but don't pre-split)
     let import_end_line = extract_imports_end_line(root, source.as_bytes());
     
     // Step 2: Iteratively split chunks that exceed budget
     let min_chunk_size = (config.target_size as f64 * MIN_CHUNK_RATIO) as usize;
-    let mut used_fallback_split = false;
     let mut changed = true;
     while changed {
         changed = false;
@@ -783,15 +789,19 @@ pub fn partition_typescript(
                     &config.debug,
                 ) {
                     SplitResult::Split(split_line) => {
-                        new_chunks.push(ChunkRange { start_line: chunk_range.start_line, end_line: split_line });
-                        new_chunks.push(ChunkRange { start_line: split_line + 1, end_line: chunk_range.end_line });
+                        new_chunks.push(ChunkRange { start_line: chunk_range.start_line, end_line: split_line, from_fallback: false });
+                        new_chunks.push(ChunkRange { start_line: split_line + 1, end_line: chunk_range.end_line, from_fallback: false });
                         changed = true;
                     }
                     SplitResult::Fallback(split_line) => {
-                        used_fallback_split = true;
-                        new_chunks.push(ChunkRange { start_line: chunk_range.start_line, end_line: split_line });
-                        new_chunks.push(ChunkRange { start_line: split_line + 1, end_line: chunk_range.end_line });
-                        changed = true;
+                        if config.allow_fallback {
+                            new_chunks.push(ChunkRange { start_line: chunk_range.start_line, end_line: split_line, from_fallback: true });
+                            new_chunks.push(ChunkRange { start_line: split_line + 1, end_line: chunk_range.end_line, from_fallback: true });
+                            changed = true;
+                        } else {
+                            // In strict mode, leave oversized chunks as-is
+                            new_chunks.push(chunk_range.clone());
+                        }
                     }
                     SplitResult::CannotSplit => {
                         new_chunks.push(chunk_range.clone());
@@ -819,7 +829,7 @@ pub fn partition_typescript(
             format!("{}:{}", base_breadcrumb, breadcrumb_suffix)
         };
 
-        if used_fallback_split {
+        if chunk_range.from_fallback {
             breadcrumb.push_str(":[fallback-split]");
         }
         

@@ -56,7 +56,9 @@ struct Cli {
 /// Available commands
 #[derive(Subcommand)]
 enum Commands {
-    /// Crawl source and index into Qdrant (incremental sync)
+    /// Crawl source and index into Qdrant (incremental sync).
+    /// Reports warnings when AST chunking fails and fallback is used.
+    /// These warnings indicate partitioner defects to investigate.
     Crawl {
         /// Catalog name (from config file)
         #[arg(long)]
@@ -78,7 +80,9 @@ enum Commands {
         all: bool,
     },
     
-    /// Dump chunks for a TypeScript file (for debugging chunking algorithm)
+    /// Dump chunks for a TypeScript file (for debugging chunking algorithm).
+    /// Uses AST-only mode by default to reveal partitioner issues.
+    /// Add --with-fallback to see production behavior with fallback mitigation.
     DumpChunks {
         /// TypeScript file path
         #[arg(long)]
@@ -91,6 +95,12 @@ enum Commands {
         /// Show visualization mode (full chunk contents)
         #[arg(long)]
         visualize: bool,
+        
+        /// Enable fallback line-based splitting for oversized chunks.
+        /// By default, dump-chunks uses strict AST-only mode to reveal
+        /// where the partitioner failed to find good split points.
+        #[arg(long)]
+        with_fallback: bool,
     },
     
     /// Search with compact blurb output (for AI assistants)
@@ -130,7 +140,9 @@ enum Commands {
         catalog: Option<String>,
     },
     
-    /// Audit chunking quality across multiple files
+    /// Audit chunking quality across multiple files (AST-only mode).
+    /// Scores reflect AST partitioning quality without fallback mitigation.
+    /// Use after eliminating crawl warnings to find suboptimal chunk boundaries.
     AuditChunks {
         /// Number of files to sample
         #[arg(long, default_value = "20")]
@@ -197,8 +209,8 @@ fn main() -> anyhow::Result<()> {
         Commands::Purge { catalog, all } => {
             run_purge(&config, catalog.as_deref(), all)?;
         }
-        Commands::DumpChunks { file, target_size, visualize } => {
-            run_dump_chunks(&file, target_size, visualize)?;
+        Commands::DumpChunks { file, target_size, visualize, with_fallback } => {
+            run_dump_chunks(&file, target_size, visualize, with_fallback)?;
         }
         Commands::Search { text, limit, catalog } => {
             run_search(&config, &text, limit, catalog.as_deref())?;
@@ -799,8 +811,11 @@ fn is_text_file(path: &str) -> bool {
 }
 
 /// Run chunking diagnostics on a TypeScript file
-fn run_dump_chunks(file: &PathBuf, target_size: usize, visualize: bool) -> anyhow::Result<()> {
+fn run_dump_chunks(file: &PathBuf, target_size: usize, visualize: bool, with_fallback: bool) -> anyhow::Result<()> {
     println!("📦 Chunks for: {}", file.display());
+    if !with_fallback {
+        println!("🔍 Strict mode: AST-only (fallback disabled)");
+    }
     println!();
     
     // Read file
@@ -822,6 +837,7 @@ fn run_dump_chunks(file: &PathBuf, target_size: usize, visualize: bool) -> anyho
         file_name: file_name.to_string(),
         package_name: package_name.clone(),
         debug: PartitionDebug::default(),
+        allow_fallback: with_fallback,  // AST-only by default, enable fallback with flag
     };
     
     // Partition
@@ -947,7 +963,9 @@ fn run_audit_chunks(count: usize, dir: Option<String>) -> anyhow::Result<()> {
         .into_iter()
         .collect();
     
-    // Compute quality scores
+    // Compute quality scores using AST-only mode (allow_fallback=false)
+    // This measures how well the AST-based chunker performs, without fallback
+    // masking the quality of split decisions.
     let mut results: Vec<_> = sample
         .into_iter()
         .filter_map(|path| {
@@ -956,6 +974,7 @@ fn run_audit_chunks(count: usize, dir: Option<String>) -> anyhow::Result<()> {
             let config = PartitionConfig {
                 file_name,
                 package_name: "rushstack".to_string(),
+                allow_fallback: false,  // AST-only mode for accurate quality measurement
                 ..Default::default()
             };
             let chunks = partition_typescript(&source, &config, path.to_str().unwrap(), "rushstack");

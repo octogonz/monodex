@@ -80,20 +80,23 @@ rush-qdrant view --id 30440fb2ecd5fa62,a1b2c3d4e5f67890
 ### Debug chunking algorithm
 
 ```bash
-# See how a file gets chunked (summary with previews)
+# See how a file gets chunked (AST-only mode, reveals partitioner issues)
 rush-qdrant dump-chunks --file ./src/JsonFile.ts
+
+# Include fallback line-based splitting (production behavior)
+rush-qdrant dump-chunks --file ./src/JsonFile.ts --with-fallback
 
 # Visualize mode - show full chunk contents
 rush-qdrant dump-chunks --file ./src/JsonFile.ts --visualize
 
-# Audit chunking quality across multiple files
+# Audit chunking quality across multiple files (AST-only mode)
 rush-qdrant audit-chunks --count 20
 
 # Audit from a specific directory
 rush-qdrant audit-chunks --count 50 --dir /path/to/project
 ```
 
-**Chunk Quality Score**: 0-100%, higher is better. Scores below 95% may indicate chunking issues.
+**Chunk Quality Score**: 0-100%, higher is better. Scores below 95% may indicate chunking issues. Note: `dump-chunks` and `audit-chunks` use AST-only mode (fallback disabled) to accurately measure partitioner quality.
 
 ### Verbose query (for debugging)
 

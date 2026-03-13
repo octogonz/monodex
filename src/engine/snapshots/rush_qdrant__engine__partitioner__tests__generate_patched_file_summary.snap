@@ -1,0 +1,65 @@
+---
+source: src/engine/partitioner.rs
+expression: summary
+---
+=== QUALITY SCORE ===
+Score: 90.6%
+Total chunks: 4
+Small chunks (<500 chars): 0
+Chars: 1760-5528 (mean 3524)
+
+=== CHUNK 1 ===
+Breadcrumb: @rushstack/eslint-patch:generate-patched-file.ts
+Type: code
+Kind: content
+Symbol: None
+Lines: 1-151
+Size: 5576 chars
+Text preview (5 lines):
+// Copyright (c) Microsoft Corporation. All rights reserved. Licensed under the MIT license.
+// See LICENSE in the project root for license information.
+
+import fs from 'node:fs';
+
+
+=== CHUNK 2 ===
+Breadcrumb: @rushstack/eslint-patch:generate-patched-file.ts:generatePatchedLinterJsFileIfDoesNotExist:[fallback-split]
+Type: function
+Kind: content
+Symbol: Some("generatePatchedLinterJsFileIfDoesNotExist")
+Lines: 152-255
+Size: 3173 chars
+Text preview (5 lines):
+
+  // Match something like this:
+  //
+  //    const path = require('path'),
+  //    eslintScope = require('eslint-scope'),
+
+=== CHUNK 3 ===
+Breadcrumb: @rushstack/eslint-patch:generate-patched-file.ts:generatePatchedLinterJsFileIfDoesNotExist:[fallback-split]
+Type: function
+Kind: content
+Symbol: Some("generatePatchedLinterJsFileIfDoesNotExist")
+Lines: 256-358
+Size: 3851 chars
+Text preview (5 lines):
+  //    if (bulkSuppressionsPatch.shouldBulkSuppress({ filename, currentNode: args[0]?.node ?? currentNode, ruleId, problem })) return;
+  //    // --- END MONKEY PATCH ---
+  //
+  //    if (problem.fix && !(rule.meta && rule.meta.fixable)) {
+  //      throw new Error(
+
+=== CHUNK 4 ===
+Breadcrumb: @rushstack/eslint-patch:generate-patched-file.ts:generatePatchedLinterJsFileIfDoesNotExist
+Type: function
+Kind: content
+Symbol: Some("generatePatchedLinterJsFileIfDoesNotExist")
+Lines: 359-399
+Size: 1850 chars
+Text preview (5 lines):
+
+  const privateMethodNames: string[] = [];
+  let { index: indexOfNextMethod, isPublic } = getIndexOfNextMethod(inputIndex);
+
+  while (indexOfNextMethod !== -1) {

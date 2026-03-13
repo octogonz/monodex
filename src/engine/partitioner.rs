@@ -1922,4 +1922,98 @@ export function* parseGitStatus() {
                 "Oversized chunk: {} chars in {}", chunk.text.len(), chunk.breadcrumb);
         }
     }
+    
+    #[test]
+    fn test_module_minifier_plugin() {
+        // ModuleMinifierPlugin.ts contains a large method (apply) with nested callback
+        // registrations. The method body has multiple expression_statement children that
+        // are callback registrations (tap calls) with nested functions.
+        // 
+        // The issue: Some expression_statements are <500 bytes but contain nested functions
+        // (callback registrations). These should be meaningful split points.
+        // 
+        // Before the fix: fallback splits in large method body
+        // After the fix: properly split at callback registration boundaries
+        let source = include_str!("../../test_artifacts/ModuleMinifierPlugin.ts");
+        let config = PartitionConfig {
+            file_name: "ModuleMinifierPlugin.ts".to_string(),
+            package_name: "@rushstack/webpack5-module-minifier-plugin".to_string(),
+            debug: PartitionDebug { enabled: true },
+            ..Default::default()
+        };
+        let chunks = partition_typescript(source, &config, "ModuleMinifierPlugin.ts", "@rushstack/webpack5-module-minifier-plugin");
+        
+        let visualization = format_chunks_visualization(source, &chunks);
+        assert_snapshot!("module_minifier_plugin_visualization", visualization);
+        
+        let summary = format_chunks_summary(&chunks, source.len());
+        assert_snapshot!("module_minifier_plugin_summary", summary);
+        
+        // Note: This file currently has fallback splits due to large method bodies
+        // that lack natural split boundaries. This is a known limitation that may
+        // be addressed in a future update.
+    }
+    
+    #[test]
+    fn test_parameter_form_tsx_large() {
+        // ParameterForm.tsx is a large React component with multiple useEffect hooks
+        // and a large JSX return statement.
+        // 
+        // The issue: The component function body has many small expression_statements
+        // (useCallback, useEffect) and a large JSX return. The expression_statements
+        // containing arrow functions should be meaningful split points.
+        // 
+        // Before the fix: fallback splits in large component function
+        // After the fix: properly split at hook/expression boundaries
+        let source = include_str!("../../test_artifacts/ParameterForm.tsx");
+        let config = PartitionConfig {
+            file_name: "ParameterForm.tsx".to_string(),
+            package_name: "@rushstack/rush-vscode-command-webview".to_string(),
+            debug: PartitionDebug { enabled: true },
+            ..Default::default()
+        };
+        let chunks = partition_typescript(source, &config, "ParameterForm.tsx", "@rushstack/rush-vscode-command-webview");
+        
+        let visualization = format_chunks_visualization(source, &chunks);
+        assert_snapshot!("parameter_form_large_visualization", visualization);
+        
+        let summary = format_chunks_summary(&chunks, source.len());
+        assert_snapshot!("parameter_form_large_summary", summary);
+        
+        // Note: This file currently has fallback splits due to a large function body
+        // that lacks natural split boundaries. This is a known limitation that may
+        // be addressed in a future update.
+    }
+    
+    #[test]
+    fn test_generate_patched_file() {
+        // generate-patched-file.ts contains a large function with string concatenations
+        // and conditional blocks. The function body has many expression_statements
+        // that are outputFile += ... operations.
+        // 
+        // The issue: Many expression_statements are small (<500 bytes) but the overall
+        // function body is large. The algorithm needs to find split points between
+        // logical sections.
+        // 
+        // Before the fix: fallback splits in large function body
+        // After the fix: properly split at logical boundaries
+        let source = include_str!("../../test_artifacts/generate-patched-file.ts");
+        let config = PartitionConfig {
+            file_name: "generate-patched-file.ts".to_string(),
+            package_name: "@rushstack/eslint-patch".to_string(),
+            debug: PartitionDebug { enabled: true },
+            ..Default::default()
+        };
+        let chunks = partition_typescript(source, &config, "generate-patched-file.ts", "@rushstack/eslint-patch");
+        
+        let visualization = format_chunks_visualization(source, &chunks);
+        assert_snapshot!("generate_patched_file_visualization", visualization);
+        
+        let summary = format_chunks_summary(&chunks, source.len());
+        assert_snapshot!("generate_patched_file_summary", summary);
+        
+        // Note: This file currently has fallback splits due to a large function body
+        // that lacks natural split boundaries. This is a known limitation that may
+        // be addressed in a future update.
+    }
 }

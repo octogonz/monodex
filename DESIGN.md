@@ -88,9 +88,7 @@ rush-qdrant is a semantic search indexer for Rush monorepos, using Qdrant vector
 2. [ ] Remove `query` from CLI help and documentation
 3. [ ] Commit changes
 
-### Phase 10: Reserved for Future Use
-
-### Phase 11: Configurable File Exclusions
+### Phase 10: Configurable File Exclusions
 **Goal:** Move hardcoded exclusion rules to user-editable config.
 
 1. [ ] Add `exclude` field to `CatalogConfig` struct

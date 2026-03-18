@@ -186,7 +186,7 @@ fn compute_file_id(relative_path: &str) -> u64 {
 }
 ```
 
-**Key insight:** The hash is based on the **relative path** from the catalog base, not the full filesystem path. This ensures:
+**Key insight:** The hash is based on the **relative path** from the catalog base (the `path` field in `config.jsonc`), not the full filesystem path. This ensures:
 - IDs are stable across different machines/users
 - Moving the repo doesn't break IDs
 - IDs work regardless of where the catalog is mounted
@@ -313,6 +313,8 @@ rush-qdrant view --id 700a4ba232fe9ddc:2-3 --id e9ddc700a4ba232f:11
 | `:N-M` | Chunks N through M (inclusive) |
 | `:N-end` | Chunk N through the last chunk |
 
+**Chunk ordering:** When multiple chunks are returned, they are sorted by `chunk_number` in ascending order.
+
 ### Output Format
 
 #### Default Output (with catalog preamble)
@@ -320,7 +322,7 @@ rush-qdrant view --id 700a4ba232fe9ddc:2-3 --id e9ddc700a4ba232f:11
 ```
 Catalogs:
 - rushstack
-  Base location: /Users/bytedance/ai/qdrant/rushstack
+  Catalog path: /Users/bytedance/ai/qdrant/rushstack
 
 700a4ba232fe9ddc:2 (2/12) @microsoft/rush-lib:PnpmShrinkwrapFile.ts:PnpmShrinkwrapFile
 Source: rushstack:libraries/rush-lib/src/logic/pnpm/PnpmShrinkwrapFile.ts
@@ -361,6 +363,42 @@ Type: class
 #### With --chunks-only
 
 Omits the catalog preamble, showing only chunk content.
+
+#### Error Handling
+
+When a requested chunk cannot be found, an error line is displayed in place of the chunk content. Other requested chunks are still shown:
+
+```
+700a4ba232fe9ddc:3 ERROR: CHUNK NOT FOUND
+```
+
+Example with mixed results:
+
+```
+Catalogs:
+- rushstack
+  Catalog path: /Users/bytedance/ai/qdrant/rushstack
+
+700a4ba232fe9ddc:2 (2/12) @microsoft/rush-lib:PnpmShrinkwrapFile.ts:PnpmShrinkwrapFile
+Source: rushstack:libraries/rush-lib/src/logic/pnpm/PnpmShrinkwrapFile.ts
+Full path: /Users/bytedance/ai/qdrant/rushstack/libraries/rush-lib/src/logic/pnpm/PnpmShrinkwrapFile.ts
+Lines: 350-393
+Type: class
+>   /**
+>    * Loads the shrinkwrap file from disk.
+>    */
+
+700a4ba232fe9ddc:3 ERROR: CHUNK NOT FOUND
+
+e9ddc700a4ba232f:11 (11/18) some-package:ExampleFile.ts:SomeClass
+Source: rushstack:packages/some-package/src/ExampleFile.ts
+Full path: /Users/bytedance/ai/qdrant/rushstack/packages/some-package/src/ExampleFile.ts
+Lines: 820-870
+Type: method
+>   /**
+>    * Disposes resources held by this instance.
+>    */
+```
 
 ### Chunk Output Fields
 

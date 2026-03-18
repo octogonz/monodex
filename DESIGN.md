@@ -24,7 +24,7 @@ rush-qdrant is a semantic search indexer for Rush monorepos, using Qdrant vector
 3. [x] Test chunking on sample files
 4. [x] Commit changes
 
-### Phase 3: Hash-Based IDs
+### Phase 3: Hash-Based IDs (Superseded by Phase 6)
 **Goal:** Stable IDs for search result correlation.
 
 1. [x] Implement `compute_chunk_id(file, start_line, part) -> u64`
@@ -32,6 +32,8 @@ rush-qdrant is a semantic search indexer for Rush monorepos, using Qdrant vector
 3. [x] Add `part_count` field to payload
 4. [x] Test ID determinism
 5. [x] Commit changes
+
+**Note:** This approach used chunk-level hashes. Phase 6 redesigns this to use file-level hashes with chunk number selectors.
 
 ### Phase 4: Performance Optimization
 **Goal:** Speed up crawling with parallel processing.
@@ -52,45 +54,26 @@ rush-qdrant is a semantic search indexer for Rush monorepos, using Qdrant vector
 4. [x] Create snapshot and check file size
 5. [x] Delete old collection after verification
 
-### Phase 6: Query Interface
-**Goal:** Better search for AI assistants.
+### Phase 6: File-Based IDs and Multi-Chunk View
+**Goal:** Redesign IDs around files, enable viewing multiple chunks.
 
-1. [x] Implement `search` command with blurb output
-2. [x] Implement `view` command for full chunks (renamed from `get`)
-3. [ ] Implement `expand` command (neighboring chunks)
-4. [ ] Implement `siblings` command (other parts of split chunk)
-5. [ ] Implement `cat` command for full files
-6. [ ] Add filtering (`--type`, `--symbol`, `--path`, `--min-score`)
-
-### Phase 7: Improved Chunking
-**Goal:** Fix gaps and add overlap for better semantic matching.
-
-1. [ ] Investigate missing text at AST boundaries
-2. [ ] Implement chunk overlap (following LlamaIndex conventions)
-3. [ ] Ensure imports are captured as separate chunks
-4. [ ] Ensure file-level constants and comments are captured
-5. [ ] Rebuild database with improved chunking
-6. [ ] Implement `expand` command using new neighboring chunk data
+1. [ ] Update ID scheme: file hash + chunk number selector
+2. [ ] Update Qdrant payload schema with new fields
+3. [ ] Implement selector parsing (`:N`, `:N-M`, `:N-end`)
+4. [ ] Update `view` command for multi-chunk output
+5. [ ] Add catalog preamble logic
+6. [ ] Implement `--full-paths` flag
+7. [ ] Implement `--chunks-only` flag
+8. [ ] Update `search` command output to include chunk selector
+9. [ ] Update `dump-chunks` command output with file ID and chunk numbers
+10. [ ] Update `audit-chunks` command output with file IDs
+11. [ ] Delete old collection and re-crawl
 
 ---
 
 ## Embedding Model
 
-### Current: BAAI/bge-small-en-v1.5
-
-| Property | Value |
-|----------|-------|
-| Max tokens | 512 |
-| Dimensions | 384 |
-| Model size | ~33MB |
-| Trained on | English text |
-
-**Problems:**
-- 512 tokens (~2000 chars) causes excessive chunk splitting
-- Functions get cut in half, losing semantic coherence
-- Not trained on code
-
-### Target: jina-embeddings-v2-base-code
+### Current: jina-embeddings-v2-base-code
 
 | Property | Value |
 |----------|-------|
@@ -184,119 +167,237 @@ chunks.par_iter()
 ## Chunk ID Design
 
 ### Requirements
-- **Stable**: Same code location = same ID across sessions
-- **Short**: ~8 characters for display
+
+- **File-based**: ID identifies a file, with chunk number as selector
+- **Stable**: Same file path = same ID across sessions and machines
+- **Human-friendly**: Easy to read, type, and correlate
 - **No coordination**: No locks or counters needed
 
-### Solution: Hash-Based u64
+### Solution: File Hash + Chunk Number
 
 ```rust
 use std::hash::{Hash, Hasher};
 use twox_hash::XxHash64;
 
-fn compute_chunk_id(file: &str, start_line: usize, part: usize) -> u64 {
+fn compute_file_id(relative_path: &str) -> u64 {
     let mut hasher = XxHash64::with_seed(0);
-    file.hash(&mut hasher);
-    start_line.hash(&mut hasher);
-    part.hash(&mut hasher);
+    relative_path.hash(&mut hasher);
     hasher.finish()
 }
 ```
 
-### Display Format: Hex
+**Key insight:** The hash is based on the **relative path** from the catalog base, not the full filesystem path. This ensures:
+- IDs are stable across different machines/users
+- Moving the repo doesn't break IDs
+- IDs work regardless of where the catalog is mounted
 
-The u64 hash is stored as the Qdrant point ID. For display, use **16-character lowercase hex**:
+### Display Format
+
+The user-facing ID format is:
 
 ```
-u64 hash: 18472938475621023485
-display:  "#30440fb2ecd5fa62"
+<file_hash_hex>:<chunk_number>
 ```
 
-**Why hex instead of base32/base62:**
+Examples:
+- `700a4ba232fe9ddc` — whole file (all chunks)
+- `700a4ba232fe9ddc:3` — chunk 3 of that file
+- `700a4ba232fe9ddc:2-3` — chunks 2 through 3
+- `700a4ba232fe9ddc:3-end` — chunk 3 through the last chunk
+
+**Chunk numbering:** 1-indexed. Each chunk output shows its position: `(3/12)` means chunk 3 of 12 total.
+
+**Why hex:**
 - Only characters `0-9` and `a-f` - no ambiguity
 - Case-insensitive (lowercase convention)
 - Tokenizers handle hex strings cleanly
-- When LLM outputs `#30440fb2ecd5fa62`, it won't typo it
+- When LLM outputs `700a4ba232fe9ddc:3`, it won't typo it
 
-**Why 16 chars (full 64-bit) instead of 8 chars (32-bit):**
-- Need full hash to retrieve chunks by ID
-- 16 chars is still short enough for display
-- No collision risk even across multiple repos
+### Qdrant Point IDs
 
-### Collision Tolerance
+The Qdrant point ID is an **internal implementation detail**. We use random UUIDs for points. The mapping from user-facing ID to Qdrant points is done via payload filtering:
 
-With 64 bits, collisions are astronomically rare. Even if one occurs, disambiguate via breadcrumb/file info.
+```
+User requests: 700a4ba232fe9ddc:3
+↓
+Query Qdrant: filter by file_id=700a4ba232fe9ddc, chunk_number=3
+↓
+Return matching point(s)
+```
+
+This approach:
+- Keeps Qdrant simple (no custom ID computation needed)
+- Works cleanly across different source types (code, issues, chats)
+- Avoids transactional complexities
 
 ---
 
 ## Chunk Structure
 
+### Qdrant Payload Schema
+
 ```json
 {
-  "id": 18472938475621023485,
+  "id": "uuid-random",
   "vector": [0.1, 0.2, ...],
   "payload": {
     "text": "export interface IExtractorConfigParameters { ... }",
-    "file": "/path/to/ExtractorConfig.ts",
+    "file_id": "700a4ba232fe9ddc",
+    "relative_path": "libraries/rush-lib/src/logic/pnpm/PnpmShrinkwrapFile.ts",
     "catalog": "rushstack",
     "start_line": 196,
     "end_line": 229,
-    "symbol_name": "IExtractorConfigParameters",
+    "chunk_number": 3,
+    "chunk_count": 12,
     "chunk_type": "interface",
-    "breadcrumb": "@microsoft/api-extractor:ExtractorConfig.ts:IExtractorConfigParameters",
-    "part_number": 0,
-    "part_count": 1
+    "chunk_kind": "content",
+    "symbol_name": "IExtractorConfigParameters",
+    "breadcrumb": "@microsoft/rush-lib:PnpmShrinkwrapFile.ts:IExtractorConfigParameters",
+    "content_hash": "sha256:abc123..."
   }
 }
 ```
+
+### Field Descriptions
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `text` | string | The actual chunk content |
+| `file_id` | string | 16-char hex hash of relative path |
+| `relative_path` | string | Path relative to catalog base (e.g., `libraries/rush-lib/src/...`) |
+| `catalog` | string | Catalog name from config |
+| `start_line` | number | First line number (1-indexed) |
+| `end_line` | number | Last line number (inclusive) |
+| `chunk_number` | number | Position in file (1-indexed) |
+| `chunk_count` | number | Total chunks in this file |
+| `chunk_type` | string | AST node type: `function`, `class`, `method`, `interface`, etc. |
+| `chunk_kind` | string | Content category: `content`, `imports`, `changelog`, `config` |
+| `symbol_name` | string | Primary symbol name (kept for filtering, not displayed) |
+| `breadcrumb` | string | Human-readable path: `package:File.ts:Symbol` |
+| `content_hash` | string | Hash of chunk text for incremental updates |
+
+### chunk_kind Values
+
+| Value | Description |
+|-------|-------------|
+| `content` | Normal code chunks: functions, classes, methods, types |
+| `imports` | Import statements at top of file |
+| `changelog` | CHANGELOG.md content (historical, often outdated) |
+| `config` | Configuration files like package.json |
+
+This allows search to prioritize `content` chunks while still returning other kinds if no better match exists.
 
 ---
 
 ## Query Interface
 
-### Two-Phase Search
-
-1. **Search → Blurbs**: Concise summaries with stable IDs
-2. **View → Full Chunks**: Retrieve by ID for complete content
-
 ### Commands
 
 ```bash
-# Search with compact blurb output (for AI assistants)
+# Search with compact blurb output
 rush-qdrant search --text <query> [--limit N] [--catalog NAME]
 
-# View full chunks by ID (comma-separated for multiple)
-rush-qdrant view --id <id1,id2,id3...>
+# View chunks with selector syntax
+rush-qdrant view --id <file_id>[:<selector>] [--full-paths] [--chunks-only]
 
-# Expand to see neighboring chunks (future)
-rush-qdrant expand --id <id> [--context N]
-
-# Other planned commands
-rush-qdrant siblings --id <id>
-rush-qdrant cat --id <id>
-rush-qdrant cat --file <path>
+# Multiple independent selectors
+rush-qdrant view --id 700a4ba232fe9ddc:2-3 --id e9ddc700a4ba232f:11
 ```
+
+### Selector Syntax
+
+| Selector | Meaning |
+|----------|---------|
+| (none) | All chunks in the file |
+| `:N` | Single chunk N |
+| `:N-M` | Chunks N through M (inclusive) |
+| `:N-end` | Chunk N through the last chunk |
 
 ### Output Format
 
-**Search blurbs** are designed for AI assistants:
-- Line 1: `#id  score  breadcrumb`
-- Lines 2-4: First 3 lines of code, prefixed with `>` (quoted)
+#### Default Output (with catalog preamble)
+
+```
+Catalogs:
+- rushstack
+  Base location: /Users/bytedance/ai/qdrant/rushstack
+
+700a4ba232fe9ddc:2 (2/12) @microsoft/rush-lib:PnpmShrinkwrapFile.ts:PnpmShrinkwrapFile
+Source: rushstack:libraries/rush-lib/src/logic/pnpm/PnpmShrinkwrapFile.ts
+Lines: 350-393
+Type: class
+>   /**
+>    * Loads the shrinkwrap file from disk.
+>    */
+>   public static loadFromFile(filePath: string): PnpmShrinkwrapFile {
+>     // implementation omitted
+>   }
+
+700a4ba232fe9ddc:3 (3/12) @microsoft/rush-lib:PnpmShrinkwrapFile.ts:PnpmShrinkwrapFile
+Source: rushstack:libraries/rush-lib/src/logic/pnpm/PnpmShrinkwrapFile.ts
+Lines: 394-462
+Type: class
+>   /**
+>    * Clears the cache of PnpmShrinkwrapFile instances to free up memory.
+>    */
+>   public static clearCache(): void {
+>     cacheByLockfileHash.clear();
+>   }
+```
+
+#### With --full-paths
+
+Adds a `Full path:` line showing the absolute filesystem path:
+
+```
+700a4ba232fe9ddc:2 (2/12) @microsoft/rush-lib:PnpmShrinkwrapFile.ts:PnpmShrinkwrapFile
+Source: rushstack:libraries/rush-lib/src/logic/pnpm/PnpmShrinkwrapFile.ts
+Full path: /Users/bytedance/ai/qdrant/rushstack/libraries/rush-lib/src/logic/pnpm/PnpmShrinkwrapFile.ts
+Lines: 350-393
+Type: class
+>   ...
+```
+
+#### With --chunks-only
+
+Omits the catalog preamble, showing only chunk content.
+
+### Chunk Output Fields
+
+| Field | Description |
+|-------|-------------|
+| Header line | `<file_id>:<chunk_number> (<n>/<total>) <breadcrumb>` |
+| Source | `<catalog>:<relative_path>` |
+| Full path | (optional, with `--full-paths`) Absolute filesystem path |
+| Lines | `start-end` (inclusive) |
+| Type | AST node type |
+| Content | Prefixed with `>` |
+
+**Note:** `symbol_name` is kept in the database but not displayed (redundant with breadcrumb).
+
+### Search Blurbs
+
+Search output shows concise summaries for AI assistants:
+
+```
+700a4ba232fe9ddc:3  0.87  @microsoft/rush-lib:PnpmShrinkwrapFile.ts:clearCache
+>   /**
+>    * Clears the cache of PnpmShrinkwrapFile instances to free up memory.
+>    */
+>   public static clearCache(): void {
+```
+
+- Line 1: `<file_id>:<chunk_number>  <score>  <breadcrumb>`
+- Lines 2-4: First 3 lines of code, prefixed with `>`
 - Blank line between results
 
-The `>` prefix ensures code is clearly marked as quoted content, preventing injection attacks where code could be misinterpreted as instructions.
-
-**View output** shows full chunk content:
-- Header: ID, breadcrumb, source file, lines, type, symbol
-- Full text quoted with `>` prefix
+The `>` prefix ensures code is clearly marked as quoted content, preventing injection attacks.
 
 ---
 
 ## Chunking Analysis
 
-### Current Issues
-
-#### Issue 1: Overlap Between Chunks (Tabled)
+### Overlap Between Chunks (Tabled)
 
 **Industry standard (LlamaIndex):** Most semantic chunkers use overlap:
 - `CodeSplitter`: 15 lines overlap
@@ -320,30 +421,6 @@ We'll keep overlap as a potential enhancement if we encounter specific cases whe
 - Apply as post-processing step (doesn't affect splitting algorithm)
 - Configurable overlap (default 0, optional 10-20 lines)
 - Adjust target_size to account for overlap budget
-
-#### Issue 2: Missing Text at AST Boundaries
-
-Analysis of `JsonFile.ts` revealed gaps in coverage:
-
-| Gap Lines | Content | Importance |
-|-----------|---------|------------|
-| 1-7 | Copyright header, imports | **High** - imports show dependencies |
-| 9-41 | JSDoc for `JsonObject`, `JsonNull`, `JsonSyntax` | **High** - type documentation |
-| 199-206 | `const DEFAULT_ENCODING`, `export class JsonFile {` | **High** - class declaration |
-| 516-517 | Comment before private method | Medium - code organization |
-| 538-540 | Comment explaining `_formatKeyPath` | **High** - algorithm explanation |
-
-**Root cause:** The partitioner only creates chunks for "meaningful nodes" (functions, methods, classes, interfaces) >= 50 chars. It misses:
-- Import statements
-- Standalone JSDoc/TSDoc comments
-- Type aliases with documentation
-- Constants defined outside functions
-- Class declarations when the body is split into methods
-
-**Planned fix:** 
-1. Create separate chunks for imports sections
-2. Create chunks for file-level constants and type definitions
-3. Attach orphan comments to nearby code or create standalone chunks
 
 ### Chunking Algorithm
 
@@ -478,71 +555,6 @@ Once we decide to split A and B (two classes), we never recombine a fragment of 
 
 Example: If A's methods are tiny but A and B are split, we keep all of A's methods together rather than combining some of A's methods with some of B's methods.
 
-### Implementation Plan
-
-#### Step 1: Add `chunk_kind` field to schema
-
-Add to `PointPayload` in `uploader.rs`:
-```rust
-pub chunk_kind: String,
-```
-
-**Values:**
-- `"content"` (default) - Normal code chunks: functions, classes, methods, types
-- `"imports"` - Import statements at top of file (lower search relevance)
-- `"changelog"` - CHANGELOG.md content (historical, often outdated)
-- `"config"` - Configuration files like package.json (structural, less searchable)
-
-This allows search to prioritize `"content"` chunks while still returning other kinds if no better match exists.
-
-#### Step 2: Fix missing text (imports, small types)
-
-**Changes to `partitioner.rs`:**
-
-1. **Extract imports chunk first:**
-   - Before main partition loop, walk AST for `import_statement` nodes at depth 0
-   - Combine into one chunk with `chunk_kind: "imports"`
-   - Breadcrumb: `package:File.ts:imports`
-
-2. **Investigate why small type aliases are skipped:**
-   - Types like `JsonObject`, `JsonNull` have JSDoc but don't appear in chunks
-   - May be due to AST traversal issue, not the 50-char minimum
-   - The 50-char minimum is about avoiding garbage chunks, not skipping meaningful content
-   - Investigate during implementation
-
-#### Step 3: Add overlap (Tabled)
-
-See "Issue 1: Overlap Between Chunks" above for rationale on why this is tabled.
-
-**If implemented later:**
-- Apply as post-processing step (doesn't affect splitting algorithm)
-- Configurable overlap (default 0, optional 10-20 lines)
-- Adjust target_size to account for overlap budget
-
-### Chunk Structure
-
-```json
-{
-  "id": 18472938475621023485,
-  "vector": [0.1, 0.2, ...],
-  "payload": {
-    "text": "export interface IExtractorConfigParameters { ... }",
-    "source_uri": "/path/to/ExtractorConfig.ts",
-    "source_type": "code",
-    "catalog": "rushstack",
-    "content_hash": "sha256:abc123...",
-    "start_line": 196,
-    "end_line": 229,
-    "symbol_name": "IExtractorConfigParameters",
-    "chunk_type": "interface",
-    "chunk_kind": "content",
-    "breadcrumb": "@microsoft/api-extractor:ExtractorConfig.ts:IExtractorConfigParameters"
-  }
-}
-```
-
-**Note:** part_number and part_count were planned but not currently implemented. Chunks that exceed target size are split and marked in the breadcrumb as "(part 1/N)".
-
 ---
 
 ## Quality Gates and Investigation Workflow
@@ -615,10 +627,11 @@ Files with chunking warnings are tracked in `.rush-qdrant-warnings-<catalog>.jso
 |--------|-----|-----|
 | Model | bge-small-en-v1.5 | jina-embeddings-v2-base-code |
 | Vector dims | 384 | 768 |
-| ID type | UUID string | u64 hash |
+| ID type | UUID string | file hash + chunk selector |
 | Chunk target | 1800 chars | 6000 chars |
+| Paths | Full paths | Relative paths from catalog base |
 
-**Migration:** Create new collection (different vector size), re-crawl, delete old after verification.
+**Migration:** Delete old collection and re-crawl with new schema.
 
 ---
 
@@ -655,12 +668,13 @@ struct CodeChunk {
     chunk_type: String,
     
     // Code-specific
-    file_path: String,
+    file_id: String,
+    relative_path: String,
     start_line: usize,
     end_line: usize,
+    chunk_number: usize,
+    chunk_count: usize,
     symbol_name: Option<String>,
-    part_number: usize,
-    part_count: usize,
 }
 
 struct IssueChunk {
@@ -692,12 +706,13 @@ Stored as JSON with a `source_type` discriminator:
   "catalog": "rushstack",
   "breadcrumb": "@rushstack/node-core-library:JsonFile.ts:load",
   "chunk_type": "function",
-  "file_path": "src/JsonFile.ts",
+  "file_id": "700a4ba232fe9ddc",
+  "relative_path": "libraries/rush-lib/src/JsonFile.ts",
   "start_line": 10,
   "end_line": 50,
-  "symbol_name": "load",
-  "part_number": 0,
-  "part_count": 1
+  "chunk_number": 3,
+  "chunk_count": 7,
+  "symbol_name": "load"
 }
 
 // Issue chunk
@@ -732,8 +747,5 @@ rush-qdrant search --text "api design"
 
 1. Add `source_type: String` field now (default: `"code"`)
 2. Make type-specific fields `Option<T>` where needed
-3. Rename `file` to `source_uri` for generality
-4. When adding new source types, extend payload with type-specific fields
-5. Query handler dispatches on `source_type` to render appropriately
-
-
+3. When adding new source types, extend payload with type-specific fields
+4. Query handler dispatches on `source_type` to render appropriately

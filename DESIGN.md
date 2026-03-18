@@ -57,17 +57,33 @@ rush-qdrant is a semantic search indexer for Rush monorepos, using Qdrant vector
 ### Phase 6: File-Based IDs and Multi-Chunk View
 **Goal:** Redesign IDs around files, enable viewing multiple chunks.
 
-1. [ ] Update ID scheme: file hash + chunk number selector
-2. [ ] Update Qdrant payload schema with new fields
-3. [ ] Implement selector parsing (`:N`, `:N-M`, `:N-end`)
-4. [ ] Update `view` command for multi-chunk output
-5. [ ] Add catalog preamble logic
-6. [ ] Implement `--full-paths` flag
-7. [ ] Implement `--chunks-only` flag
-8. [ ] Update `search` command output to include chunk selector
-9. [ ] Update `dump-chunks` command output with file ID and chunk numbers
-10. [ ] Update `audit-chunks` command output with file IDs
-11. [ ] Delete old collection and re-crawl
+#### Phase 6a: Schema Changes (Crawl Side)
+
+1. [ ] Add `compute_file_id()` to util.rs (hash of relative path)
+2. [ ] Add `file_id`, `relative_path`, `chunk_number`, `chunk_count` fields to Chunk struct
+3. [ ] Update partitioner to compute and assign chunk numbers (1-indexed, ordered by start_line)
+4. [ ] Update QdrantUploader to use random UUIDs for point IDs
+5. [ ] Update QdrantUploader to store new fields in payload
+
+#### Phase 6b: Query Infrastructure
+
+6. [ ] Implement selector parsing (`:N`, `:N-M`, `:N-end`) in main.rs
+7. [ ] Add `get_chunks_by_file_id()` method to QdrantUploader (filters by file_id, returns sorted by chunk_number)
+8. [ ] Add catalog preamble logic (collect unique catalogs, look up paths from config)
+
+#### Phase 6c: CLI Commands
+
+9. [ ] Update `view` command with new output format (header, selector support, multi-chunk)
+10. [ ] Add `--full-paths` flag to `view` command
+11. [ ] Add `--chunks-only` flag to `view` command
+12. [ ] Add error handling for missing chunks (`ERROR: CHUNK NOT FOUND`)
+13. [ ] Update `search` command output to show `<file_id>:<chunk_number>`
+14. [ ] Update `dump-chunks` command output with file ID and chunk numbers
+15. [ ] Update `audit-chunks` command output with file IDs
+
+#### Phase 6d: Migration
+
+16. [ ] Delete old collection and re-crawl
 
 ---
 

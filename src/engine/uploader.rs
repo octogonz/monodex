@@ -27,32 +27,10 @@ struct MatchValue {
     value: String,
 }
 
-/// Condition for integer range matching
-#[derive(Debug, Serialize)]
-struct IntRangeCondition {
-    key: String,
-    range: IntRange,
-}
-
-#[derive(Debug, Serialize)]
-struct IntRange {
-    gte: Option<usize>,
-    lte: Option<usize>,
-}
-
 /// Request body for filter-based operations (delete, etc.)
 #[derive(Debug, Serialize)]
 struct FilterRequest {
     filter: Filter,
-}
-
-/// Request body for scroll operations
-#[derive(Debug, Serialize)]
-struct ScrollRequest {
-    filter: Filter,
-    with_payload: bool,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    offset: Option<QdrantId>,
 }
 
 /// Qdrant client for uploading embeddings
@@ -150,16 +128,6 @@ struct ScrollPoint {
 pub enum QdrantId {
     String(String),
     Integer(u64),
-}
-
-impl QdrantId {
-    /// Returns the integer value if this is an Integer variant
-    fn as_u64(&self) -> Option<u64> {
-        match self {
-            QdrantId::Integer(n) => Some(*n),
-            QdrantId::String(_) => None,
-        }
-    }
 }
 
 impl std::ops::Shr<i32> for QdrantId {

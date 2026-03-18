@@ -56,12 +56,6 @@ pub struct Chunk {
     
     /// Total number of chunks in this file
     pub chunk_count: usize,
-    
-    /// Part number (0-indexed) when chunk is split by fallback
-    pub part_number: usize,
-    
-    /// Total number of parts (1 if not split by fallback)
-    pub part_count: usize,
 }
 
 /// Chunks a file based on its type and content
@@ -153,9 +147,6 @@ pub fn chunk_file(
 
 impl From<PartitionedChunk> for Chunk {
     fn from(p: PartitionedChunk) -> Self {
-        // Extract part info from breadcrumb if present (e.g., "(part 1/2)")
-        let (part_number, part_count) = extract_part_info(&p.breadcrumb);
-        
         Chunk {
             text: p.text,
             source_uri: p.source_uri,
@@ -173,30 +164,8 @@ impl From<PartitionedChunk> for Chunk {
             relative_path: String::new(),
             chunk_number: 0,
             chunk_count: 0,
-            // Fallback split info (from breadcrumb)
-            part_number,
-            part_count,
         }
     }
-}
-
-/// Extract part number and count from breadcrumb like "function name (part 1/2)"
-fn extract_part_info(breadcrumb: &str) -> (usize, usize) {
-    // Look for "(part N/M)" pattern
-    if let Some(start) = breadcrumb.rfind("(part ") {
-        let rest = &breadcrumb[start + 6..];
-        if let Some(slash) = rest.find('/') {
-            if let Some(end) = rest.find(')') {
-                if let (Ok(n), Ok(m)) = (
-                    rest[..slash].parse::<usize>(),
-                    rest[slash + 1..end].parse::<usize>()
-                ) {
-                    return (n - 1, m); // Convert to 0-indexed
-                }
-            }
-        }
-    }
-    (0, 1) // Default: single part
 }
 
 /// Chunk by lines for simple text files
@@ -254,8 +223,6 @@ fn chunk_by_lines(
                 relative_path: relative_path.to_string(),
                 chunk_number: 0, // Will update after loop
                 chunk_count: 0,  // Will update after loop
-                part_number: chunks.len(), // 0-indexed
-                part_count: 0, // Will update after loop
             });
         }
         
@@ -267,7 +234,6 @@ fn chunk_by_lines(
     for (i, chunk) in chunks.iter_mut().enumerate() {
         chunk.chunk_number = i + 1;
         chunk.chunk_count = total_chunks;
-        chunk.part_count = total_chunks;
     }
 
     Ok(chunks)

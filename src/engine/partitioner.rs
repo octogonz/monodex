@@ -948,75 +948,6 @@ pub fn partition_typescript(
     result
 }
 
-/// Pick the best split point - prefer splits that create balanced chunks
-/// Strategy: pick the split closest to the middle of the chunk (in characters)
-fn pick_best_split(
-    split_points: &[usize],
-    start_line: usize,
-    end_line: usize,
-    chunk_size: usize,
-    target_size: usize,
-) -> Option<usize> {
-    if split_points.is_empty() {
-        return None;
-    }
-    
-    // Target: split at approximately half the chunk size
-    let ideal_first_size = chunk_size / 2;
-    
-    // Find the split point that creates a first chunk closest to ideal
-    // but not exceeding target_size
-    let mut best_split: Option<usize> = None;
-    let mut best_distance = usize::MAX;
-    
-    for &split_line in split_points {
-        let lines_before = split_line - start_line + 1;
-        let total_lines = end_line - start_line + 1;
-        let estimated_first_size = (chunk_size * lines_before) / total_lines;
-        
-        // Only consider splits that don't exceed target
-        if estimated_first_size > target_size {
-            continue;
-        }
-        
-        // Prefer splits that get closest to half the chunk size
-        let distance = if estimated_first_size > ideal_first_size {
-            estimated_first_size - ideal_first_size
-        } else {
-            ideal_first_size - estimated_first_size
-        };
-        
-        if distance < best_distance {
-            best_distance = distance;
-            best_split = Some(split_line);
-        }
-    }
-    
-    best_split
-}
-
-/// Find the deepest AST node that spans the entire line range
-fn find_spanning_node<'a>(node: Node<'a>, start_line: usize, end_line: usize) -> Node<'a> {
-    let node_start = node.start_position().row + 1;
-    let node_end = node.end_position().row + 1;
-    
-    if node_start > start_line || node_end < end_line {
-        return node;
-    }
-    
-    let mut cursor = node.walk();
-    for child in node.children(&mut cursor) {
-        let child_start = child.start_position().row + 1;
-        let child_end = child.end_position().row + 1;
-        
-        if child_start <= start_line && child_end >= end_line {
-            return find_spanning_node(child, start_line, end_line);
-        }
-    }
-    
-    node
-}
-
 /// Get meaningful children of a node (methods, classes, functions, etc.)
 fn get_meaningful_children<'a>(node: Node<'a>, source: &[u8], debug: &PartitionDebug) -> Vec<Node<'a>> {
     let mut cursor = node.walk();
@@ -1034,33 +965,6 @@ fn get_meaningful_children<'a>(node: Node<'a>, source: &[u8], debug: &PartitionD
     }
     
     children
-}
-
-/// Find children inside structural containers (class_body, export_statement, etc.)
-/// Returns direct children of the container that are meaningful split points.
-fn find_children_in_container<'a>(node: Node<'a>) -> Vec<Node<'a>> {
-    let mut cursor = node.walk();
-    
-    // Check if this node IS a container we want to look inside
-    for child in node.children(&mut cursor) {
-        if matches!(child.kind(), "class_body" | "declaration_list" | "statement_block" | "object_type") {
-            // Found a container - return its meaningful children
-            let mut container_cursor = child.walk();
-            let mut result = Vec::new();
-            for grandchild in child.children(&mut container_cursor) {
-                if matches!(grandchild.kind(), 
-                    "method_definition" | "public_field_definition" | 
-                    "function_declaration" | "class_declaration" | 
-                    "interface_declaration" | "type_alias_declaration" | 
-                    "enum_declaration" | "lexical_declaration") {
-                    result.push(grandchild);
-                }
-            }
-            return result;
-        }
-    }
-    
-    Vec::new()
 }
 
 /// Get the end line of import statements (0 if no imports)

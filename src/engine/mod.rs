@@ -6,7 +6,6 @@
 //! Repository-specific configuration lives in `../config.rs`
 
 pub mod config;
-pub mod embedder;
 pub mod parallel_embedder;
 pub mod chunker;
 pub mod partitioner;
@@ -18,5 +17,4 @@ pub mod package_lookup;
 // Re-export commonly used types for convenience
 pub use chunker::Chunk;
 pub use parallel_embedder::ParallelEmbedder;
-pub use partitioner::{PartitionConfig, PartitionedChunk, partition_typescript, ChunkQualityReport, TARGET_CHARS, SMALL_CHUNK_CHARS};
-pub use uploader::{QdrantUploader, PointResult, FileSyncInfo};
+pub use partitioner::SMALL_CHUNK_CHARS;

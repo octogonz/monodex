@@ -166,9 +166,9 @@ enum Commands {
         #[arg(long, default_value = "20")]
         count: usize,
         
-        /// Directory to sample from (default: rushstack monorepo)
+        /// Directory to sample from
         #[arg(long)]
-        dir: Option<String>,
+        dir: String,
     },
 }
 
@@ -1202,16 +1202,14 @@ fn run_dump_chunks(file: &PathBuf, target_size: usize, visualize: bool, with_fal
 }
 
 /// Audit chunking quality across multiple files
-fn run_audit_chunks(count: usize, dir: Option<String>) -> anyhow::Result<()> {
+fn run_audit_chunks(count: usize, dir: String) -> anyhow::Result<()> {
     use rand::seq::IndexedRandom;
     
-    let base_dir = dir.unwrap_or_else(|| "/Users/bytedance/ai/qdrant/rushstack".to_string());
-    
-    println!("📊 Sampling {} TypeScript files from: {}", count, base_dir);
+    println!("📊 Sampling {} TypeScript files from: {}", count, dir);
     println!();
     
     // Collect all TypeScript files
-    let ts_files: Vec<PathBuf> = walkdir::WalkDir::new(&base_dir)
+    let ts_files: Vec<PathBuf> = walkdir::WalkDir::new(&dir)
         .into_iter()
         .filter_map(|e| e.ok())
         .filter(|e| {
@@ -1261,14 +1259,14 @@ fn run_audit_chunks(count: usize, dir: Option<String>) -> anyhow::Result<()> {
     
     println!("\n=== Quality Scores (worst first) ===\n");
     for (i, (path, report, _)) in results.iter().enumerate() {
-        let rel_path = path.strip_prefix(&base_dir).unwrap_or(path);
+        let rel_path = path.strip_prefix(&dir).unwrap_or(path);
         println!("{}. {} {}", i + 1, report.format(), rel_path.display());
     }
     
     // Show top 3 worst for investigation
     println!("\n=== Top 3 Worst Files ===\n");
     for (path, report, chunks) in results.iter().take(3) {
-        let rel_path = path.strip_prefix(&base_dir).unwrap_or(path);
+        let rel_path = path.strip_prefix(&dir).unwrap_or(path);
         println!("--- {} ---", rel_path.display());
         println!("{}", report.format());
         

@@ -84,9 +84,9 @@ rush-qdrant is a semantic search indexer for Rush monorepos, using Qdrant vector
 ### Phase 9: Remove query Command
 **Goal:** Simplify CLI by removing redundant command.
 
-1. [ ] Remove `query` command from main.rs
-2. [ ] Remove `query` from CLI help and documentation
-3. [ ] Commit changes
+1. [x] Remove `query` command from main.rs
+2. [x] Remove `query` from CLI help and documentation
+3. [x] Commit changes
 
 ### Phase 10: Configurable File Exclusions
 **Goal:** Move hardcoded exclusion rules to user-editable config.

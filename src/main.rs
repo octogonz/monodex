@@ -143,21 +143,6 @@ enum Commands {
         chunks_only: bool,
     },
     
-    /// Query the semantic search database (verbose output for debugging)
-    Query {
-        /// Search query text
-        #[arg(long)]
-        text: String,
-        
-        /// Number of results
-        #[arg(long, default_value = "5")]
-        limit: usize,
-        
-        /// Filter by catalog (optional - searches all if omitted)
-        #[arg(long)]
-        catalog: Option<String>,
-    },
-    
     /// Audit chunking quality across multiple files (AST-only mode).
     /// Scores reflect AST partitioning quality without fallback mitigation.
     /// Use after eliminating crawl warnings to find suboptimal chunk boundaries.
@@ -235,9 +220,6 @@ fn main() -> anyhow::Result<()> {
         }
         Commands::View { id, full_paths, chunks_only } => {
             run_view(&config, &id, full_paths, chunks_only)?;
-        }
-        Commands::Query { text, limit, catalog } => {
-            run_query(&config, &text, limit, catalog.as_deref())?;
         }
         Commands::AuditChunks { count, dir } => {
             run_audit_chunks(count, dir)?;
@@ -968,65 +950,6 @@ fn run_view(config: &Config, id_specs: &[String], show_full_paths: bool, chunks_
     
     Ok(())
 }
-
-/// Run query
-fn run_query(config: &Config, text: &str, limit: usize, catalog: Option<&str>) -> anyhow::Result<()> {
-    println!("🔍 Querying Qdrant...");
-    println!("Query: \"{}\"", text);
-    if let Some(cat) = catalog {
-        println!("Catalog filter: {}", cat);
-    }
-    println!("Limit: {}", limit);
-    println!();
-
-    // Generate embedding for query using ParallelEmbedder
-    println!("⚙️  Generating embedding for query...");
-    let embedder = ParallelEmbedder::new()?;
-    let embedding = embedder.encode(text, 0)?;
-    println!("✅ Embedding generated");
-    println!();
-
-    // Query Qdrant
-    println!("🔎 Searching...");
-    let uploader = QdrantUploader::new(&config.qdrant.collection, config.qdrant.url.as_deref())?;
-    let results = uploader.query(&embedding, limit, catalog)?;
-
-    // Display results
-    println!();
-    println!("Found {} results:", results.len());
-    println!();
-
-    for (idx, result) in results.iter().enumerate() {
-        let id_hex = format!("#{:016x}", match &result.id {
-            engine::uploader::QdrantId::Integer(n) => *n,
-            engine::uploader::QdrantId::String(_) => 0,
-        });
-        println!("{}. {}  Score: {:.3}", idx + 1, id_hex, result.score);
-        println!("   Catalog: {}", result.payload.catalog);
-        println!("   Source: {}", result.payload.source_uri);
-        println!("   Lines: {}-{}", result.payload.start_line, result.payload.end_line);
-        println!("   Type: {}", result.payload.chunk_type);
-        
-        if let Some(ref symbol) = result.payload.symbol_name {
-            println!("   Symbol: {}", symbol);
-        }
-        
-        println!("   Preview:");
-        let preview: Vec<&str> = result.payload.text.lines().take(3).collect();
-        for line in preview {
-            println!("     {}", line);
-        }
-        
-        if result.payload.text.lines().count() > 3 {
-            println!("     ...");
-        }
-        
-        println!();
-    }
-
-    Ok(())
-}
-
 
 /// Run purge command (delete all chunks from a catalog or entire collection)
 fn run_purge(config: &Config, catalog: Option<&str>, all: bool) -> anyhow::Result<()> {

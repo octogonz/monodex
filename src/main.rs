@@ -1243,11 +1243,11 @@ fn run_audit_chunks(count: usize, dir: String) -> anyhow::Result<()> {
             let file_name = path.file_name()?.to_string_lossy().to_string();
             let config = PartitionConfig {
                 file_name,
-                package_name: "rushstack".to_string(),
+                package_name: "n/a".to_string(),
                 allow_fallback: false,  // AST-only mode for accurate quality measurement
                 ..Default::default()
             };
-            let chunks = partition_typescript(&source, &config, path.to_str().unwrap(), "rushstack");
+            let chunks = partition_typescript(&source, &config, path.to_str().unwrap(), "n/a");
             let file_chars = source.len();
             let report = ChunkQualityReport::from_chunks(&chunks, file_chars);
             Some((path, report, chunks))

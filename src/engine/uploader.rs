@@ -27,6 +27,19 @@ struct MatchValue {
     value: String,
 }
 
+/// Condition for integer range matching
+#[derive(Debug, Serialize)]
+struct IntRangeCondition {
+    key: String,
+    range: IntRange,
+}
+
+#[derive(Debug, Serialize)]
+struct IntRange {
+    gte: Option<usize>,
+    lte: Option<usize>,
+}
+
 /// Request body for filter-based operations (delete, etc.)
 #[derive(Debug, Serialize)]
 struct FilterRequest {
@@ -407,7 +420,8 @@ impl QdrantUploader {
         Ok(response.result)
     }
 
-    /// Get a single point by ID
+    /// Get a single point by ID (legacy - uses old hash-based IDs)
+    #[allow(dead_code)]
     pub fn get_point(&self, id: u64) -> Result<Option<PointResult>> {
         #[derive(Debug, Serialize)]
         struct PointRequest {
@@ -439,6 +453,90 @@ impl QdrantUploader {
 
         let point_response: PointResponse = response.json()?;
         Ok(point_response.result.into_iter().next())
+    }
+
+    /// Get chunks by file_id with optional selector (Phase 7+)
+    /// 
+    /// # Arguments
+    /// * `file_id` - 16-char hex file ID
+    /// * `selector` - Which chunks to retrieve
+    /// 
+    /// # Returns
+    /// Vector of points sorted by chunk_number, or error
+    pub fn get_chunks_by_file_id(&self, file_id: &str) -> Result<Vec<PointResult>> {
+        // Build scroll request with filter on file_id
+        #[derive(Debug, Serialize)]
+        struct ScrollRequestWithRange {
+            filter: FilterWithRange,
+            with_payload: bool,
+            #[serde(skip_serializing_if = "Option::is_none")]
+            offset: Option<QdrantId>,
+        }
+
+        #[derive(Debug, Serialize)]
+        struct FilterWithRange {
+            must: Vec<serde_json::Value>,
+        }
+
+        // Build file_id condition
+        let must_values = vec![
+            serde_json::json!({
+                "key": "file_id",
+                "match": { "value": file_id }
+            })
+        ];
+
+        let mut results: Vec<PointResult> = Vec::new();
+        let mut offset: Option<QdrantId> = None;
+        const LIMIT: u32 = 100;
+
+        loop {
+            let endpoint = format!(
+                "{}/collections/{}/points/scroll?limit={}",
+                self.url, self.collection, LIMIT
+            );
+
+            let request_body = ScrollRequestWithRange {
+                filter: FilterWithRange { must: must_values.clone() },
+                with_payload: true,
+                offset: offset.clone(),
+            };
+
+            let response = self.client.post(&endpoint).json(&request_body).send()?;
+
+            if !response.status().is_success() {
+                return Err(anyhow!("Failed to scroll file chunks: HTTP {}", response.status()));
+            }
+
+            let response_text = response.text()?;
+            let scroll_response: ScrollResponse = match serde_json::from_str(&response_text) {
+                Ok(r) => r,
+                Err(e) => {
+                    return Err(anyhow!("Deserialization error: {}", e));
+                }
+            };
+
+            if scroll_response.result.points.is_empty() {
+                break;
+            }
+
+            for point in scroll_response.result.points {
+                results.push(PointResult {
+                    id: point.id,
+                    payload: point.payload,
+                });
+            }
+
+            offset = scroll_response.result.next_page_offset;
+            if offset.is_none() {
+                break;
+            }
+        }
+
+        // Sort by chunk_number
+        results.sort_by_key(|p| p.payload.chunk_number);
+
+        Ok(results)
     }
 }
 

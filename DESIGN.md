@@ -66,18 +66,18 @@ rush-qdrant is a semantic search indexer for Rush monorepos, using Qdrant vector
 ### Phase 7: Query Infrastructure
 **Goal:** Build query-side support for file-based IDs.
 
-6. [ ] Implement selector parsing (`:N`, `:N-M`, `:N-end`) in main.rs
-7. [ ] Add `get_chunks_by_file_id()` method to QdrantUploader (filters by file_id, returns sorted by chunk_number)
-8. [ ] Add catalog preamble logic (collect unique catalogs, look up paths from config, show by default, omit with `--chunks-only`)
+6. [x] Implement selector parsing (`:N`, `:N-M`, `:N-end`) in main.rs
+7. [x] Add `get_chunks_by_file_id()` method to QdrantUploader (filters by file_id, returns sorted by chunk_number)
+8. [x] Add catalog preamble logic (collect unique catalogs, look up paths from config, show by default, omit with `--chunks-only`)
 
 ### Phase 8: CLI Commands
 **Goal:** Update all user-facing commands.
 
-9. [ ] Update `view` command with new output format (header, selector support, multi-chunk)
-10. [ ] Add `--full-paths` flag to `view` command
-11. [ ] Add `--chunks-only` flag to `view` command
-12. [ ] Add error handling for missing chunks (`ERROR: CHUNK NOT FOUND`)
-13. [ ] Update `search` command output to show `<file_id>:<chunk_number>`
+9. [x] Update `view` command with new output format (header, selector support, multi-chunk)
+10. [x] Add `--full-paths` flag to `view` command
+11. [x] Add `--chunks-only` flag to `view` command
+12. [x] Add error handling for missing chunks (`ERROR: CHUNK NOT FOUND`)
+13. [x] Update `search` command output to show `<file_id>:<chunk_number>`
 14. [ ] Update `dump-chunks` command output with file ID and chunk numbers
 15. [ ] Update `audit-chunks` command output with file IDs
 
@@ -85,6 +85,42 @@ rush-qdrant is a semantic search indexer for Rush monorepos, using Qdrant vector
 **Goal:** Rebuild database with new schema.
 
 16. [ ] Delete old collection and re-crawl (no backward compatibility needed)
+
+---
+
+## Backlog for Future Improvements
+
+### Unbounded Write Batching
+
+**Issue:** The crawl command accumulates points for 60 seconds and sends one upsert with all accumulated items. There is no limit on number of points or total request size.
+
+**Risks:**
+- Can exceed Qdrant's 32 MB request size limit
+- Large serialization spikes
+- Increased latency and memory pressure
+- Potential request rejection
+
+**Recommended Fix:**
+Introduce hard batching constraints:
+- `max_points_per_batch`
+- `max_estimated_bytes_per_batch`
+- Optional: `max_time_window`
+
+Flush when ANY condition is met:
+- point_count >= N
+- estimated_bytes >= M
+- elapsed_time >= T
+
+**Estimate size using:**
+- vector length (768 × 4 bytes = 3KB)
+- payload text length
+- fixed overhead per item
+
+### Payload Optimization for Scroll Operations
+
+**Issue:** `get_catalog_files()` requests full payload (including large `text` field) but only uses `source_uri` and `content_hash`.
+
+**Fix:** Restrict payload fields to only those needed. Qdrant supports selecting specific fields in scroll requests.
 
 ---
 

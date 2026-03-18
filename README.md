@@ -100,7 +100,7 @@ rush-qdrant --config /path/to/config.jsonc crawl --catalog rushstack
 
 **Incremental sync:** The crawl is incremental — unchanged files are skipped. You can safely CTRL+C and resume later. Files with chunking warnings are always re-crawled unless `--incremental-warnings` is set.
 
-**Warning state** is persisted in `.rush-qdrant-warnings-<catalog>.json` in the current working directory.
+**Warning state** is persisted in `~/.config/rush-qdrant/warnings-<catalog>.json`.
 
 ### Search the database
 

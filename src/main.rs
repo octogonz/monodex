@@ -288,7 +288,10 @@ fn run_crawl(config: &Config, catalog_name: &str, incremental_warnings: bool) ->
     println!("Found {} files already indexed", existing_files.len());
 
     // Load persisted chunking warning files (sticky by default)
-    let warning_state_path = std::path::PathBuf::from(format!(".rush-qdrant-warnings-{}.json", catalog_name));
+    let warning_state_path = PathBuf::from(shellexpand::tilde(&format!(
+        "~/.config/rush-qdrant/warnings-{}.json",
+        catalog_name
+    )).as_ref());
     let warning_files: HashSet<String> = match std::fs::read_to_string(&warning_state_path) {
         Ok(content) => serde_json::from_str(&content).unwrap_or_default(),
         Err(_) => HashSet::new(),

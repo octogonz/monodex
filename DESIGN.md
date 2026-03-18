@@ -54,10 +54,8 @@ rush-qdrant is a semantic search indexer for Rush monorepos, using Qdrant vector
 4. [x] Create snapshot and check file size
 5. [x] Delete old collection after verification
 
-### Phase 6: File-Based IDs and Multi-Chunk View
-**Goal:** Redesign IDs around files, enable viewing multiple chunks.
-
-#### Phase 6a: Schema Changes (Crawl Side)
+### Phase 6: Schema Changes (Crawl Side)
+**Goal:** Update data model for file-based IDs.
 
 1. [ ] Add `compute_file_id()` to util.rs (hash of relative path)
 2. [ ] Add `file_id`, `relative_path`, `chunk_number`, `chunk_count` fields to Chunk struct
@@ -65,13 +63,15 @@ rush-qdrant is a semantic search indexer for Rush monorepos, using Qdrant vector
 4. [ ] Update QdrantUploader to use random UUIDs for point IDs
 5. [ ] Update QdrantUploader to store new fields in payload
 
-#### Phase 6b: Query Infrastructure
+### Phase 7: Query Infrastructure
+**Goal:** Build query-side support for file-based IDs.
 
 6. [ ] Implement selector parsing (`:N`, `:N-M`, `:N-end`) in main.rs
 7. [ ] Add `get_chunks_by_file_id()` method to QdrantUploader (filters by file_id, returns sorted by chunk_number)
-8. [ ] Add catalog preamble logic (collect unique catalogs, look up paths from config)
+8. [ ] Add catalog preamble logic (collect unique catalogs, look up paths from config, show by default, omit with `--chunks-only`)
 
-#### Phase 6c: CLI Commands
+### Phase 8: CLI Commands
+**Goal:** Update all user-facing commands.
 
 9. [ ] Update `view` command with new output format (header, selector support, multi-chunk)
 10. [ ] Add `--full-paths` flag to `view` command
@@ -81,9 +81,10 @@ rush-qdrant is a semantic search indexer for Rush monorepos, using Qdrant vector
 14. [ ] Update `dump-chunks` command output with file ID and chunk numbers
 15. [ ] Update `audit-chunks` command output with file IDs
 
-#### Phase 6d: Migration
+### Phase 9: Migration
+**Goal:** Rebuild database with new schema.
 
-16. [ ] Delete old collection and re-crawl
+16. [ ] Delete old collection and re-crawl (no backward compatibility needed)
 
 ---
 
@@ -207,6 +208,16 @@ fn compute_file_id(relative_path: &str) -> u64 {
 - Moving the repo doesn't break IDs
 - IDs work regardless of where the catalog is mounted
 
+**Relative path computation:**
+- Strip the catalog's `path` prefix from the full file path
+- Normalize to forward slashes (for cross-platform consistency)
+- Example: If catalog path is `/Users/foo/rushstack` and file is `/Users/foo/rushstack/libraries/rush-lib/src/JsonFile.ts`, the relative path is `libraries/rush-lib/src/JsonFile.ts`
+
+**Chunk numbering:**
+- 1-indexed, ordered by `start_line` (ascending)
+- Assigned after all chunks are created for a file
+- Each chunk output shows its position: `(3/12)` means chunk 3 of 12 total
+
 ### Display Format
 
 The user-facing ID format is:
@@ -220,8 +231,6 @@ Examples:
 - `700a4ba232fe9ddc:3` — chunk 3 of that file
 - `700a4ba232fe9ddc:2-3` — chunks 2 through 3
 - `700a4ba232fe9ddc:3-end` — chunk 3 through the last chunk
-
-**Chunk numbering:** 1-indexed. Each chunk output shows its position: `(3/12)` means chunk 3 of 12 total.
 
 **Why hex:**
 - Only characters `0-9` and `a-f` - no ambiguity
@@ -316,9 +325,11 @@ rush-qdrant search --text <query> [--limit N] [--catalog NAME]
 # View chunks with selector syntax
 rush-qdrant view --id <file_id>[:<selector>] [--full-paths] [--chunks-only]
 
-# Multiple independent selectors
+# Multiple independent selectors (each --id takes one file_id with optional selector)
 rush-qdrant view --id 700a4ba232fe9ddc:2-3 --id e9ddc700a4ba232f:11
 ```
+
+**Note:** Each `--id` argument accepts one file_id with an optional selector. Multiple `--id` arguments can be used to request chunks from different files.
 
 ### Selector Syntax
 
@@ -378,7 +389,9 @@ Type: class
 
 #### With --chunks-only
 
-Omits the catalog preamble, showing only chunk content.
+Omits the catalog preamble, showing only chunk content. Useful for scripts or when the catalog context is not needed.
+
+**Default behavior:** The catalog preamble is shown by default when using `view` command. Use `--chunks-only` to suppress it.
 
 #### Error Handling
 

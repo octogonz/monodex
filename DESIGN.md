@@ -90,6 +90,78 @@ rush-qdrant is a semantic search indexer for Rush monorepos, using Qdrant vector
 
 ## Backlog for Future Improvements
 
+### Critical: Early Exit on Embedding Error Skips Flush
+
+**Issue:** The `try_for_each(...)?` pattern exits early on first embedding error without:
+- Setting `stop_flag`
+- Closing the channel
+- Joining the uploader thread
+- Flushing remaining chunks
+
+**Impact:**
+- Uploader thread may not flush remaining chunks
+- Partial work lost unpredictably
+- No graceful shutdown
+
+**Fix:** Wrap the embedding loop in a closure that ensures cleanup on error:
+```rust
+let embed_result = all_chunks.into_par_iter()...try_for_each(...);
+// Always set stop_flag and join threads, even on error
+stop_flag.store(true, Ordering::Relaxed);
+drop(embed_tx);
+let _ = progress_thread.join();
+let _ = uploader_thread.join();
+embed_result?;
+```
+
+---
+
+### Upload Failures Treated as Success
+
+**Issue:** `upload_batch()` errors are only logged, not propagated. Failed batches are discarded (`accumulated.clear()`).
+
+**Impact:**
+- Chunks can be silently lost
+- Crawl reports success despite missing data
+- File completion tracking may be incorrect
+
+**Fix Options:**
+- Retry with exponential backoff
+- Abort crawl on persistent failure
+- Track failed batches for recovery
+
+---
+
+### Files Deleted Before Replacement Indexing Succeeds
+
+**Issue:** For changed files, existing chunks are deleted immediately before re-indexing.
+
+**Impact:**
+- If chunking/embedding/upload fails, file is permanently missing from index
+- No rollback or recovery mechanism
+
+**Fix:** Consider "replace after success" pattern:
+- Upload new chunks first
+- Only delete old chunks after new ones are confirmed
+- Or use versioned file paths to allow atomic swap
+
+---
+
+### Orphaned Chunks When Chunk #1 Missing
+
+**Issue:** `get_catalog_files()` filters on `chunk_number = 1`. Files missing chunk #1 are invisible to catalog view.
+
+**Impact:**
+- Files are correctly re-crawled (good)
+- But old orphaned chunks remain in Qdrant (bad)
+- Accumulation of orphaned data over time
+
+**Fix:** Periodic garbage collection:
+- Scan for chunks without corresponding chunk #1
+- Or use Qdrant's payload-based deletion for cleanup
+
+---
+
 ### Unbounded Write Batching
 
 **Issue:** The crawl command accumulates points for 60 seconds and sends one upsert with all accumulated items. There is no limit on number of points or total request size.
@@ -118,9 +190,9 @@ Flush when ANY condition is met:
 
 ### Payload Optimization for Scroll Operations
 
-**Issue:** `get_catalog_files()` requests full payload (including large `text` field) but only uses `source_uri` and `content_hash`.
+**Status:** Partially addressed. `get_catalog_files()` now filters on `chunk_number=1` to reduce scan volume.
 
-**Fix:** Restrict payload fields to only those needed. Qdrant supports selecting specific fields in scroll requests.
+**Remaining optimization:** Restrict payload fields to only those needed (`source_uri`, `content_hash`, `file_complete`). Qdrant supports selecting specific fields in scroll requests, which would avoid transferring large `text` fields.
 
 ---
 

@@ -78,8 +78,8 @@ rush-qdrant is a semantic search indexer for Rush monorepos, using Qdrant vector
 11. [x] Add `--chunks-only` flag to `view` command
 12. [x] Add error handling for missing chunks (`ERROR: CHUNK NOT FOUND`)
 13. [x] Update `search` command output to show `<file_id>:<chunk_number>`
-14. [ ] Update `dump-chunks` command output with file ID and chunk numbers
-15. [ ] Update `audit-chunks` command output with file IDs
+14. [x] ~~Update `dump-chunks` command output with file ID and chunk numbers~~ (N/A - debugging tool, not database query)
+15. [x] ~~Update `audit-chunks` command output with file IDs~~ (N/A - debugging tool, not database query)
 
 ### Phase 9: Migration
 **Goal:** Rebuild database with new schema.

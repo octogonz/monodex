@@ -383,7 +383,7 @@ fn run_crawl(config: &Config, catalog_name: &str, incremental_warnings: bool) ->
                 .to_string()
         };
         
-        match chunk_file(file_path, catalog_name, &package_name_or_folder, 6000) {
+        match chunk_file(file_path, catalog_name, repo_root, &package_name_or_folder, 6000) {
             Ok(chunks) => {
                 // Detect fallback warning marker in chunks (injected by partitioner via breadcrumb suffix)
                 let had_warning = chunks.iter().any(|c| c.breadcrumb.contains("[fallback-split]"));

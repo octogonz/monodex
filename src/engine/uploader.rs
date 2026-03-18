@@ -6,7 +6,7 @@
 use anyhow::{anyhow, Result};
 use reqwest::blocking::Client;
 use serde::{Deserialize, Serialize};
-use super::util::compute_chunk_id;
+use uuid::Uuid;
 
 const DEFAULT_QDRANT_URL: &str = "http://localhost:6333";
 
@@ -58,7 +58,7 @@ struct UpsertRequest {
 /// A single point in Qdrant
 #[derive(Debug, Serialize)]
 struct Point {
-    id: u64,  // Hash-based ID
+    id: String,  // Random UUID
     vector: Vec<f32>,
     payload: PointPayload,
 }
@@ -79,6 +79,11 @@ pub struct PointPayload {
     pub chunk_kind: String,  // "content" | "imports" | "changelog" | "config"
     #[serde(skip_serializing_if = "Option::is_none")]
     pub breadcrumb: Option<String>,
+    // Phase 6+ fields
+    pub file_id: String,        // 16-char hex hash of relative path
+    pub relative_path: String,  // Path relative to catalog base
+    pub chunk_number: usize,    // 1-indexed position in file
+    pub chunk_count: usize,     // Total chunks in file
 }
 
 /// Response from Qdrant upsert
@@ -323,9 +328,8 @@ impl QdrantUploader {
         let points: Vec<Point> = chunks
             .iter()
             .map(|(chunk, embedding)| {
-                let id = compute_chunk_id(&chunk.source_uri, chunk.start_line, chunk.part_number);
                 Point {
-                    id,
+                    id: Uuid::new_v4().to_string(),  // Random UUID
                     vector: embedding.clone(),
                     payload: PointPayload {
                         text: chunk.text.clone(),
@@ -339,6 +343,11 @@ impl QdrantUploader {
                         chunk_type: chunk.chunk_type.clone(),
                         chunk_kind: chunk.chunk_kind.clone(),
                         breadcrumb: Some(chunk.breadcrumb.clone()),
+                        // Phase 6+ fields
+                        file_id: super::util::display_file_id(chunk.file_id),
+                        relative_path: chunk.relative_path.clone(),
+                        chunk_number: chunk.chunk_number,
+                        chunk_count: chunk.chunk_count,
                     },
                 }
             })

@@ -15,7 +15,7 @@ pub struct Chunk {
     /// The text content of the chunk
     pub text: String,
     
-    /// Source URI (file path, issue reference, etc.)
+    /// Source URI (full file path, issue reference, etc.)
     pub source_uri: String,
     
     /// Source type (e.g., "code", "issue", "discussion", "document")
@@ -27,10 +27,10 @@ pub struct Chunk {
     /// Content hash (SHA256) for incremental sync
     pub content_hash: String,
     
-    /// Starting line number (1-indexed, None for non-file sources)
+    /// Starting line number (1-indexed)
     pub start_line: usize,
     
-    /// Ending line number (inclusive, None for non-file sources)
+    /// Ending line number (inclusive)
     pub end_line: usize,
     
     /// Optional symbol name (for functions, classes, etc.)
@@ -45,10 +45,22 @@ pub struct Chunk {
     /// Breadcrumb path (e.g., "@rushstack/node-core-library:JsonFile.ts:JsonFile.load")
     pub breadcrumb: String,
     
-    /// Part number (0-indexed) when chunk is split across multiple parts
+    /// File ID (stable hash of relative path from catalog base)
+    pub file_id: u64,
+    
+    /// Relative path from catalog base (e.g., "libraries/rush-lib/src/JsonFile.ts")
+    pub relative_path: String,
+    
+    /// Chunk number within file (1-indexed, ordered by start_line)
+    pub chunk_number: usize,
+    
+    /// Total number of chunks in this file
+    pub chunk_count: usize,
+    
+    /// Part number (0-indexed) when chunk is split by fallback
     pub part_number: usize,
     
-    /// Total number of parts (1 if not split)
+    /// Total number of parts (1 if not split by fallback)
     pub part_count: usize,
 }
 
@@ -58,6 +70,7 @@ pub struct Chunk {
 /// 
 /// * `file_path` - Path to the file to chunk
 /// * `catalog` - Catalog name for this file
+/// * `catalog_base_path` - Base path of the catalog (for computing relative paths)
 /// * `package_name` - Package name for breadcrumb (e.g., "@rushstack/node-core-library")
 /// * `target_size` - Target chunk size in characters (default 6000)
 /// 
@@ -67,11 +80,22 @@ pub struct Chunk {
 pub fn chunk_file(
     file_path: &str, 
     catalog: &str, 
+    catalog_base_path: &str,
     package_name: &str,
     target_size: usize,
 ) -> Result<Vec<Chunk>> {
     let strategy = get_chunk_strategy(file_path);
     let content = fs::read_to_string(file_path)?;
+    
+    // Compute relative path from catalog base
+    let relative_path = file_path
+        .strip_prefix(catalog_base_path)
+        .unwrap_or(file_path)
+        .trim_start_matches('/')
+        .to_string();
+    
+    // Compute file ID from relative path
+    let file_id = super::util::compute_file_id(&relative_path);
     
     match strategy {
         ChunkingStrategy::TypeScript => {
@@ -88,7 +112,22 @@ pub fn chunk_file(
             };
             
             let partitioned = partition_typescript(&content, &config, file_path, catalog);
-            Ok(partitioned.into_iter().map(|p| Chunk::from(p)).collect())
+            let mut chunks: Vec<Chunk> = partitioned.into_iter().map(|p| {
+                let mut chunk = Chunk::from(p);
+                chunk.file_id = file_id;
+                chunk.relative_path = relative_path.clone();
+                chunk
+            }).collect();
+            
+            // Assign chunk numbers (1-indexed, sorted by start_line)
+            chunks.sort_by_key(|c| c.start_line);
+            let chunk_count = chunks.len();
+            for (i, chunk) in chunks.iter_mut().enumerate() {
+                chunk.chunk_number = i + 1;
+                chunk.chunk_count = chunk_count;
+            }
+            
+            Ok(chunks)
         }
         ChunkingStrategy::JavaScript => {
             // Skip .js files for now (per todo plan)
@@ -96,7 +135,7 @@ pub fn chunk_file(
         }
         ChunkingStrategy::Markdown => {
             // TODO: Implement heading-based splitting
-            chunk_by_lines(file_path, catalog, &content, target_size, "markdown")
+            chunk_by_lines(file_path, catalog, &relative_path, file_id, &content, target_size, "markdown")
         }
         ChunkingStrategy::Json => {
             // Skip JSON files (low value for AI search)
@@ -104,10 +143,10 @@ pub fn chunk_file(
         }
         ChunkingStrategy::Skip => Ok(Vec::new()),
         ChunkingStrategy::YamlSimple => {
-            chunk_by_lines(file_path, catalog, &content, target_size, "yaml")
+            chunk_by_lines(file_path, catalog, &relative_path, file_id, &content, target_size, "yaml")
         }
-        ChunkingStrategy::SimpleLine => {// Handle simple line-based files
-            chunk_by_lines(file_path, catalog, &content, target_size, "text")
+        ChunkingStrategy::SimpleLine => {
+            chunk_by_lines(file_path, catalog, &relative_path, file_id, &content, target_size, "text")
         }
     }
 }
@@ -129,6 +168,12 @@ impl From<PartitionedChunk> for Chunk {
             chunk_type: p.chunk_type,
             chunk_kind: p.chunk_kind,
             breadcrumb: p.breadcrumb,
+            // These fields are set by chunk_file after conversion
+            file_id: 0,
+            relative_path: String::new(),
+            chunk_number: 0,
+            chunk_count: 0,
+            // Fallback split info (from breadcrumb)
             part_number,
             part_count,
         }
@@ -158,6 +203,8 @@ fn extract_part_info(breadcrumb: &str) -> (usize, usize) {
 fn chunk_by_lines(
     file_path: &str, 
     catalog: &str, 
+    relative_path: &str,
+    file_id: u64,
     content: &str, 
     max_chars: usize, 
     chunk_type: &str,
@@ -203,6 +250,10 @@ fn chunk_by_lines(
                 chunk_type: chunk_type.to_string(),
                 chunk_kind: "content".to_string(),
                 breadcrumb: file_name.clone(),
+                file_id,
+                relative_path: relative_path.to_string(),
+                chunk_number: 0, // Will update after loop
+                chunk_count: 0,  // Will update after loop
                 part_number: chunks.len(), // 0-indexed
                 part_count: 0, // Will update after loop
             });
@@ -211,10 +262,12 @@ fn chunk_by_lines(
         start = end;
     }
     
-    // Update part_count for all chunks
-    let total_parts = chunks.len().max(1);
-    for chunk in &mut chunks {
-        chunk.part_count = total_parts;
+    // Update chunk_number and chunk_count for all chunks
+    let total_chunks = chunks.len().max(1);
+    for (i, chunk) in chunks.iter_mut().enumerate() {
+        chunk.chunk_number = i + 1;
+        chunk.chunk_count = total_chunks;
+        chunk.part_count = total_chunks;
     }
 
     Ok(chunks)

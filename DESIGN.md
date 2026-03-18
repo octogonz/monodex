@@ -57,11 +57,11 @@ rush-qdrant is a semantic search indexer for Rush monorepos, using Qdrant vector
 ### Phase 6: Schema Changes (Crawl Side)
 **Goal:** Update data model for file-based IDs.
 
-1. [ ] Add `compute_file_id()` to util.rs (hash of relative path)
-2. [ ] Add `file_id`, `relative_path`, `chunk_number`, `chunk_count` fields to Chunk struct
-3. [ ] Update partitioner to compute and assign chunk numbers (1-indexed, ordered by start_line)
-4. [ ] Update QdrantUploader to use random UUIDs for point IDs
-5. [ ] Update QdrantUploader to store new fields in payload
+1. [x] Add `compute_file_id()` to util.rs (hash of relative path)
+2. [x] Add `file_id`, `relative_path`, `chunk_number`, `chunk_count` fields to Chunk struct
+3. [x] Update partitioner to compute and assign chunk numbers (1-indexed, ordered by start_line)
+4. [x] Update QdrantUploader to use random UUIDs for point IDs
+5. [x] Update QdrantUploader to store new fields in payload
 
 ### Phase 7: Query Infrastructure
 **Goal:** Build query-side support for file-based IDs.

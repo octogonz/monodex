@@ -493,15 +493,16 @@ impl QdrantUploader {
             .ok_or_else(|| anyhow!("No chunk #1 found for file {}", file_id))?;
 
         // Now update the payload using Qdrant's set_payload API
-        let point_id_value = match &point_id.id {
-            QdrantId::String(s) => serde_json::json!({ "uuid": s }),
-            QdrantId::Integer(n) => serde_json::json!(n),
+        // The point ID should be passed as a plain string (UUID) or integer
+        let point_id_str = match &point_id.id {
+            QdrantId::String(s) => s.clone(),
+            QdrantId::Integer(n) => n.to_string(),
         };
 
         #[derive(Debug, Serialize)]
         struct SetPayloadRequest {
             payload: std::collections::HashMap<String, serde_json::Value>,
-            points: Vec<serde_json::Value>,
+            points: Vec<String>,
         }
 
         let mut payload = std::collections::HashMap::new();
@@ -509,7 +510,7 @@ impl QdrantUploader {
 
         let request_body = SetPayloadRequest {
             payload,
-            points: vec![point_id_value],
+            points: vec![point_id_str],
         };
 
         let endpoint = format!(

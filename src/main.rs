@@ -363,21 +363,26 @@ fn run_crawl(config: &Config, catalog_name: &str, incremental_warnings: bool) ->
         let current_hash = format!("sha256:{:x}", hasher.finalize());
 
         // Check if file changed
-        if let Some(existing_hash) = existing_files.get(file_path) {
-            if existing_hash == &current_hash {
+        if let Some(existing_info) = existing_files.get(file_path) {
+            if existing_info.content_hash == current_hash && existing_info.file_complete {
                 let has_warning = warning_files.contains(file_path);
                 if has_warning && !incremental_warnings {
                     // Sticky retry for warning files: always reprocess until clean
                 } else {
                     unchanged_count += 1;
-                    continue; // Skip unchanged file
+                    continue; // Skip unchanged and complete file
                 }
             }
             
-            // File changed - delete old chunks
+            // File changed or incomplete - delete old chunks
             uploader.delete_file(file_path, catalog_name)?;
             files_deleted += 1;
-            changed_count += 1;
+            if existing_info.content_hash != current_hash {
+                changed_count += 1;
+            } else {
+                // Content hash matches but file was incomplete
+                changed_count += 1;
+            }
         } else {
             new_count += 1;
         }
@@ -488,6 +493,12 @@ fn run_crawl(config: &Config, catalog_name: &str, incremental_warnings: bool) ->
     let uploader_thread = std::thread::spawn(move || {
         let mut accumulated: Vec<(engine::Chunk, Vec<f32>)> = Vec::new();
         
+        // Track file completion:
+        // - expected_count[file_id]: total chunks expected for this file (set once, from chunk.chunk_count)
+        // - uploaded_count[file_id]: chunks successfully uploaded to Qdrant
+        let mut expected_count: HashMap<String, usize> = HashMap::new();
+        let mut uploaded_count: HashMap<String, usize> = HashMap::new();
+        
         loop {
             // Check if we should upload (60s elapsed or stopped)
             let should_upload = {
@@ -501,19 +512,74 @@ fn run_crawl(config: &Config, catalog_name: &str, incremental_warnings: bool) ->
             };
             
             // Collect all available embeddings
+            // Track expected count per file (set once on first observation)
             while let Ok(embedded) = embed_rx.try_recv() {
+                let file_id = engine::util::display_file_id(embedded.0.file_id);
+                
+                // Set expected count on first observation of this file
+                if let std::collections::hash_map::Entry::Vacant(e) = expected_count.entry(file_id.clone()) {
+                    e.insert(embedded.0.chunk_count);
+                } else {
+                    // Validate consistency: all chunks for same file should report same chunk_count
+                    let existing = expected_count.get(&file_id).unwrap();
+                    if *existing != embedded.0.chunk_count {
+                        eprintln!(
+                            "[{}] ⚠️ Inconsistent chunk_count for file {}: expected {}, got {}",
+                            chrono_timestamp(), file_id, existing, embedded.0.chunk_count
+                        );
+                    }
+                }
+                
                 accumulated.push(embedded);
             }
             
             if should_upload && !accumulated.is_empty() {
                 let count = accumulated.len();
                 eprintln!("[{}] Uploading checkpoint ({} chunks)...", chrono_timestamp(), count);
+                
                 let uploader_guard = uploader_clone.lock().unwrap();
-                if let Err(e) = uploader_guard.upload_batch(&accumulated) {
-                    eprintln!("[{}] ⚠️ Upload failed: {}", chrono_timestamp(), e);
+                match uploader_guard.upload_batch(&accumulated) {
+                    Err(e) => {
+                        eprintln!("[{}] ⚠️ Upload failed: {}", chrono_timestamp(), e);
+                        // Do NOT update uploaded_count - these chunks were not persisted
+                    }
+                    Ok(_) => {
+                        // Upload succeeded - now update uploaded_count per file
+                        let mut files_in_batch: HashMap<String, usize> = HashMap::new();
+                        for (chunk, _) in &accumulated {
+                            let file_id = engine::util::display_file_id(chunk.file_id);
+                            *files_in_batch.entry(file_id).or_insert(0) += 1;
+                        }
+                        
+                        // Merge into uploaded_count
+                        for (file_id, batch_count) in &files_in_batch {
+                            *uploaded_count.entry(file_id.clone()).or_insert(0) += batch_count;
+                        }
+                        
+                        // Check completion once per file (files where uploaded == expected)
+                        let mut completed_files: Vec<String> = Vec::new();
+                        for file_id in files_in_batch.keys() {
+                            let uploaded = uploaded_count.get(file_id).copied().unwrap_or(0);
+                            let expected = expected_count.get(file_id).copied().unwrap_or(0);
+                            if uploaded == expected && expected > 0 {
+                                completed_files.push(file_id.clone());
+                            }
+                        }
+                        
+                        // Mark completed files and clean up tracking state
+                        for file_id in &completed_files {
+                            if let Err(e) = uploader_guard.mark_file_complete(file_id) {
+                                eprintln!("[{}] ⚠️ Failed to mark file complete: {}", chrono_timestamp(), e);
+                            }
+                            // Remove tracking state for completed files
+                            uploaded_count.remove(file_id);
+                            expected_count.remove(file_id);
+                        }
+                        
+                        eprintln!("[{}] Checkpoint saved ({} files completed)", chrono_timestamp(), completed_files.len());
+                    }
                 }
                 drop(uploader_guard);
-                eprintln!("[{}] Checkpoint saved", chrono_timestamp());
                 accumulated.clear();
             }
             
@@ -521,15 +587,52 @@ fn run_crawl(config: &Config, catalog_name: &str, incremental_warnings: bool) ->
             if stop_uploader.load(Ordering::Relaxed) {
                 // Drain remaining
                 while let Ok(embedded) = embed_rx.try_recv() {
+                    let file_id = engine::util::display_file_id(embedded.0.file_id);
+                    
+                    if let std::collections::hash_map::Entry::Vacant(e) = expected_count.entry(file_id.clone()) {
+                        e.insert(embedded.0.chunk_count);
+                    }
+                    
                     accumulated.push(embedded);
                 }
                 
                 // Final upload
                 if !accumulated.is_empty() {
                     eprintln!("[{}] Uploading final batch ({} chunks)...", chrono_timestamp(), accumulated.len());
+                    
                     let uploader_guard = uploader_clone.lock().unwrap();
-                    if let Err(e) = uploader_guard.upload_batch(&accumulated) {
-                        eprintln!("[{}] ⚠️ Final upload failed: {}", chrono_timestamp(), e);
+                    match uploader_guard.upload_batch(&accumulated) {
+                        Err(e) => {
+                            eprintln!("[{}] ⚠️ Final upload failed: {}", chrono_timestamp(), e);
+                        }
+                        Ok(_) => {
+                            // Update uploaded_count
+                            let mut files_in_batch: HashMap<String, usize> = HashMap::new();
+                            for (chunk, _) in &accumulated {
+                                let file_id = engine::util::display_file_id(chunk.file_id);
+                                *files_in_batch.entry(file_id).or_insert(0) += 1;
+                            }
+                            
+                            for (file_id, batch_count) in &files_in_batch {
+                                *uploaded_count.entry(file_id.clone()).or_insert(0) += batch_count;
+                            }
+                            
+                            // Check and mark completed files
+                            let mut completed_files: Vec<String> = Vec::new();
+                            for file_id in files_in_batch.keys() {
+                                let uploaded = uploaded_count.get(file_id).copied().unwrap_or(0);
+                                let expected = expected_count.get(file_id).copied().unwrap_or(0);
+                                if uploaded == expected && expected > 0 {
+                                    completed_files.push(file_id.clone());
+                                }
+                            }
+                            
+                            for file_id in &completed_files {
+                                if let Err(e) = uploader_guard.mark_file_complete(file_id) {
+                                    eprintln!("[{}] ⚠️ Failed to mark file complete: {}", chrono_timestamp(), e);
+                                }
+                            }
+                        }
                     }
                 }
                 break;

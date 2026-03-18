@@ -97,6 +97,16 @@ pub struct PointPayload {
     pub relative_path: String,  // Path relative to catalog base
     pub chunk_number: usize,    // 1-indexed position in file
     pub chunk_count: usize,     // Total chunks in file
+    // File completion tracking (Phase 10)
+    #[serde(default)]
+    pub file_complete: bool,    // true on chunk #1 when all chunks uploaded
+}
+
+/// Information about a file for incremental sync
+#[derive(Debug, Clone)]
+pub struct FileSyncInfo {
+    pub content_hash: String,
+    pub file_complete: bool,
 }
 
 /// Response from Qdrant upsert
@@ -276,8 +286,9 @@ impl QdrantUploader {
     }
 
     /// Get all points for a specific catalog
-    /// Returns a map of file path → content hash
-    pub fn get_catalog_files(&self, catalog: &str) -> Result<std::collections::HashMap<String, String>> {
+    /// Returns a map of file path → FileSyncInfo (content_hash and file_complete)
+    /// Only queries chunk #1 per file for efficiency
+    pub fn get_catalog_files(&self, catalog: &str) -> Result<std::collections::HashMap<String, FileSyncInfo>> {
         let mut files = std::collections::HashMap::new();
         let mut offset: Option<QdrantId> = None;
         const LIMIT: u32 = 1000;
@@ -288,13 +299,33 @@ impl QdrantUploader {
                 self.url, self.collection, LIMIT
             );
 
-            let request_body = ScrollRequest {
-                filter: Filter {
-                    must: vec![Condition {
-                        key: "catalog".to_string(),
-                        r#match: MatchValue { value: catalog.to_string() },
-                    }],
-                },
+            // Build filter with catalog AND chunk_number=1
+            #[derive(Debug, Serialize)]
+            struct ScrollRequestWithIntFilter {
+                filter: FilterWithIntCondition,
+                with_payload: bool,
+                #[serde(skip_serializing_if = "Option::is_none")]
+                offset: Option<QdrantId>,
+            }
+
+            #[derive(Debug, Serialize)]
+            struct FilterWithIntCondition {
+                must: Vec<serde_json::Value>,
+            }
+
+            let must_values = vec![
+                serde_json::json!({
+                    "key": "catalog",
+                    "match": { "value": catalog }
+                }),
+                serde_json::json!({
+                    "key": "chunk_number",
+                    "match": { "value": 1 }
+                }),
+            ];
+
+            let request_body = ScrollRequestWithIntFilter {
+                filter: FilterWithIntCondition { must: must_values },
                 with_payload: true,
                 offset: offset.clone(),
             };
@@ -320,7 +351,13 @@ impl QdrantUploader {
             }
 
             for point in scroll_response.result.points {
-                files.insert(point.payload.source_uri.clone(), point.payload.content_hash.clone());
+                files.insert(
+                    point.payload.source_uri.clone(),
+                    FileSyncInfo {
+                        content_hash: point.payload.content_hash.clone(),
+                        file_complete: point.payload.file_complete,
+                    },
+                );
             }
 
             offset = scroll_response.result.next_page_offset;
@@ -361,6 +398,8 @@ impl QdrantUploader {
                         relative_path: chunk.relative_path.clone(),
                         chunk_number: chunk.chunk_number,
                         chunk_count: chunk.chunk_count,
+                        // Phase 10: file completion tracking
+                        file_complete: false,
                     },
                 }
             })
@@ -382,6 +421,109 @@ impl QdrantUploader {
         }
 
         Ok(response.result.operation_id)
+    }
+
+    /// Mark a file as complete by setting file_complete=true on chunk #1
+    /// 
+    /// This is called after all chunks for a file have been uploaded.
+    /// Uses Qdrant's payload update API to set the field without rewriting the point.
+    pub fn mark_file_complete(&self, file_id: &str) -> Result<()> {
+        // First, find the point ID for chunk #1 of this file
+        #[derive(Debug, Serialize)]
+        struct ScrollRequestForId {
+            filter: FilterForId,
+            with_payload: bool,
+            limit: u32,
+        }
+
+        #[derive(Debug, Serialize)]
+        struct FilterForId {
+            must: Vec<serde_json::Value>,
+        }
+
+        let must_values = vec![
+            serde_json::json!({
+                "key": "file_id",
+                "match": { "value": file_id }
+            }),
+            serde_json::json!({
+                "key": "chunk_number",
+                "match": { "value": 1 }
+            }),
+        ];
+
+        let endpoint = format!(
+            "{}/collections/{}/points/scroll?limit=1",
+            self.url, self.collection
+        );
+
+        let request_body = ScrollRequestForId {
+            filter: FilterForId { must: must_values },
+            with_payload: false,
+            limit: 1,
+        };
+
+        let response = self.client.post(&endpoint).json(&request_body).send()?;
+
+        if !response.status().is_success() {
+            return Err(anyhow!("Failed to find chunk #1 for file {}: HTTP {}", file_id, response.status()));
+        }
+
+        #[derive(Debug, Deserialize)]
+        struct ScrollIdResponse {
+            result: ScrollIdResult,
+        }
+
+        #[derive(Debug, Deserialize)]
+        struct ScrollIdResult {
+            points: Vec<ScrollIdPoint>,
+        }
+
+        #[derive(Debug, Deserialize)]
+        struct ScrollIdPoint {
+            id: QdrantId,
+        }
+
+        let scroll_response: ScrollIdResponse = response.json()?;
+
+        let point_id = scroll_response
+            .result
+            .points
+            .first()
+            .ok_or_else(|| anyhow!("No chunk #1 found for file {}", file_id))?;
+
+        // Now update the payload using Qdrant's set_payload API
+        let point_id_value = match &point_id.id {
+            QdrantId::String(s) => serde_json::json!({ "uuid": s }),
+            QdrantId::Integer(n) => serde_json::json!(n),
+        };
+
+        #[derive(Debug, Serialize)]
+        struct SetPayloadRequest {
+            payload: std::collections::HashMap<String, serde_json::Value>,
+            points: Vec<serde_json::Value>,
+        }
+
+        let mut payload = std::collections::HashMap::new();
+        payload.insert("file_complete".to_string(), serde_json::json!(true));
+
+        let request_body = SetPayloadRequest {
+            payload,
+            points: vec![point_id_value],
+        };
+
+        let endpoint = format!(
+            "{}/collections/{}/points/payload",
+            self.url, self.collection
+        );
+
+        let response = self.client.post(&endpoint).json(&request_body).send()?;
+
+        if !response.status().is_success() {
+            return Err(anyhow!("Failed to set file_complete for {}: HTTP {}", file_id, response.status()));
+        }
+
+        Ok(())
     }
 
     /// Queries the collection with an embedding

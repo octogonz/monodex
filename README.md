@@ -16,6 +16,34 @@
 - **Incremental sync**: Content-hash based change detection for fast re-indexing
 - **Rush-optimized**: Smart exclusion rules for Rush monorepo patterns
 
+## Agent Usage Guide
+
+This tool is designed for AI assistants. The indexed database provides a complete, internally consistent snapshot of the codebase as it existed at crawl time — independent of any local file changes, branches, or whether the repo is even cloned. This makes it more than a replacement for grep; it can be the primary way an agent learns about a codebase.
+
+**Typical workflow:**
+
+1. **Start with semantic search** to find relevant code:
+   ```bash
+   rush-qdrant search --text "how does rush handle pnpm shrinkwrap files"
+   ```
+
+2. **View full chunks** using the `file_id:chunk_number` from search results:
+   ```bash
+   rush-qdrant view --id 700a4ba232fe9ddc:3
+   ```
+
+3. **Get surrounding context** by viewing adjacent chunks:
+   ```bash
+   rush-qdrant view --id 700a4ba232fe9ddc:2-4
+   ```
+
+4. **Use `--full-paths`** when you need the actual file location on disk:
+   ```bash
+   rush-qdrant view --id 700a4ba232fe9ddc:3 --full-paths
+   ```
+
+**Output format:** Search results prefix code lines with `>`, making them easy to distinguish from your own output and preventing injection attacks.
+
 ## Installation
 
 ```bash
@@ -40,12 +68,25 @@ Create `~/.config/rush-qdrant/config.jsonc`:
   "catalogs": {
     "rushstack": {
       "type": "monorepo",
-      "path": "/path/to/rushstack",
-      "package_name": "@rushstack"
+      "path": "/path/to/rushstack"
     }
   }
 }
 ```
+
+**Fields:**
+
+| Field | Required | Description |
+|-------|----------|-------------|
+| `qdrant.url` | No | Qdrant server URL (default: `http://localhost:6333`) |
+| `qdrant.collection` | Yes | Qdrant collection name |
+| `catalogs.<name>.type` | Yes | Catalog type: `"monorepo"` or `"folder"` |
+| `catalogs.<name>.path` | Yes | Absolute path to the repository root |
+
+**Catalog types:**
+
+- **`monorepo`**: Walks upward to find the nearest `package.json` for package name resolution. Breadcrumbs show `@scope/package-name:File.ts:Symbol`.
+- **`folder`**: Uses the parent folder name as the package identifier. Breadcrumbs show `folder-name:File.ts:Symbol`.
 
 ### Index a repository
 
@@ -56,6 +97,10 @@ rush-qdrant crawl --catalog rushstack
 # With custom config path
 rush-qdrant --config /path/to/config.jsonc crawl --catalog rushstack
 ```
+
+**Incremental sync:** The crawl is incremental — unchanged files are skipped. You can safely CTRL+C and resume later. Files with chunking warnings are always re-crawled unless `--incremental-warnings` is set.
+
+**Warning state** is persisted in `.rush-qdrant-warnings-<catalog>.json` in the current working directory.
 
 ### Search the database
 
@@ -70,11 +115,26 @@ rush-qdrant search --text "API Extractor" --catalog rushstack --limit 10
 ### View full chunks
 
 ```bash
-# View a single chunk by ID
+# View all chunks in a file
 rush-qdrant view --id 30440fb2ecd5fa62
 
-# View multiple chunks (comma-separated)
-rush-qdrant view --id 30440fb2ecd5fa62,a1b2c3d4e5f67890
+# View a specific chunk by number
+rush-qdrant view --id 30440fb2ecd5fa62:3
+
+# View a range of chunks
+rush-qdrant view --id 30440fb2ecd5fa62:2-4
+
+# View from chunk 3 to the end
+rush-qdrant view --id 30440fb2ecd5fa62:3-end
+
+# View chunks from multiple files (multiple --id flags)
+rush-qdrant view --id 30440fb2ecd5fa62:3 --id a1b2c3d4e5f67890:1-2
+
+# Show full filesystem paths
+rush-qdrant view --id 30440fb2ecd5fa62 --full-paths
+
+# Omit catalog preamble (chunks only)
+rush-qdrant view --id 30440fb2ecd5fa62 --chunks-only
 ```
 
 ### Debug chunking algorithm
@@ -89,20 +149,26 @@ rush-qdrant dump-chunks --file ./src/JsonFile.ts --with-fallback
 # Visualize mode - show full chunk contents
 rush-qdrant dump-chunks --file ./src/JsonFile.ts --visualize
 
-# Audit chunking quality across multiple files (AST-only mode)
-rush-qdrant audit-chunks --count 20
+# Debug mode - show partitioning decisions
+rush-qdrant dump-chunks --file ./src/JsonFile.ts --debug
 
-# Audit from a specific directory
-rush-qdrant audit-chunks --count 50 --dir /path/to/project
+# Custom target chunk size (default: 6000 chars)
+rush-qdrant dump-chunks --file ./src/JsonFile.ts --target-size 4000
+
+# Audit chunking quality across multiple files (AST-only mode)
+rush-qdrant audit-chunks --count 20 --dir /path/to/project
 ```
 
 **Chunk Quality Score**: 0-100%, higher is better. Scores below 95% may indicate chunking issues. Note: `dump-chunks` and `audit-chunks` use AST-only mode (fallback disabled) to accurately measure partitioner quality.
 
-### Verbose query (for debugging)
+### Purge data
 
 ```bash
-# Verbose output for debugging search behavior
-rush-qdrant query --text "how to read JSON files"
+# Purge all chunks from a specific catalog
+rush-qdrant purge --catalog rushstack
+
+# Purge entire collection (all catalogs)
+rush-qdrant purge --all
 ```
 
 ## Architecture
@@ -143,6 +209,8 @@ rush-qdrant/
 **Markdown files** are split by heading hierarchy.
 
 **JSON files** are skipped (low value for semantic search).
+
+**Exclusions:** Folders like `node_modules` and files like `*.test.ts` are automatically skipped. Exclusion rules are currently hardcoded in `config.rs` but will be configurable in a future release.
 
 ## Chunk Size Target
 

@@ -81,12 +81,23 @@ rush-qdrant is a semantic search indexer for Rush monorepos, using Qdrant vector
 14. [x] ~~Update `dump-chunks` command output with file ID and chunk numbers~~ (N/A - debugging tool, not database query)
 15. [x] ~~Update `audit-chunks` command output with file IDs~~ (N/A - debugging tool, not database query)
 
-### Phase 9: Migration
-**Goal:** Rebuild database with new schema.
+### Phase 9: Remove query Command
+**Goal:** Simplify CLI by removing redundant command.
 
-16. [ ] Delete old collection and re-crawl (no backward compatibility needed)
+1. [ ] Remove `query` command from main.rs
+2. [ ] Remove `query` from CLI help and documentation
+3. [ ] Commit changes
 
----
+### Phase 10: Reserved for Future Use
+
+### Phase 11: Configurable File Exclusions
+**Goal:** Move hardcoded exclusion rules to user-editable config.
+
+1. [ ] Add `exclude` field to `CatalogConfig` struct
+2. [ ] Support glob patterns for files and directories to skip
+3. [ ] Migrate rules from hardcoded `config.rs` to config.jsonc
+4. [ ] Update README.md with new config options
+5. [ ] Commit changes
 
 ## Backlog for Future Improvements
 

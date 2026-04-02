@@ -1,8 +1,8 @@
-# rush-qdrant Design Document
+# monodex Design Document
 
 ## Overview
 
-rush-qdrant is a semantic search indexer for Rush monorepos, using Qdrant vector database with local embeddings.
+monodex is a semantic search indexer for Rush monorepos, using Qdrant vector database with local embeddings.
 
 ---
 
@@ -437,13 +437,13 @@ This allows search to prioritize `content` chunks while still returning other ki
 
 ```bash
 # Search with compact blurb output
-rush-qdrant search --text <query> [--limit N] [--catalog NAME]
+monodex search --text <query> [--limit N] [--catalog NAME]
 
 # View chunks with selector syntax
-rush-qdrant view --id <file_id>[:<selector>] [--full-paths] [--chunks-only]
+monodex view --id <file_id>[:<selector>] [--full-paths] [--chunks-only]
 
 # Multiple independent selectors (each --id takes one file_id with optional selector)
-rush-qdrant view --id 700a4ba232fe9ddc:2-3 --id e9ddc700a4ba232f:11
+monodex view --id 700a4ba232fe9ddc:2-3 --id e9ddc700a4ba232f:11
 ```
 
 **Note:** Each `--id` argument accepts one file_id with an optional selector. Multiple `--id` arguments can be used to request chunks from different files.
@@ -798,7 +798,7 @@ These markers are **per-chunk**, not file-level. Only chunks actually created by
 
 ### Sticky Warning Recrawl
 
-Files with chunking warnings are tracked in `.rush-qdrant-warnings-<catalog>.json`. This ensures:
+Files with chunking warnings are tracked in `.monodex-warnings-<catalog>.json`. This ensures:
 - Files with warnings are re-crawled even if content hash unchanged
 - After fixing the partitioner, re-crawl verifies the fix
 - Warning state is separate from Qdrant (operational ledger, not indexed content)
@@ -825,7 +825,7 @@ Files with chunking warnings are tracked in `.rush-qdrant-warnings-<catalog>.jso
 
 Beyond source code, we will crawl:
 - **GitHub Issues**: Each comment as a chunk
-- **Zulip Discussions**: Each message as a chunk  
+- **Zulip Discussions**: Each message as a chunk
 - **Rush Hour Meeting Notes**: Sections/paragraphs as chunks
 
 ### Design Principle: Tagged Union (Apples and Oranges in Separate Boxes)
@@ -850,7 +850,7 @@ struct CodeChunk {
     catalog: String,
     breadcrumb: String,
     chunk_type: String,
-    
+
     // Code-specific
     file_id: String,
     relative_path: String,
@@ -868,7 +868,7 @@ struct IssueChunk {
     catalog: String,
     breadcrumb: String,
     chunk_type: String,
-    
+
     // Issue-specific
     repo: String,
     issue_number: u64,
@@ -918,13 +918,13 @@ Stored as JSON with a `source_type` discriminator:
 
 ```bash
 # Search only code
-rush-qdrant search --text "json parsing" --type code
+monodex search --text "json parsing" --type code
 
-# Search only issues  
-rush-qdrant search --text "build error" --type issue
+# Search only issues
+monodex search --text "build error" --type issue
 
 # Search everything
-rush-qdrant search --text "api design"
+monodex search --text "api design"
 ```
 
 ### Implementation Approach

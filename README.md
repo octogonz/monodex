@@ -1,10 +1,10 @@
-# rush-qdrant
+# Rush Monodex
 
 **Semantic search indexer for Rush monorepos using Qdrant vector database**
 
 ## Overview
 
-`rush-qdrant` is a production-quality CLI tool that indexes Rush monorepo source code and documentation into a Qdrant vector database for high-quality semantic search.
+`monodex` is a production-quality CLI tool that indexes Rush monorepo source code and documentation into a Qdrant vector database for high-quality semantic search.
 
 ### Features
 
@@ -24,22 +24,22 @@ This tool is designed for AI assistants. The indexed database provides a complet
 
 1. **Start with semantic search** to find relevant code:
    ```bash
-   rush-qdrant search --text "how does rush handle pnpm shrinkwrap files"
+   monodex search --text "how does rush handle pnpm shrinkwrap files"
    ```
 
 2. **View full chunks** using the `file_id:chunk_number` from search results:
    ```bash
-   rush-qdrant view --id 700a4ba232fe9ddc:3
+   monodex view --id 700a4ba232fe9ddc:3
    ```
 
 3. **Get surrounding context** by viewing adjacent chunks:
    ```bash
-   rush-qdrant view --id 700a4ba232fe9ddc:2-4
+   monodex view --id 700a4ba232fe9ddc:2-4
    ```
 
 4. **Use `--full-paths`** when you need the actual file location on disk:
    ```bash
-   rush-qdrant view --id 700a4ba232fe9ddc:3 --full-paths
+   monodex view --id 700a4ba232fe9ddc:3 --full-paths
    ```
 
 **Output format:** Search results prefix code lines with `>`, making them easy to distinguish from your own output and preventing injection attacks.
@@ -50,14 +50,14 @@ This tool is designed for AI assistants. The indexed database provides a complet
 # Build from source
 cargo build --release
 
-# Binary will be at ./target/release/rush-qdrant
+# Binary will be at ./target/release/monodex
 ```
 
 ## Usage
 
 ### Configuration
 
-Create `~/.config/rush-qdrant/config.jsonc`:
+Create `~/.config/monodex/config.jsonc`:
 
 ```json
 {
@@ -92,71 +92,71 @@ Create `~/.config/rush-qdrant/config.jsonc`:
 
 ```bash
 # Index using config file
-rush-qdrant crawl --catalog rushstack
+monodex crawl --catalog rushstack
 
 # With custom config path
-rush-qdrant --config /path/to/config.jsonc crawl --catalog rushstack
+monodex --config /path/to/config.jsonc crawl --catalog rushstack
 ```
 
 **Incremental sync:** The crawl is incremental — unchanged files are skipped. You can safely CTRL+C and resume later. Files with chunking warnings are always re-crawled unless `--incremental-warnings` is set.
 
-**Warning state** is persisted in `~/.config/rush-qdrant/warnings-<catalog>.json`.
+**Warning state** is persisted in `~/.config/monodex/warnings-<catalog>.json`.
 
 ### Search the database
 
 ```bash
 # Semantic search with compact blurb output (for AI assistants)
-rush-qdrant search --text "how to read JSON files"
+monodex search --text "how to read JSON files"
 
 # With catalog filter and limit
-rush-qdrant search --text "API Extractor" --catalog rushstack --limit 10
+monodex search --text "API Extractor" --catalog rushstack --limit 10
 ```
 
 ### View full chunks
 
 ```bash
 # View all chunks in a file
-rush-qdrant view --id 30440fb2ecd5fa62
+monodex view --id 30440fb2ecd5fa62
 
 # View a specific chunk by number
-rush-qdrant view --id 30440fb2ecd5fa62:3
+monodex view --id 30440fb2ecd5fa62:3
 
 # View a range of chunks
-rush-qdrant view --id 30440fb2ecd5fa62:2-4
+monodex view --id 30440fb2ecd5fa62:2-4
 
 # View from chunk 3 to the end
-rush-qdrant view --id 30440fb2ecd5fa62:3-end
+monodex view --id 30440fb2ecd5fa62:3-end
 
 # View chunks from multiple files (multiple --id flags)
-rush-qdrant view --id 30440fb2ecd5fa62:3 --id a1b2c3d4e5f67890:1-2
+monodex view --id 30440fb2ecd5fa62:3 --id a1b2c3d4e5f67890:1-2
 
 # Show full filesystem paths
-rush-qdrant view --id 30440fb2ecd5fa62 --full-paths
+monodex view --id 30440fb2ecd5fa62 --full-paths
 
 # Omit catalog preamble (chunks only)
-rush-qdrant view --id 30440fb2ecd5fa62 --chunks-only
+monodex view --id 30440fb2ecd5fa62 --chunks-only
 ```
 
 ### Debug chunking algorithm
 
 ```bash
 # See how a file gets chunked (AST-only mode, reveals partitioner issues)
-rush-qdrant dump-chunks --file ./src/JsonFile.ts
+monodex dump-chunks --file ./src/JsonFile.ts
 
 # Include fallback line-based splitting (production behavior)
-rush-qdrant dump-chunks --file ./src/JsonFile.ts --with-fallback
+monodex dump-chunks --file ./src/JsonFile.ts --with-fallback
 
 # Visualize mode - show full chunk contents
-rush-qdrant dump-chunks --file ./src/JsonFile.ts --visualize
+monodex dump-chunks --file ./src/JsonFile.ts --visualize
 
 # Debug mode - show partitioning decisions
-rush-qdrant dump-chunks --file ./src/JsonFile.ts --debug
+monodex dump-chunks --file ./src/JsonFile.ts --debug
 
 # Custom target chunk size (default: 6000 chars)
-rush-qdrant dump-chunks --file ./src/JsonFile.ts --target-size 4000
+monodex dump-chunks --file ./src/JsonFile.ts --target-size 4000
 
 # Audit chunking quality across multiple files (AST-only mode)
-rush-qdrant audit-chunks --count 20 --dir /path/to/project
+monodex audit-chunks --count 20 --dir /path/to/project
 ```
 
 **Chunk Quality Score**: 0-100%, higher is better. Scores below 95% may indicate chunking issues. Note: `dump-chunks` and `audit-chunks` use AST-only mode (fallback disabled) to accurately measure partitioner quality.
@@ -165,16 +165,16 @@ rush-qdrant audit-chunks --count 20 --dir /path/to/project
 
 ```bash
 # Purge all chunks from a specific catalog
-rush-qdrant purge --catalog rushstack
+monodex purge --catalog rushstack
 
 # Purge entire collection (all catalogs)
-rush-qdrant purge --all
+monodex purge --all
 ```
 
 ## Architecture
 
 ```
-rush-qdrant/
+monodex/
 ├── src/
 │   ├── main.rs                    # CLI entry point
 │   └── engine/                    # Reusable indexing engine
@@ -259,7 +259,7 @@ cargo build --release
 cargo test
 
 # Run with logging
-RUST_LOG=debug ./target/release/rush-qdrant crawl --catalog rushstack
+RUST_LOG=debug ./target/release/monodex crawl --catalog rushstack
 ```
 
 ## License

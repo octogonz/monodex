@@ -1737,7 +1737,7 @@ dependencies = [
 ]
 
 [[package]]
-name = "rush-qdrant"
+name = "monodex"
 version = "0.1.0"
 dependencies = [
  "anyhow",

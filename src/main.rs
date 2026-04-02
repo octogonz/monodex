@@ -1,5 +1,5 @@
-//! rush-qdrant: Semantic search indexer for Rush monorepos
-//! 
+//! monodex: Semantic search indexer for Rush monorepos
+//!
 //! Uses Qdrant vector database with jina-embeddings-v2-base-code embeddings
 //! Intelligently chunks code and documentation for high-quality semantic search
 
@@ -44,12 +44,12 @@ struct Config {
 /// Rush semantic search crawler for Qdrant
 /// https://www.rushstack.io
 #[derive(Parser)]
-#[command(name = "rush-qdrant", version, about)]
+#[command(name = "monodex", version, about)]
 struct Cli {
-    /// Config file path (default: ~/.config/rush-qdrant/config.jsonc)
+    /// Config file path (default: ~/.config/monodex/config.jsonc)
     #[arg(long)]
     config: Option<PathBuf>,
-    
+
     #[command(subcommand)]
     command: Commands,
 }
@@ -69,18 +69,18 @@ enum Commands {
         #[arg(long, default_value_t = false)]
         incremental_warnings: bool,
     },
-    
+
     /// Purge all chunks from a catalog or entire collection
     Purge {
         /// Catalog name to purge (if not specified, purges entire collection)
         #[arg(long)]
         catalog: Option<String>,
-        
+
         /// Purge all catalogs (entire collection)
         #[arg(long)]
         all: bool,
     },
-    
+
     /// Dump chunks for a TypeScript file (for debugging chunking algorithm).
     /// Uses AST-only mode by default to reveal partitioner issues.
     /// Add --with-fallback to see production behavior with fallback mitigation.
@@ -88,61 +88,61 @@ enum Commands {
         /// TypeScript file path
         #[arg(long)]
         file: PathBuf,
-        
+
         /// Target chunk size in chars
         #[arg(long, default_value = "6000")]
         target_size: usize,
-        
+
         /// Show visualization mode (full chunk contents)
         #[arg(long)]
         visualize: bool,
-        
+
         /// Enable fallback line-based splitting for oversized chunks.
         /// By default, dump-chunks uses strict AST-only mode to reveal
         /// where the partitioner failed to find good split points.
         #[arg(long)]
         with_fallback: bool,
-        
+
         /// Enable debug logging for partitioning decisions
         #[arg(long)]
         debug: bool,
     },
-    
+
     /// Search with compact blurb output (for AI assistants)
     Search {
         /// Search query text
         #[arg(long)]
         text: String,
-        
+
         /// Number of results
         #[arg(long, default_value = "10")]
         limit: usize,
-        
+
         /// Filter by catalog (optional - searches all if omitted)
         #[arg(long)]
         catalog: Option<String>,
     },
-    
+
     /// View chunks by their file IDs with optional selectors
     View {
         /// File IDs with optional selectors (can be specified multiple times)
-        /// Formats: 
+        /// Formats:
         ///   700a4ba232fe9ddc        - all chunks in file
         ///   700a4ba232fe9ddc:3      - chunk 3
         ///   700a4ba232fe9ddc:2-3    - chunks 2 through 3
         ///   700a4ba232fe9ddc:3-end  - chunk 3 through the last chunk
         #[arg(long)]
         id: Vec<String>,
-        
+
         /// Show full filesystem paths
         #[arg(long)]
         full_paths: bool,
-        
+
         /// Omit catalog preamble (show only chunks)
         #[arg(long)]
         chunks_only: bool,
     },
-    
+
     /// Audit chunking quality across multiple files (AST-only mode).
     /// Scores reflect AST partitioning quality without fallback mitigation.
     /// Use after eliminating crawl warnings to find suboptimal chunk boundaries.
@@ -150,14 +150,14 @@ enum Commands {
         /// Number of files to sample
         #[arg(long, default_value = "20")]
         count: usize,
-        
+
         /// Directory to sample from
         #[arg(long)]
         dir: String,
     },
 }
 
-const DEFAULT_CONFIG_PATH: &str = "~/.config/rush-qdrant/config.jsonc";
+const DEFAULT_CONFIG_PATH: &str = "~/.config/monodex/config.jsonc";
 
 /// Get current timestamp for logging
 fn chrono_timestamp() -> String {
@@ -178,7 +178,7 @@ fn format_duration(secs: f64) -> String {
     let hours = total_secs / 3600;
     let mins = (total_secs % 3600) / 60;
     let s = total_secs % 60;
-    
+
     if hours > 0 {
         format!("{}h {}m", hours, mins)
     } else if mins > 0 {
@@ -198,7 +198,7 @@ fn format_eta(secs: f64) -> String {
 
 fn main() -> anyhow::Result<()> {
     let cli = Cli::parse();
-    
+
     // Load config
     let config_path = cli.config.unwrap_or_else(|| {
         PathBuf::from(shellexpand::tilde(DEFAULT_CONFIG_PATH).as_ref())
@@ -232,11 +232,11 @@ fn main() -> anyhow::Result<()> {
 fn load_config(path: &PathBuf) -> anyhow::Result<Config> {
     let content = std::fs::read_to_string(path)
         .map_err(|e| anyhow::anyhow!("Failed to read config file {}: {}", path.display(), e))?;
-    
+
     // Parse JSON (for now - will add JSONC support later)
     let config: Config = serde_json::from_str(&content)
         .map_err(|e| anyhow::anyhow!("Failed to parse config file: {}", e))?;
-    
+
     Ok(config)
 }
 
@@ -245,13 +245,13 @@ fn run_crawl(config: &Config, catalog_name: &str, incremental_warnings: bool) ->
     let total_start = std::time::Instant::now();
     println!("🔍 Starting crawl...");
     println!("Catalog: {}", catalog_name);
-    
+
     // Get catalog config
     let catalog_config = config.catalogs.get(catalog_name)
         .ok_or_else(|| anyhow::anyhow!("Catalog '{}' not found in config", catalog_name))?;
-    
+
     let directory = &catalog_config.path;
-    
+
     println!("Directory: {}", directory);
     println!("Type: {}", catalog_config.r#type);
     println!("Collection: {}", config.qdrant.collection);
@@ -271,7 +271,7 @@ fn run_crawl(config: &Config, catalog_name: &str, incremental_warnings: bool) ->
 
     // Load persisted chunking warning files (sticky by default)
     let warning_state_path = PathBuf::from(shellexpand::tilde(&format!(
-        "~/.config/rush-qdrant/warnings-{}.json",
+        "~/.config/monodex/warnings-{}.json",
         catalog_name
     )).as_ref());
     let warning_files: HashSet<String> = match std::fs::read_to_string(&warning_state_path) {
@@ -293,7 +293,7 @@ fn run_crawl(config: &Config, catalog_name: &str, incremental_warnings: bool) ->
         .filter(|e| e.file_type().is_file())
     {
         let path = entry.path().to_string_lossy().to_string();
-        
+
         if !should_skip_path(&path) && is_text_file(&path) {
             files_to_process.push(path);
         }
@@ -308,7 +308,7 @@ fn run_crawl(config: &Config, catalog_name: &str, incremental_warnings: bool) ->
     let mut changed_count = 0;
     let mut unchanged_count = 0;
     let mut orphaned_count = 0;
-    
+
     // Find orphaned files (in DB but not on disk)
     let files_set: std::collections::HashSet<String> = files_to_process.iter().cloned().collect();
     for (file_path, _) in existing_files.iter() {
@@ -324,11 +324,11 @@ fn run_crawl(config: &Config, catalog_name: &str, incremental_warnings: bool) ->
     let mut files_deleted = 0;
     let mut crawl_warning_files: HashSet<String> = HashSet::new();
     let mut warning_count: usize = 0;
-    
+
     for (idx, file_path) in files_to_process.iter().enumerate() {
         // Progress indicator
-        print!("\r  Chunking file {}/{} ({:.0}%) | warnings: {}   ", 
-            idx + 1, total_files, 
+        print!("\r  Chunking file {}/{} ({:.0}%) | warnings: {}   ",
+            idx + 1, total_files,
             ((idx + 1) as f64 / total_files as f64) * 100.0,
             warning_count);
         std::io::Write::flush(&mut std::io::stdout())?;
@@ -341,7 +341,7 @@ fn run_crawl(config: &Config, catalog_name: &str, incremental_warnings: bool) ->
                 continue;
             }
         };
-        
+
         use sha2::{Sha256, Digest};
         let mut hasher = Sha256::new();
         hasher.update(content.as_bytes());
@@ -358,7 +358,7 @@ fn run_crawl(config: &Config, catalog_name: &str, incremental_warnings: bool) ->
                     continue; // Skip unchanged and complete file
                 }
             }
-            
+
             // File changed or incomplete - delete old chunks
             uploader.delete_file(file_path, catalog_name)?;
             files_deleted += 1;
@@ -385,7 +385,7 @@ fn run_crawl(config: &Config, catalog_name: &str, incremental_warnings: bool) ->
                 .unwrap_or(catalog_name)
                 .to_string()
         };
-        
+
         match chunk_file(file_path, catalog_name, repo_root, &package_name_or_folder, 6000) {
             Ok(chunks) => {
                 // Detect fallback warning marker in chunks (injected by partitioner via breadcrumb suffix)
@@ -411,31 +411,31 @@ fn run_crawl(config: &Config, catalog_name: &str, incremental_warnings: bool) ->
             }
         }
     }
-    
+
     let total_chunks = all_chunks.len();
     println!("\n  Found {} chunks to embed", total_chunks);
     println!();
 
     // Phase 2: Parallel embedding with time-based checkpoints
-    println!("⚡ Phase 2: Embedding {} chunks with {} parallel sessions...", 
+    println!("⚡ Phase 2: Embedding {} chunks with {} parallel sessions...",
         total_chunks, embedder.num_workers());
     println!("  (Checkpoints every 60s - safe to CTRL+C)");
     let embed_start = std::time::Instant::now();
-    
+
     use rayon::prelude::*;
     use std::sync::atomic::{AtomicUsize, AtomicBool, Ordering};
     use std::sync::{Arc, Mutex};
     use crossbeam_channel::{unbounded, Sender, Receiver};
-    
+
     // Channels for streaming embeddings to uploader
     let (embed_tx, embed_rx): (Sender<(engine::Chunk, Vec<f32>)>, Receiver<(engine::Chunk, Vec<f32>)>) = unbounded();
-    
+
     let processed = Arc::new(AtomicUsize::new(0));
     let stop_flag = Arc::new(AtomicBool::new(false));
-    
+
     // Track last upload time
     let last_upload_time = Arc::new(Mutex::new(std::time::Instant::now()));
-    
+
     // Progress reporter thread - prints every 30 seconds
     let processed_clone = Arc::clone(&processed);
     let stop_clone = Arc::clone(&stop_flag);
@@ -443,11 +443,11 @@ fn run_crawl(config: &Config, catalog_name: &str, incremental_warnings: bool) ->
     let embed_start_for_thread = std::time::Instant::now();
     let last_print_time = Arc::new(Mutex::new(std::time::Instant::now()));
     let last_print_clone = Arc::clone(&last_print_time);
-    
+
     let progress_thread = std::thread::spawn(move || {
         while !stop_clone.load(Ordering::Relaxed) {
             std::thread::sleep(std::time::Duration::from_secs(5));
-            
+
             let mut last = last_print_clone.lock().unwrap();
             if last.elapsed() >= std::time::Duration::from_secs(30) {
                 let current = processed_clone.load(Ordering::Relaxed);
@@ -455,35 +455,35 @@ fn run_crawl(config: &Config, catalog_name: &str, incremental_warnings: bool) ->
                 let rate = current as f64 / elapsed.as_secs_f64().max(0.001);
                 let remaining = (total_chunks_for_thread - current) as f64 / rate;
                 let eta = format_eta(remaining);
-                
-                eprintln!("[{}] Embedded {}/{} ({:.0}%) - {:.1} chunks/sec - ETA: {}", 
+
+                eprintln!("[{}] Embedded {}/{} ({:.0}%) - {:.1} chunks/sec - ETA: {}",
                     chrono_timestamp(),
-                    current, total_chunks_for_thread, 
+                    current, total_chunks_for_thread,
                     (current as f64 / total_chunks_for_thread as f64) * 100.0,
                     rate, eta);
-                
+
                 *last = std::time::Instant::now();
             }
         }
     });
-    
+
     // Wrap uploader in Arc<Mutex> for sharing across threads
     let uploader = Arc::new(Mutex::new(uploader));
-    
+
     // Uploader thread - uploads accumulated embeddings every 60 seconds
     let stop_uploader = Arc::clone(&stop_flag);
     let last_upload_time_clone = Arc::clone(&last_upload_time);
     let uploader_clone = Arc::clone(&uploader);
-    
+
     let uploader_thread = std::thread::spawn(move || {
         let mut accumulated: Vec<(engine::Chunk, Vec<f32>)> = Vec::new();
-        
+
         // Track file completion:
         // - expected_count[file_id]: total chunks expected for this file (set once, from chunk.chunk_count)
         // - uploaded_count[file_id]: chunks successfully uploaded to Qdrant
         let mut expected_count: HashMap<String, usize> = HashMap::new();
         let mut uploaded_count: HashMap<String, usize> = HashMap::new();
-        
+
         loop {
             // Check if we should upload (60s elapsed or stopped)
             let should_upload = {
@@ -495,12 +495,12 @@ fn run_crawl(config: &Config, catalog_name: &str, incremental_warnings: bool) ->
                     false
                 }
             };
-            
+
             // Collect all available embeddings
             // Track expected count per file (set once on first observation)
             while let Ok(embedded) = embed_rx.try_recv() {
                 let file_id = engine::util::display_file_id(embedded.0.file_id);
-                
+
                 // Set expected count on first observation of this file
                 if let std::collections::hash_map::Entry::Vacant(e) = expected_count.entry(file_id.clone()) {
                     e.insert(embedded.0.chunk_count);
@@ -514,14 +514,14 @@ fn run_crawl(config: &Config, catalog_name: &str, incremental_warnings: bool) ->
                         );
                     }
                 }
-                
+
                 accumulated.push(embedded);
             }
-            
+
             if should_upload && !accumulated.is_empty() {
                 let count = accumulated.len();
                 eprintln!("[{}] Uploading checkpoint ({} chunks)...", chrono_timestamp(), count);
-                
+
                 let uploader_guard = uploader_clone.lock().unwrap();
                 match uploader_guard.upload_batch(&accumulated) {
                     Err(e) => {
@@ -535,12 +535,12 @@ fn run_crawl(config: &Config, catalog_name: &str, incremental_warnings: bool) ->
                             let file_id = engine::util::display_file_id(chunk.file_id);
                             *files_in_batch.entry(file_id).or_insert(0) += 1;
                         }
-                        
+
                         // Merge into uploaded_count
                         for (file_id, batch_count) in &files_in_batch {
                             *uploaded_count.entry(file_id.clone()).or_insert(0) += batch_count;
                         }
-                        
+
                         // Check completion once per file (files where uploaded == expected)
                         let mut completed_files: Vec<String> = Vec::new();
                         for file_id in files_in_batch.keys() {
@@ -550,7 +550,7 @@ fn run_crawl(config: &Config, catalog_name: &str, incremental_warnings: bool) ->
                                 completed_files.push(file_id.clone());
                             }
                         }
-                        
+
                         // Mark completed files and clean up tracking state
                         for file_id in &completed_files {
                             if let Err(e) = uploader_guard.mark_file_complete(file_id) {
@@ -560,31 +560,31 @@ fn run_crawl(config: &Config, catalog_name: &str, incremental_warnings: bool) ->
                             uploaded_count.remove(file_id);
                             expected_count.remove(file_id);
                         }
-                        
+
                         eprintln!("[{}] Checkpoint saved ({} files completed)", chrono_timestamp(), completed_files.len());
                     }
                 }
                 drop(uploader_guard);
                 accumulated.clear();
             }
-            
+
             // Check if done
             if stop_uploader.load(Ordering::Relaxed) {
                 // Drain remaining
                 while let Ok(embedded) = embed_rx.try_recv() {
                     let file_id = engine::util::display_file_id(embedded.0.file_id);
-                    
+
                     if let std::collections::hash_map::Entry::Vacant(e) = expected_count.entry(file_id.clone()) {
                         e.insert(embedded.0.chunk_count);
                     }
-                    
+
                     accumulated.push(embedded);
                 }
-                
+
                 // Final upload
                 if !accumulated.is_empty() {
                     eprintln!("[{}] Uploading final batch ({} chunks)...", chrono_timestamp(), accumulated.len());
-                    
+
                     let uploader_guard = uploader_clone.lock().unwrap();
                     match uploader_guard.upload_batch(&accumulated) {
                         Err(e) => {
@@ -597,11 +597,11 @@ fn run_crawl(config: &Config, catalog_name: &str, incremental_warnings: bool) ->
                                 let file_id = engine::util::display_file_id(chunk.file_id);
                                 *files_in_batch.entry(file_id).or_insert(0) += 1;
                             }
-                            
+
                             for (file_id, batch_count) in &files_in_batch {
                                 *uploaded_count.entry(file_id.clone()).or_insert(0) += batch_count;
                             }
-                            
+
                             // Check and mark completed files
                             let mut completed_files: Vec<String> = Vec::new();
                             for file_id in files_in_batch.keys() {
@@ -611,7 +611,7 @@ fn run_crawl(config: &Config, catalog_name: &str, incremental_warnings: bool) ->
                                     completed_files.push(file_id.clone());
                                 }
                             }
-                            
+
                             for file_id in &completed_files {
                                 if let Err(e) = uploader_guard.mark_file_complete(file_id) {
                                     eprintln!("[{}] ⚠️ Failed to mark file complete: {}", chrono_timestamp(), e);
@@ -622,38 +622,38 @@ fn run_crawl(config: &Config, catalog_name: &str, incremental_warnings: bool) ->
                 }
                 break;
             }
-            
+
             std::thread::sleep(std::time::Duration::from_millis(100));
         }
     });
-    
+
     // Process all chunks in parallel, streaming results to uploader
     let embed_tx_clone = embed_tx.clone();
     let processed_embed = Arc::clone(&processed);
-    
+
     all_chunks
         .into_par_iter()
         .enumerate()
         .try_for_each(|(i, chunk)| -> anyhow::Result<()> {
             let embedding = embedder.encode(&chunk.text, i)?;
-            
+
             // Update counter
             processed_embed.fetch_add(1, Ordering::Relaxed);
-            
+
             // Send to uploader
             embed_tx_clone.send((chunk, embedding))?;
-            
+
             Ok(())
         })?;
-    
+
     // Signal threads to stop
     stop_flag.store(true, Ordering::Relaxed);
-    
+
     // Wait for threads
     drop(embed_tx); // Close channel
     let _ = progress_thread.join();
     let _ = uploader_thread.join();
-    
+
     let embed_elapsed = embed_start.elapsed();
     let total_uploaded = processed.load(Ordering::Relaxed);
     let embed_rate = if embed_elapsed.as_secs() > 0 {
@@ -665,7 +665,7 @@ fn run_crawl(config: &Config, catalog_name: &str, incremental_warnings: bool) ->
     println!("  ✅ Embedded & uploaded {} chunks in {}", total_uploaded, format_duration(embed_elapsed.as_secs_f64()));
     println!("  📊 Embedding rate: {:.1} chunks/sec", embed_rate);
     println!();
-    
+
     // Phase 3: Cleanup orphaned files
     println!("🗑️  Cleaning up orphaned files...");
     {
@@ -681,7 +681,7 @@ fn run_crawl(config: &Config, catalog_name: &str, incremental_warnings: bool) ->
     println!();
     println!();
     let total_elapsed = total_start.elapsed();
-    
+
     println!("✅ Crawl complete!");
     println!();
     println!("📊 Summary:");
@@ -728,30 +728,30 @@ fn run_search(config: &Config, text: &str, limit: usize, catalog: Option<&str>) 
     // Generate embedding for query
     let embedder = ParallelEmbedder::new()?;
     let embedding = embedder.encode(text, 0)?;
-    
+
     // Query Qdrant
     let uploader = QdrantUploader::new(&config.qdrant.collection, config.qdrant.url.as_deref())?;
     let results = uploader.query(&embedding, limit, catalog)?;
-    
+
     // Display results as blurbs
     for result in &results {
         // Line 1: file_id:chunk_number  score  breadcrumb
         let breadcrumb = result.payload.breadcrumb.as_deref().unwrap_or("unknown");
-        println!("{}:{}  {:.3}  {}", 
-            result.payload.file_id, 
-            result.payload.chunk_number, 
-            result.score, 
+        println!("{}:{}  {:.3}  {}",
+            result.payload.file_id,
+            result.payload.chunk_number,
+            result.score,
             breadcrumb);
-        
+
         // Lines 2-4: first 3 lines of code (quoted with >)
         for line in result.payload.text.lines().take(3) {
             println!("> {}", line);
         }
-        
+
         // Blank line between results
         println!();
     }
-    
+
     Ok(())
 }
 
@@ -770,7 +770,7 @@ enum ChunkSelector {
 }
 
 /// Parse file ID with optional selector
-/// 
+///
 /// Formats:
 /// - `700a4ba232fe9ddc` - all chunks in file
 /// - `700a4ba232fe9ddc:3` - chunk 3
@@ -778,12 +778,12 @@ enum ChunkSelector {
 /// - `700a4ba232fe9ddc:3-end` - chunk 3 through the last chunk
 fn parse_file_id_with_selector(s: &str) -> anyhow::Result<(String, ChunkSelector)> {
     let s = s.trim();
-    
+
     // Check for selector suffix
     if let Some(colon_pos) = s.find(':') {
         let file_id = s[..colon_pos].to_string();
         let selector = &s[colon_pos + 1..];
-        
+
         // Validate file_id is 16 hex chars
         if file_id.len() != 16 || !file_id.chars().all(|c| c.is_ascii_hexdigit()) {
             return Err(anyhow::anyhow!(
@@ -791,7 +791,7 @@ fn parse_file_id_with_selector(s: &str) -> anyhow::Result<(String, ChunkSelector
                 file_id
             ));
         }
-        
+
         // Parse selector
         if selector == "end" {
             // Invalid: ":end" without start
@@ -849,23 +849,23 @@ fn run_view(config: &Config, id_specs: &[String], show_full_paths: bool, chunks_
     if id_specs.is_empty() {
         return Err(anyhow::anyhow!("No IDs provided. Use --id <file_id>[:<selector>]"));
     }
-    
+
     // Parse all file IDs with selectors
     let mut requests: Vec<(String, ChunkSelector)> = Vec::new();
     for spec in id_specs {
         let (file_id, selector) = parse_file_id_with_selector(spec)?;
         requests.push((file_id, selector));
     }
-    
+
     // Query Qdrant
     let uploader = QdrantUploader::new(&config.qdrant.collection, config.qdrant.url.as_deref())?;
-    
+
     // Collect all results with their original selectors for display
     let mut all_results: Vec<(String, ChunkSelector, Vec<PointResult>)> = Vec::new();
-    
+
     for (file_id, selector) in requests {
         let chunks = uploader.get_chunks_by_file_id(&file_id)?;
-        
+
         // Filter by selector
         let filtered: Vec<PointResult> = match &selector {
             ChunkSelector::All => chunks,
@@ -881,17 +881,17 @@ fn run_view(config: &Config, id_specs: &[String], show_full_paths: bool, chunks_
                 chunks.into_iter().filter(|c| c.payload.chunk_number >= *start).collect()
             }
         };
-        
+
         all_results.push((file_id, selector, filtered));
     }
-    
+
     // Collect unique catalogs for preamble
     if !chunks_only {
         let catalogs: std::collections::HashSet<&str> = all_results
             .iter()
             .flat_map(|(_, _, results)| results.iter().map(|r| r.payload.catalog.as_str()))
             .collect();
-        
+
         if !catalogs.is_empty() {
             println!("Catalogs:");
             for cat in catalogs {
@@ -903,7 +903,7 @@ fn run_view(config: &Config, id_specs: &[String], show_full_paths: bool, chunks_
             println!();
         }
     }
-    
+
     // Display results
     for (file_id, selector, results) in &all_results {
         if results.is_empty() {
@@ -917,37 +917,37 @@ fn run_view(config: &Config, id_specs: &[String], show_full_paths: bool, chunks_
             println!("{}{} ERROR: CHUNK NOT FOUND", file_id, selector_str);
             continue;
         }
-        
+
         for result in results {
             let breadcrumb = result.payload.breadcrumb.as_deref().unwrap_or("unknown");
             let chunk_count = result.payload.chunk_count;
             let chunk_number = result.payload.chunk_number;
-            
+
             // Header line: <file_id>:<chunk_number> (<n>/<total>) <breadcrumb>
             println!("{}:{} ({}/{}) {}", file_id, chunk_number, chunk_number, chunk_count, breadcrumb);
-            
+
             // Source line
             println!("Source: {}:{}", result.payload.catalog, result.payload.relative_path);
-            
+
             // Full path (optional)
             if show_full_paths {
                 println!("Full path: {}", result.payload.source_uri);
             }
-            
+
             // Lines and type
             println!("Lines: {}-{}", result.payload.start_line, result.payload.end_line);
             println!("Type: {}", result.payload.chunk_type);
-            
+
             // Content
             println!();
             for line in result.payload.text.lines() {
                 println!("> {}", line);
             }
-            
+
             println!();
         }
     }
-    
+
     Ok(())
 }
 
@@ -958,16 +958,16 @@ fn run_purge(config: &Config, catalog: Option<&str>, all: bool) -> anyhow::Resul
     if all {
         println!("🗑️  Purging entire collection: {}", config.qdrant.collection);
         println!("This will delete ALL data from the collection!");
-        
+
         // Delete all points with empty filter
         let endpoint = format!(
             "{}/collections/{}/points/delete",
             config.qdrant.url.as_deref().unwrap_or("http://localhost:6333"),
             config.qdrant.collection
         );
-        
+
         let empty_filter = serde_json::json!({"filter": {}});
-        
+
         let response = reqwest::blocking::Client::new()
             .post(&endpoint)
             .json(&empty_filter)
@@ -976,11 +976,11 @@ fn run_purge(config: &Config, catalog: Option<&str>, all: bool) -> anyhow::Resul
         if !response.status().is_success() {
             return Err(anyhow::anyhow!("Failed to purge collection: HTTP {}", response.status()));
         }
-        
+
         println!("✅ Collection purged successfully");
     } else if let Some(catalog_name) = catalog {
         println!("🗑️  Purging catalog: {}", catalog_name);
-        
+
         let operation_id = uploader.delete_catalog(catalog_name)?;
         println!("✅ Catalog purged successfully (operation ID: {})", operation_id);
     } else {
@@ -1012,20 +1012,20 @@ fn run_dump_chunks(file: &PathBuf, target_size: usize, visualize: bool, with_fal
         println!("🔍 Strict mode: AST-only (fallback disabled)");
     }
     println!();
-    
+
     // Read file
     let source = std::fs::read_to_string(file)
         .map_err(|e| anyhow::anyhow!("Failed to read file: {}", e))?;
-    
+
     // Determine file name and package name
     let file_name = file.file_name()
         .and_then(|n| n.to_str())
         .unwrap_or("unknown.ts");
-    
+
     // Find package name by walking upward to find nearest package.json
     let file_path = file.to_string_lossy().to_string();
     let package_name = engine::package_lookup::find_package_name(&file_path, "");
-    
+
     // Create config
     let config = PartitionConfig {
         target_size,
@@ -1034,24 +1034,24 @@ fn run_dump_chunks(file: &PathBuf, target_size: usize, visualize: bool, with_fal
         debug: PartitionDebug { enabled: enable_debug },
         allow_fallback: with_fallback,  // AST-only by default, enable fallback with flag
     };
-    
+
     // Partition
     let chunks = partition_typescript(&source, &config, &file_path, &package_name);
-    
+
     // Quality score
     let file_chars = source.len();
     let report = ChunkQualityReport::from_chunks(&chunks, file_chars);
-    
+
     if visualize {
         // Visualization mode: show full chunk contents
         let lines: Vec<&str> = source.lines().collect();
-        
+
         for (i, chunk) in chunks.iter().enumerate() {
             let line_count = chunk.end_line - chunk.start_line + 1;
             let size = chunk.text.len();
-            
+
             println!("-- [CHUNK {}] [{} lines] [{} chars] --", i + 1, line_count, size);
-            
+
             for line_num in chunk.start_line..=chunk.end_line {
                 if line_num > 0 && line_num <= lines.len() {
                     println!("{}", lines[line_num - 1]);
@@ -1059,7 +1059,7 @@ fn run_dump_chunks(file: &PathBuf, target_size: usize, visualize: bool, with_fal
             }
             println!();
         }
-        
+
         println!("=== QUALITY SCORE ===");
         println!("Score: {:.1}%", report.score);
         println!("Total chunks: {}", chunks.len());
@@ -1070,22 +1070,22 @@ fn run_dump_chunks(file: &PathBuf, target_size: usize, visualize: bool, with_fal
         println!("Total chunks: {}", chunks.len());
         println!("Target size: {} chars", target_size);
         println!();
-        
+
         let mut total_chars = 0;
         let mut oversized = 0;
         let mut undersized = 0;
-        
+
         for (i, chunk) in chunks.iter().enumerate() {
             let text_size = chunk.text.len();
             let total_size = chunk.breadcrumb.len() + chunk.text.len();
             total_chars += total_size;
-            
+
             if text_size > target_size {
                 oversized += 1;
             } else if text_size < 200 {
                 undersized += 1;
             }
-            
+
             println!("━━━━━ Chunk {} ━━━━━", i + 1);
             println!("Breadcrumb: {}", chunk.breadcrumb);
             println!("Type: {}", chunk.chunk_type);
@@ -1093,7 +1093,7 @@ fn run_dump_chunks(file: &PathBuf, target_size: usize, visualize: bool, with_fal
                 println!("Symbol: {}", symbol);
             }
             println!("Lines: {}-{}", chunk.start_line, chunk.end_line);
-            println!("Size: {} chars (text: {}, breadcrumb: {})", 
+            println!("Size: {} chars (text: {}, breadcrumb: {})",
                 total_size, text_size, chunk.breadcrumb.len());
             if text_size > target_size {
                 println!("⚠️  OVERSIZED (target: {}, actual: {})", target_size, text_size);
@@ -1110,7 +1110,7 @@ fn run_dump_chunks(file: &PathBuf, target_size: usize, visualize: bool, with_fal
             }
             println!();
         }
-        
+
         println!("━━━━━ Summary ━━━━━");
         println!("Total chunks: {}", chunks.len());
         println!("Total chars: {}", total_chars);
@@ -1120,17 +1120,17 @@ fn run_dump_chunks(file: &PathBuf, target_size: usize, visualize: bool, with_fal
         println!("Quality score: {:.1}%", report.score);
         println!("  Small chunks (<{} chars): {}", SMALL_CHUNK_CHARS, report.small_chunks);
     }
-    
+
     Ok(())
 }
 
 /// Audit chunking quality across multiple files
 fn run_audit_chunks(count: usize, dir: String) -> anyhow::Result<()> {
     use rand::seq::IndexedRandom;
-    
+
     println!("📊 Sampling {} TypeScript files from: {}", count, dir);
     println!();
-    
+
     // Collect all TypeScript files
     let ts_files: Vec<PathBuf> = walkdir::WalkDir::new(&dir)
         .into_iter()
@@ -1142,20 +1142,20 @@ fn run_audit_chunks(count: usize, dir: String) -> anyhow::Result<()> {
         })
         .map(|e| e.path().to_owned())
         .collect();
-    
+
     println!("Found {} TypeScript files", ts_files.len());
-    
+
     if ts_files.is_empty() {
         return Err(anyhow::anyhow!("No TypeScript files found"));
     }
-    
+
     // Random sample
     let mut rng = rand::rng();
     let sample: Vec<_> = ts_files
         .choose_multiple(&mut rng, count)
         .into_iter()
         .collect();
-    
+
     // Compute quality scores using AST-only mode (allow_fallback=false)
     // This measures how well the AST-based chunker performs, without fallback
     // masking the quality of split decisions.
@@ -1176,23 +1176,23 @@ fn run_audit_chunks(count: usize, dir: String) -> anyhow::Result<()> {
             Some((path, report, chunks))
         })
         .collect();
-    
+
     // Sort by score (worst first - ascending since higher is better)
     results.sort_by(|a, b| a.1.score.partial_cmp(&b.1.score).unwrap());
-    
+
     println!("\n=== Quality Scores (worst first) ===\n");
     for (i, (path, report, _)) in results.iter().enumerate() {
         let rel_path = path.strip_prefix(&dir).unwrap_or(path);
         println!("{}. {} {}", i + 1, report.format(), rel_path.display());
     }
-    
+
     // Show top 3 worst for investigation
     println!("\n=== Top 3 Worst Files ===\n");
     for (path, report, chunks) in results.iter().take(3) {
         let rel_path = path.strip_prefix(&dir).unwrap_or(path);
         println!("--- {} ---", rel_path.display());
         println!("{}", report.format());
-        
+
         // Show chunk breakdown
         for (i, chunk) in chunks.iter().enumerate() {
             let lines = chunk.end_line - chunk.start_line + 1;
@@ -1209,6 +1209,6 @@ fn run_audit_chunks(count: usize, dir: String) -> anyhow::Result<()> {
         }
         println!();
     }
-    
+
     Ok(())
 }

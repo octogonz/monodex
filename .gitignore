@@ -19,4 +19,4 @@ Thumbs.db
 
 # Test outputs
 /test-output/
-.rush-qdrant-warnings-*.json
+.monodex-warnings-*.json

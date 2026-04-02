@@ -1,5 +1,5 @@
 [package]
-name = "rush-qdrant"
+name = "monodex"
 version = "0.1.0"
 edition = "2024"
 

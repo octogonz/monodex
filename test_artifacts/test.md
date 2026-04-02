@@ -1,20 +1,20 @@
 # API Documentation
 
-This document describes the core APIs for the rush-qdrant project.
+This document describes the core APIs for the monodex project.
 
 ## Installation
 
-To install rush-qdrant, run the following command:
+To install monodex, run the following command:
 
 ```bash
-cargo install rush-qdrant
+cargo install monodex
 ```
 
 Make sure you have Rust 1.70 or later installed.
 
 ## Configuration
 
-Create a configuration file at `~/.config/rush-qdrant/config.json`:
+Create a configuration file at `~/.config/monodex/config.json`:
 
 ```json
 {
@@ -45,7 +45,7 @@ You can also use environment variables:
 To index a catalog:
 
 ```bash
-rush-qdrant crawl --catalog node-core-library
+monodex crawl --catalog node-core-library
 ```
 
 This will:
@@ -58,7 +58,7 @@ This will:
 To search the index:
 
 ```bash
-rush-qdrant query --text "how to read a JSON file"
+monodex query --text "how to read a JSON file"
 ```
 
 Results are returned with:

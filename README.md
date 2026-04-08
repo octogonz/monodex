@@ -1,3 +1,11 @@
+<div>
+  <br />
+  <a href="https://github.com/microsoft/monodex">
+    <img height="130" alt="Rush Monodex" src="./assets/monodex-logo.svg">
+  </a>
+  <p />
+</div>
+
 # Rush Monodex
 
 **Semantic search indexer for Rush monorepos using Qdrant vector database**

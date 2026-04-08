@@ -1079,7 +1079,7 @@ impl QdrantUploader {
 
             let must_values = vec![
                 serde_json::json!({
-                    "key": "active_label_ids",
+                    "key": "active_label_ids.values",
                     "match": { "value": label_id }
                 }),
                 serde_json::json!({
@@ -1239,7 +1239,7 @@ impl QdrantUploader {
                 "match": { "value": catalog }
             }),
             serde_json::json!({
-                "key": "active_label_ids",
+                "key": "active_label_ids.values",
                 "match": { "value": label_id }
             }),
             serde_json::json!({
@@ -1297,7 +1297,7 @@ impl QdrantUploader {
                 "match": { "value": file_id }
             }),
             serde_json::json!({
-                "key": "active_label_ids",
+                "key": "active_label_ids.values",
                 "match": { "value": label_id }
             }),
             serde_json::json!({

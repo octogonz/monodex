@@ -71,6 +71,20 @@ cargo build --release
 
 ## Usage
 
+### Global Options
+
+```bash
+# Use a custom config file location
+monodex --config /path/to/config.jsonc search --text "query"
+
+# Show help for any command
+monodex --help
+monodex crawl --help
+
+# Show version
+monodex --version
+```
+
 ### Configuration
 
 Create `~/.config/monodex/config.jsonc`:
@@ -124,7 +138,10 @@ A **label** is a named, queryable fileset within a catalog. Labels typically rep
 
 ```bash
 # Set default catalog and label for subsequent commands
-monodex use --catalog rushstack --label main
+monodex use rushstack main
+
+# Set catalog only (will prompt for label)
+monodex use rushstack
 
 # Now you can omit --catalog and --label flags
 monodex search --text "how to read JSON files"
@@ -157,8 +174,8 @@ monodex crawl --catalog rushstack --label v1.0.0 --commit a1b2c3d4e5f6
 # Semantic search (uses default context if set)
 monodex search --text "how to read JSON files"
 
-# With explicit catalog and label
-monodex search --text "API Extractor" --catalog rushstack --label main --limit 10
+# With explicit label (full format: catalog:label)
+monodex search --text "API Extractor" --label rushstack:main --limit 10
 ```
 
 ### View Full Chunks
@@ -184,6 +201,9 @@ monodex view --id 30440fb2ecd5fa62 --full-paths
 
 # Omit catalog preamble (chunks only)
 monodex view --id 30440fb2ecd5fa62 --chunks-only
+
+# Filter by label (full format: catalog:label)
+monodex view --id 30440fb2ecd5fa62 --label rushstack:main
 ```
 
 ### Debug Chunking Algorithm
@@ -213,15 +233,14 @@ monodex audit-chunks --count 20 --dir /path/to/project
 ### Purge Data
 
 ```bash
-# Purge all chunks from a specific label
-monodex purge --catalog rushstack --label main
-
 # Purge all chunks from a catalog (all labels)
 monodex purge --catalog rushstack
 
 # Purge entire collection (all catalogs)
 monodex purge --all
 ```
+
+**Note:** Purge operates at catalog level. To remove a specific label's chunks, re-crawl that label with a different commit or manually update the `active_label_ids` field.
 
 ## Architecture
 

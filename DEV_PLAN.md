@@ -299,13 +299,14 @@ In `src/main.rs`:
   - Verified: Both can coexist in different labels (tsconfig.json example)
   - Found 25 groups with duplicate content_hash but unique file_ids
 
-### 6.4 Label Cleanup Edge Cases
+### 6.4 Label Cleanup Edge Cases ✅ COMPLETE
 
-- [ ] Re-crawl same label with different commit
-  - Verify chunks from old commit are removed from label
-  - Verify chunks shared with other labels are NOT deleted
-  - Verify orphaned chunks (empty `active_label_ids`) are deleted
-- [ ] Purge a single label and verify other labels unaffected
+- [x] Re-crawl same label with different commit
+  - Verified: chunks from old commit are removed from label
+  - Verified: chunks shared with other labels are NOT deleted (263 shared chunks preserved)
+  - Verified: no orphaned chunks (empty `active_label_ids`) after re-crawl
+- [x] Purge a single label and verify other labels unaffected
+  - N/A: Purge operates at catalog level only (design decision)
 
 ### 6.5 Search/View Edge Cases ✅ COMPLETE
 
@@ -327,16 +328,37 @@ In `src/main.rs`:
 ## Phase 6 Summary
 
 **Completed Tests:**
-- Multi-label scenarios: chunks correctly share active_label_ids
-- Label reassignment: works correctly when re-crawling different commits
-- Chunk deduplication: same content at different paths has different file_id
-- Search/view edge cases: handles non-existent labels gracefully
+- ✅ 6.1 Multi-label scenarios: chunks correctly share `active_label_ids`
+- ✅ 6.1 Label reassignment: works correctly when re-crawling different commits
+- ✅ 6.3 Chunk deduplication: same content at different paths has different `file_id`
+- ✅ 6.4 Label cleanup: no orphaned chunks, shared chunks preserved
+- ✅ 6.5 Search/view edge cases: handles non-existent labels gracefully
 
-**Skipped Tests:**
-- Interrupted crawl (requires manual CTRL+C)
-- Fresh installation (destructive)
+---
 
-**Goal:** Support crawling the live working directory (uncommitted changes) in addition to Git commits.
+## Phase 6: Untested Items Punchlist
+
+The following tests were skipped and should be run manually before release:
+
+- [ ] **Interrupted crawl (Phase 6.2)**:
+  - Start a crawl, press CTRL+C
+  - Verify `crawl_complete = false` in label metadata
+  - Resume crawl and verify completion
+  - Verify label reassignment does NOT run for partial crawls
+
+- [ ] **Fresh installation (Phase 6.6)**:
+  - Delete Qdrant collection
+  - Fresh crawl with new schema
+  - Verify all operations work from clean state
+
+- [ ] **File moves between packages (Phase 6.3)**:
+  - Create test scenario where file moves between packages
+  - Verify new chunks are created with different breadcrumb context
+  - Verify old chunks remain for old labels
+
+---
+
+## Phase 7: Working Directory Crawling
 
 ### 7.1 Design Working Directory Identity Model
 
@@ -393,11 +415,51 @@ In `src/engine/git_ops.rs` or new module:
 
 ---
 
-## Phase 8: Offline Garbage Collection
+## Phase 8: User-Configurable Settings
+
+**Goal:** Move hardcoded constants from `config.rs` into the user's config file for customization.
+
+### 8.1 Audit Current Config Constants
+
+- [ ] Identify all hardcoded values in `src/config.rs`:
+  - Embedding model name
+  - Chunk size limits
+  - File exclusion patterns
+  - Batch sizes
+  - Thread counts
+- [ ] Categorize as "user-configurable" vs "internal-only"
+
+### 8.2 Extend Config Schema
+
+- [ ] Add new optional fields to `MonodexConfig`:
+  - `embedding.model`: string (default: current model)
+  - `embedding.batch_size`: number
+  - `chunking.max_chunk_size`: number
+  - `chunking.overlap`: number
+  - `crawler.exclude_patterns`: array of glob patterns
+  - `crawler.num_threads`: number
+- [ ] Provide sensible defaults for all new fields
+- [ ] Document in DESIGN.md
+
+### 8.3 Update Runtime to Use Config
+
+- [ ] Replace hardcoded values with config lookups
+- [ ] Ensure backward compatibility (existing configs work without new fields)
+- [ ] Add validation for config values (e.g., min/max chunk size)
+
+### 8.4 Document Configuration Options
+
+- [ ] Update README.md with all configurable options
+- [ ] Add example config showing advanced settings
+- [ ] Document performance tuning tips
+
+---
+
+## Phase 9: Offline Garbage Collection
 
 **Goal:** Provide a command to clean up orphaned chunks and recover storage.
 
-### 8.1 Implement GC Command
+### 9.1 Implement GC Command
 
 - [ ] Add `gc` command: `monodex gc --catalog rushstack`
 - [ ] Implementation:
@@ -407,7 +469,7 @@ In `src/engine/git_ops.rs` or new module:
   - Report count and estimated storage recovered
 - [ ] Add `--dry-run` flag to show what would be deleted without actually deleting
 
-### 8.2 Test GC Scenarios
+### 9.2 Test GC Scenarios
 
 - [ ] Create orphaned chunks (interrupt a crawl, or delete a label's chunks manually)
 - [ ] Run `monodex gc --dry-run` and verify correct chunks identified
@@ -416,11 +478,11 @@ In `src/engine/git_ops.rs` or new module:
 
 ---
 
-## Phase 9: Watch Mode
+## Phase 10: Watch Mode
 
 **Goal:** Continuously monitor and re-index a working directory as files change.
 
-### 9.1 Design Watch Mode Architecture
+### 10.1 Design Watch Mode Architecture
 
 - [ ] Research file watching libraries (notify, notify-debouncer-mini)
 - [ ] Decide on watch mode trigger:

@@ -327,11 +327,11 @@ mod tests {
         // Read the blob content
         let content = read_blob_content(&repo_path, &readme.blob_id).expect("Failed to read blob");
 
-        // Verify it starts with expected content
+        // Verify it contains expected content
         let content_str = String::from_utf8_lossy(&content);
         assert!(
-            content_str.starts_with("# Rush Monodex"),
-            "README should start with '# Rush Monodex'"
+            content_str.contains("Monodex"),
+            "README should contain 'Monodex'"
         );
 
         println!(

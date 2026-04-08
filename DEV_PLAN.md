@@ -110,7 +110,7 @@ In `src/engine/util.rs`:
 
 ---
 
-## Phase 3: Content-Based Chunking
+## Phase 3: Content-Based Chunking ✅ COMPLETE
 
 **Goal:** Decouple chunking from filesystem paths, enable Git blob content as input.
 
@@ -118,16 +118,16 @@ In `src/engine/util.rs`:
 
 In `src/engine/partitioner.rs`:
 
-- [ ] Create `chunk_content()` function that accepts content as string:
+- [x] Create `chunk_content()` function that accepts content as string:
   ```rust
   pub fn chunk_content(
       content: &str,
-      relative_path: &str,
-      package_name: &str,
+      ctx: &ChunkContext,
       target_size: usize,
   ) -> Result<Vec<Chunk>>
   ```
-- [ ] Update `chunk_file()` to be a convenience wrapper that reads from filesystem
+  *(Note: Implementation is in `chunker.rs`, uses `ChunkContext` for Phase 2 fields)*
+- [x] Update `chunk_file()` to be a convenience wrapper that reads from filesystem
 
 ### 3.2 Update Chunk Metadata
 
@@ -138,13 +138,13 @@ In `src/engine/partitioner.rs`:
 
 ### 3.3 Test Content-Based Chunking
 
-- [ ] Test that same content + path produces same file_id
-- [ ] Test that path changes produce different file_id (expected behavior)
-- [ ] Test that same content at different paths = different chunks (semantic context matters)
+- [x] Test that same content + path produces same file_id
+- [x] Test that path changes produce different file_id (expected behavior)
+- [x] Test that same content at different paths = different chunks (semantic context matters)
 
 ---
 
-## Phase 4: Label-Aware Crawler
+## Phase 4: Label-Aware Crawler [✅ COMPLETE]
 
 **Goal:** Implement the full crawl flow with label support.
 
@@ -152,37 +152,37 @@ In `src/engine/partitioner.rs`:
 
 In `src/main.rs`:
 
-- [ ] Add `--label` argument (required)
-- [ ] Add `--commit` argument (defaults to HEAD)
-- [ ] Update crawl flow to use Git operations layer
+- [x] Add `--label` argument (required)
+- [x] Add `--commit` argument (defaults to HEAD)
+- [x] Update crawl flow to use Git operations layer
 
 ### 4.2 Crawl Implementation
 
-- [ ] Resolve commit OID from `--commit` argument
-- [ ] Build package index for commit
-- [ ] Enumerate files from commit tree
-- [ ] For each file:
+- [x] Resolve commit OID from `--commit` argument
+- [x] Build package index for commit
+- [x] Enumerate files from commit tree
+- [x] For each file:
   - Check if chunk already exists (sentinel check)
   - If exists and complete: update `active_label_ids` only
   - If not: read content, chunk, embed, upload
-- [ ] Track all chunk IDs touched during crawl
+- [x] Track all chunk IDs touched during crawl
 
 ### 4.3 Label Reassignment Cleanup
 
 **Critical:** Only runs after fully successful crawl. Partial crawls must NOT trigger cleanup.
 
-- [ ] Track all file IDs touched during crawl (HashSet)
-- [ ] After successful crawl, scan for chunks with label in `active_label_ids`
-- [ ] For each chunk, extract file_id
-- [ ] If file_id NOT in touched set:
+- [x] Track all file IDs touched during crawl (HashSet)
+- [x] After successful crawl, scan for chunks with label in `active_label_ids`
+- [x] For each chunk, extract file_id
+- [x] If file_id NOT in touched set:
   - Remove label from `active_label_ids`
   - Delete chunk if `active_label_ids` becomes empty
-- [ ] Ensure interrupted/failed crawls skip this step entirely
+- [x] Ensure interrupted/failed crawls skip this step entirely
 
 ### 4.4 Label Metadata Persistence
 
-- [ ] Upsert label metadata at start of crawl
-- [ ] Update `crawl_complete` and timestamp at end
+- [x] Upsert label metadata at start of crawl
+- [x] Update `crawl_complete` and timestamp at end
 
 ---
 

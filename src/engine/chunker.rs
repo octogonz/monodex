@@ -371,3 +371,167 @@ pub fn chunk_file(
     
     chunk_content(&content, &ctx, target_size)
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// Helper to create a test chunk context
+    fn test_context(blob_id: &str, relative_path: &str, package_name: &str) -> ChunkContext {
+        ChunkContext {
+            catalog: "test-catalog".to_string(),
+            label_id: "test-catalog:main".to_string(),
+            package_name: package_name.to_string(),
+            relative_path: relative_path.to_string(),
+            blob_id: blob_id.to_string(),
+            source_uri: format!("/repo/{}", relative_path),
+        }
+    }
+
+    /// Test that same content + path produces same file_id
+    #[test]
+    fn test_same_content_path_produces_same_file_id() {
+        let content = r#"
+export function hello() {
+    console.log("Hello, world!");
+}
+"#;
+        let ctx = test_context("abc123", "src/index.ts", "@test/pkg");
+        
+        let chunks1 = chunk_content(content, &ctx, 6000).unwrap();
+        let chunks2 = chunk_content(content, &ctx, 6000).unwrap();
+        
+        assert_eq!(chunks1.len(), chunks2.len());
+        for (c1, c2) in chunks1.iter().zip(chunks2.iter()) {
+            assert_eq!(c1.file_id, c2.file_id, "Same content+path should produce same file_id");
+            assert_eq!(c1.point_id(), c2.point_id(), "Same content+path should produce same point_id");
+        }
+    }
+
+    /// Test that path changes produce different file_id (expected behavior)
+    /// Path is part of semantic identity because it affects breadcrumb context
+    #[test]
+    fn test_path_change_produces_different_file_id() {
+        let content = r#"
+export function hello() {
+    console.log("Hello, world!");
+}
+"#;
+        let ctx1 = test_context("abc123", "src/index.ts", "@test/pkg");
+        let ctx2 = test_context("abc123", "lib/index.ts", "@test/pkg");
+        
+        let chunks1 = chunk_content(content, &ctx1, 6000).unwrap();
+        let chunks2 = chunk_content(content, &ctx2, 6000).unwrap();
+        
+        assert!(!chunks1.is_empty() && !chunks2.is_empty());
+        assert_ne!(
+            chunks1[0].file_id, chunks2[0].file_id,
+            "Different paths should produce different file_id"
+        );
+        assert_ne!(
+            chunks1[0].point_id(), chunks2[0].point_id(),
+            "Different paths should produce different point_id"
+        );
+    }
+
+    /// Test that same content at different paths = different chunks (semantic context matters)
+    /// This verifies that path renames create new chunks even if content is identical
+    #[test]
+    fn test_content_at_different_paths_creates_different_chunks() {
+        let content = r#"
+export class JsonFile {
+    public static load(path: string): object {
+        return JSON.parse(fs.readFileSync(path, 'utf-8'));
+    }
+}
+"#;
+        // Simulate a file moving from libraries/foo to libraries/bar
+        let ctx1 = test_context("abc123", "libraries/foo/src/JsonFile.ts", "@scope/foo");
+        let ctx2 = test_context("abc123", "libraries/bar/src/JsonFile.ts", "@scope/bar");
+        
+        let chunks1 = chunk_content(content, &ctx1, 6000).unwrap();
+        let chunks2 = chunk_content(content, &ctx2, 6000).unwrap();
+        
+        // Both should produce chunks
+        assert!(!chunks1.is_empty() && !chunks2.is_empty());
+        
+        // File IDs should be different (path is part of identity)
+        assert_ne!(chunks1[0].file_id, chunks2[0].file_id);
+        
+        // Point IDs should be different
+        assert_ne!(chunks1[0].point_id(), chunks2[0].point_id());
+        
+        // Breadcrumbs should reflect the different package context
+        assert!(chunks1[0].breadcrumb.starts_with("@scope/foo"), 
+                "Breadcrumb should start with @scope/foo, got: {}", chunks1[0].breadcrumb);
+        assert!(chunks2[0].breadcrumb.starts_with("@scope/bar"),
+                "Breadcrumb should start with @scope/bar, got: {}", chunks2[0].breadcrumb);
+    }
+
+    /// Test that blob_id changes produce different file_id
+    #[test]
+    fn test_content_change_produces_different_file_id() {
+        let content = r#"
+export function hello() {
+    console.log("Hello, world!");
+}
+"#;
+        // Same path, different blob_id (different content)
+        let ctx1 = test_context("abc123", "src/index.ts", "@test/pkg");
+        let ctx2 = test_context("def456", "src/index.ts", "@test/pkg");
+        
+        let chunks1 = chunk_content(content, &ctx1, 6000).unwrap();
+        let chunks2 = chunk_content(content, &ctx2, 6000).unwrap();
+        
+        assert!(!chunks1.is_empty() && !chunks2.is_empty());
+        assert_ne!(
+            chunks1[0].file_id, chunks2[0].file_id,
+            "Different blob_id should produce different file_id"
+        );
+    }
+
+    /// Test chunk ordinals are assigned correctly
+    #[test]
+    fn test_chunk_ordinals_assigned_correctly() {
+        // Create a file large enough to be split into multiple chunks
+        let mut content = String::new();
+        for i in 0..50 {
+            content.push_str(&format!(r#"
+export function function_{}() {{
+    console.log("Function {}");
+    // This is a long comment to increase the size of this function
+    // Adding more lines to make it larger
+    // And even more lines to ensure it exceeds the target size
+    let x = {};
+    let y = {};
+    let z = x + y;
+    return z;
+}}
+"#, i, i, i * 10, i * 20));
+        }
+        
+        let ctx = test_context("abc123", "src/large.ts", "@test/pkg");
+        let chunks = chunk_content(&content, &ctx, 1000).unwrap(); // Small target to force splits
+        
+        // Should have multiple chunks
+        assert!(chunks.len() > 1, "Expected multiple chunks, got {}", chunks.len());
+        
+        // Check ordinals are sequential starting from 1
+        for (i, chunk) in chunks.iter().enumerate() {
+            assert_eq!(chunk.chunk_ordinal, i + 1, 
+                       "Chunk ordinal should be {}", i + 1);
+        }
+        
+        // All chunks should have the same chunk_count
+        let expected_count = chunks.len();
+        for chunk in &chunks {
+            assert_eq!(chunk.chunk_count, expected_count);
+        }
+        
+        // Chunks should have non-empty file_id
+        for chunk in &chunks {
+            assert!(!chunk.file_id.is_empty());
+            assert_eq!(chunk.file_id.len(), 16, "file_id should be 16 hex chars");
+        }
+    }
+}

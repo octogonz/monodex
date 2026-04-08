@@ -1,0 +1,410 @@
+//! Crawl configuration for externalized crawl policy.
+//!
+//! This module defines the schema and loading logic for `monodex-crawl.json`,
+//! which controls which files are crawled and how they are chunked.
+//!
+//! ## Config Discovery
+//!
+//! Configs are loaded in this precedence order:
+//! 1. `<repo-root>/monodex-crawl.json` (repo-local)
+//! 2. `~/.config/monodex/crawl.json` (user-global)
+//! 3. Embedded default (compiled into binary)
+//!
+//! ## Evaluation Rule
+//!
+//! ```text
+//! shouldCrawl = matchesFileType && (matchesPatternsToKeep || !matchesPatternsToExclude)
+//! ```
+//!
+//! Key properties:
+//! - fileTypes is the primary filter
+//! - patternsToKeep only overrides exclusion
+//! - patternsToKeep does NOT force unsupported file types to be crawled
+
+use anyhow::{anyhow, Result};
+use globset::{Glob, GlobSet, GlobSetBuilder};
+use serde::Deserialize;
+use std::collections::HashMap;
+
+/// Crawl configuration loaded from `monodex-crawl.json`.
+#[derive(Debug, Clone, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct CrawlConfig {
+    /// Config schema version (must be 1)
+    pub version: u32,
+
+    /// File suffix → chunking strategy mapping
+    /// Keys are file suffixes like ".ts", ".md"
+    /// Values are strategy identifiers like "typescript", "markdown"
+    #[serde(rename = "fileTypes")]
+    pub file_types: HashMap<String, String>,
+
+    /// Glob patterns for paths to exclude from crawling
+    /// Directory patterns (ending in "/") match any path under that directory
+    #[serde(rename = "patternsToExclude")]
+    pub patterns_to_exclude: Vec<String>,
+
+    /// Glob patterns that override exclusion (higher precedence)
+    /// Directory patterns (ending in "/") match any path under that directory
+    #[serde(rename = "patternsToKeep")]
+    pub patterns_to_keep: Vec<String>,
+}
+
+/// Compiled crawl configuration with glob sets ready for matching.
+#[derive(Debug, Clone)]
+pub struct CompiledCrawlConfig {
+    /// Original config
+    pub config: CrawlConfig,
+
+    /// Compiled exclusion patterns (non-directory patterns)
+    exclude_set: GlobSet,
+
+    /// Compiled keep patterns (non-directory patterns)
+    keep_set: GlobSet,
+
+    /// Directory prefixes for exclusion (patterns ending in "/")
+    exclude_dirs: Vec<String>,
+
+    /// Directory prefixes for keep (patterns ending in "/")
+    keep_dirs: Vec<String>,
+}
+
+impl CrawlConfig {
+    /// Parse config from JSON string.
+    pub fn from_json(json: &str) -> Result<Self> {
+        let config: CrawlConfig = serde_json::from_str(json)?;
+        config.validate()?;
+        Ok(config)
+    }
+
+    /// Validate config fields.
+    pub fn validate(&self) -> Result<()> {
+        // Validate version
+        if self.version != 1 {
+            return Err(anyhow!(
+                "Unsupported config version: {} (expected 1)",
+                self.version
+            ));
+        }
+
+        // Validate file_types strategies
+        for (suffix, strategy) in &self.file_types {
+            if !is_valid_strategy(strategy) {
+                return Err(anyhow!(
+                    "Unknown chunking strategy '{}' for suffix '{}'. Valid strategies: typescript, javascript, markdown, json, yamlSimple, simpleLine",
+                    strategy,
+                    suffix
+                ));
+            }
+            // Validate suffix format (should start with .)
+            if !suffix.starts_with('.') {
+                return Err(anyhow!(
+                    "Invalid file suffix '{}': must start with '.' (e.g., '.ts')",
+                    suffix
+                ));
+            }
+        }
+
+        // Validate glob patterns compile
+        for pattern in &self.patterns_to_exclude {
+            Glob::new(pattern)
+                .map_err(|e| anyhow!("Invalid exclude pattern '{}': {}", pattern, e))?;
+        }
+
+        for pattern in &self.patterns_to_keep {
+            Glob::new(pattern)
+                .map_err(|e| anyhow!("Invalid keep pattern '{}': {}", pattern, e))?;
+        }
+
+        Ok(())
+    }
+
+    /// Compile glob patterns into a matcher.
+    pub fn compile(&self) -> Result<CompiledCrawlConfig> {
+        let mut exclude_builder = GlobSetBuilder::new();
+        let mut exclude_dirs = Vec::new();
+        
+        for pattern in &self.patterns_to_exclude {
+            if pattern.ends_with('/') {
+                // Directory pattern: store as prefix matcher
+                exclude_dirs.push(pattern.clone());
+            } else {
+                exclude_builder.add(Glob::new(pattern)?);
+            }
+        }
+
+        let mut keep_builder = GlobSetBuilder::new();
+        let mut keep_dirs = Vec::new();
+        
+        for pattern in &self.patterns_to_keep {
+            if pattern.ends_with('/') {
+                // Directory pattern: store as prefix matcher
+                keep_dirs.push(pattern.clone());
+            } else {
+                keep_builder.add(Glob::new(pattern)?);
+            }
+        }
+
+        Ok(CompiledCrawlConfig {
+            config: self.clone(),
+            exclude_set: exclude_builder.build()?,
+            keep_set: keep_builder.build()?,
+            exclude_dirs,
+            keep_dirs,
+        })
+    }
+}
+
+impl CompiledCrawlConfig {
+    /// Check if a repo-relative path should be crawled.
+    ///
+    /// Evaluation rule:
+    /// ```text
+    /// shouldCrawl = matchesFileType && (matchesPatternsToKeep || !matchesPatternsToExclude)
+    /// ```
+    pub fn should_crawl(&self, repo_relative_path: &str) -> bool {
+        // First: check if file type is supported
+        if !self.matches_file_type(repo_relative_path) {
+            return false;
+        }
+
+        // Second: check exclusion with keep override
+        let matches_exclude = self.matches_exclude(repo_relative_path);
+        let matches_keep = self.matches_keep(repo_relative_path);
+
+        matches_keep || !matches_exclude
+    }
+
+    /// Check if file matches a configured file type.
+    fn matches_file_type(&self, path: &str) -> bool {
+        // Match against suffixes (case-sensitive, v1)
+        for suffix in self.config.file_types.keys() {
+            if path.ends_with(suffix) {
+                return true;
+            }
+        }
+        false
+    }
+
+    /// Check if path matches exclusion patterns.
+    fn matches_exclude(&self, path: &str) -> bool {
+        // Check glob patterns
+        if self.exclude_set.is_match(path) {
+            return true;
+        }
+        // Check directory prefixes
+        for dir in &self.exclude_dirs {
+            if path.starts_with(dir) {
+                return true;
+            }
+        }
+        false
+    }
+
+    /// Check if path matches keep patterns.
+    fn matches_keep(&self, path: &str) -> bool {
+        // Check glob patterns
+        if self.keep_set.is_match(path) {
+            return true;
+        }
+        // Check directory prefixes
+        for dir in &self.keep_dirs {
+            if path.starts_with(dir) {
+                return true;
+            }
+        }
+        false
+    }
+
+    /// Get the chunking strategy for a file.
+    ///
+    /// Returns None if file type is not configured.
+    pub fn get_strategy(&self, repo_relative_path: &str) -> Option<&str> {
+        for (suffix, strategy) in &self.config.file_types {
+            if repo_relative_path.ends_with(suffix) {
+                return Some(strategy);
+            }
+        }
+        None
+    }
+}
+
+/// Check if a strategy name is valid.
+fn is_valid_strategy(strategy: &str) -> bool {
+    matches!(
+        strategy,
+        "typescript" | "javascript" | "markdown" | "json" | "yamlSimple" | "simpleLine"
+    )
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn test_config() -> CrawlConfig {
+        CrawlConfig::from_json(
+            r#"{
+                "version": 1,
+                "fileTypes": {
+                    ".ts": "typescript",
+                    ".tsx": "typescript",
+                    ".md": "markdown",
+                    ".json": "simpleLine"
+                },
+                "patternsToExclude": [
+                    "node_modules/",
+                    "*.test.ts",
+                    "*.spec.ts"
+                ],
+                "patternsToKeep": [
+                    "src/",
+                    "test/"
+                ]
+            }"#,
+        )
+        .unwrap()
+    }
+
+    #[test]
+    fn test_config_validation() {
+        let config = test_config();
+        assert!(config.validate().is_ok());
+    }
+
+    #[test]
+    fn test_invalid_version() {
+        let result = CrawlConfig::from_json(
+            r#"{
+                "version": 2,
+                "fileTypes": {".ts": "typescript"},
+                "patternsToExclude": [],
+                "patternsToKeep": []
+            }"#,
+        );
+        assert!(result.is_err());
+        assert!(result.unwrap_err().to_string().contains("Unsupported config version"));
+    }
+
+    #[test]
+    fn test_invalid_strategy() {
+        let result = CrawlConfig::from_json(
+            r#"{
+                "version": 1,
+                "fileTypes": {".ts": "unknownStrategy"},
+                "patternsToExclude": [],
+                "patternsToKeep": []
+            }"#,
+        );
+        assert!(result.is_err());
+        assert!(result.unwrap_err().to_string().contains("Unknown chunking strategy"));
+    }
+
+    #[test]
+    fn test_invalid_suffix() {
+        let result = CrawlConfig::from_json(
+            r#"{
+                "version": 1,
+                "fileTypes": {"ts": "typescript"},
+                "patternsToExclude": [],
+                "patternsToKeep": []
+            }"#,
+        );
+        assert!(result.is_err());
+        assert!(result.unwrap_err().to_string().contains("must start with '.'"));
+    }
+
+    #[test]
+    fn test_invalid_glob() {
+        let result = CrawlConfig::from_json(
+            r#"{
+                "version": 1,
+                "fileTypes": {".ts": "typescript"},
+                "patternsToExclude": ["[invalid"],
+                "patternsToKeep": []
+            }"#,
+        );
+        assert!(result.is_err());
+        assert!(result.unwrap_err().to_string().contains("Invalid exclude pattern"));
+    }
+
+    #[test]
+    fn test_unknown_field_rejected() {
+        let result = CrawlConfig::from_json(
+            r#"{
+                "version": 1,
+                "fileTypes": {".ts": "typescript"},
+                "patternsToExclude": [],
+                "patternsToKeep": [],
+                "unknownField": "value"
+            }"#,
+        );
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_file_type_matching() {
+        let compiled = test_config().compile().unwrap();
+
+        // File type matches
+        assert!(compiled.matches_file_type("src/index.ts"));
+        assert!(compiled.matches_file_type("src/App.tsx"));
+        assert!(compiled.matches_file_type("README.md"));
+        assert!(compiled.matches_file_type("package.json"));
+
+        // File type doesn't match
+        assert!(!compiled.matches_file_type("image.png"));
+        assert!(!compiled.matches_file_type("style.css"));
+    }
+
+    #[test]
+    fn test_should_crawl_basic() {
+        let compiled = test_config().compile().unwrap();
+
+        // Supported file type, not excluded
+        assert!(compiled.should_crawl("src/index.ts"));
+        assert!(compiled.should_crawl("README.md"));
+    }
+
+    #[test]
+    fn test_should_crawl_exclusion() {
+        let compiled = test_config().compile().unwrap();
+
+        // node_modules excluded
+        assert!(!compiled.should_crawl("node_modules/package/index.ts"));
+
+        // test files excluded
+        assert!(!compiled.should_crawl("utils.test.ts"));
+        assert!(!compiled.should_crawl("api.spec.ts"));
+    }
+
+    #[test]
+    fn test_should_crawl_keep_override() {
+        let compiled = test_config().compile().unwrap();
+
+        // src/ overrides exclusion - test file in src is kept
+        assert!(compiled.should_crawl("src/utils.test.ts"));
+
+        // But still must match file type
+        assert!(!compiled.should_crawl("src/image.png"));
+    }
+
+    #[test]
+    fn test_should_crawl_unsupported_type() {
+        let compiled = test_config().compile().unwrap();
+
+        // Unsupported file types are never crawled, even with keep pattern
+        assert!(!compiled.should_crawl("src/image.png"));
+        assert!(!compiled.should_crawl("src/style.css"));
+    }
+
+    #[test]
+    fn test_get_strategy() {
+        let compiled = test_config().compile().unwrap();
+
+        assert_eq!(compiled.get_strategy("src/index.ts"), Some("typescript"));
+        assert_eq!(compiled.get_strategy("src/App.tsx"), Some("typescript"));
+        assert_eq!(compiled.get_strategy("README.md"), Some("markdown"));
+        assert_eq!(compiled.get_strategy("package.json"), Some("simpleLine"));
+        assert_eq!(compiled.get_strategy("image.png"), None);
+    }
+}

@@ -436,15 +436,18 @@ In `src/engine/git_ops.rs`:
 
 ### 8.2 Define Crawl Config Schema
 
-- [ ] Create `src/engine/crawl_config.rs` module
-- [ ] Define `CrawlConfig` struct with fields:
+- [x] Create `src/engine/crawl_config.rs` module
+- [x] Define `CrawlConfig` struct with fields:
   - `version: u32` (must be `1`)
   - `file_types: HashMap<String, String>` (suffix → strategy)
   - `patterns_to_exclude: Vec<String>` (glob patterns)
   - `patterns_to_keep: Vec<String>` (glob patterns)
-- [ ] Define `ChunkingStrategy` enum matching current code:
-  - `TypeScript`, `JavaScript`, `Markdown`, `Json`, `YamlSimple`, `SimpleLine`, `Skip`
-- [ ] Add `globset` dependency for pattern matching
+- [x] Define `CompiledCrawlConfig` struct with compiled glob sets and directory prefixes
+- [x] Add `globset` dependency for pattern matching
+- [x] Implement `should_crawl()` with evaluation rule
+- [x] Implement `get_strategy()` to lookup chunking strategy
+- [x] Handle directory patterns (ending in `/`) as prefix matches
+- [x] Add unit tests for config validation and matching logic
 
 ### 8.3 Implement Config Discovery
 

@@ -499,7 +499,7 @@ fn run_crawl(config: &Config, catalog_name: &str, incremental_warnings: bool) ->
             // Collect all available embeddings
             // Track expected count per file (set once on first observation)
             while let Ok(embedded) = embed_rx.try_recv() {
-                let file_id = engine::util::display_file_id(embedded.0.file_id);
+                let file_id = embedded.0.file_id.clone();
 
                 // Set expected count on first observation of this file
                 if let std::collections::hash_map::Entry::Vacant(e) = expected_count.entry(file_id.clone()) {
@@ -532,7 +532,7 @@ fn run_crawl(config: &Config, catalog_name: &str, incremental_warnings: bool) ->
                         // Upload succeeded - now update uploaded_count per file
                         let mut files_in_batch: HashMap<String, usize> = HashMap::new();
                         for (chunk, _) in &accumulated {
-                            let file_id = engine::util::display_file_id(chunk.file_id);
+                            let file_id = chunk.file_id.clone();
                             *files_in_batch.entry(file_id).or_insert(0) += 1;
                         }
 
@@ -572,7 +572,7 @@ fn run_crawl(config: &Config, catalog_name: &str, incremental_warnings: bool) ->
             if stop_uploader.load(Ordering::Relaxed) {
                 // Drain remaining
                 while let Ok(embedded) = embed_rx.try_recv() {
-                    let file_id = engine::util::display_file_id(embedded.0.file_id);
+                    let file_id = embedded.0.file_id.clone();
 
                     if let std::collections::hash_map::Entry::Vacant(e) = expected_count.entry(file_id.clone()) {
                         e.insert(embedded.0.chunk_count);
@@ -594,7 +594,7 @@ fn run_crawl(config: &Config, catalog_name: &str, incremental_warnings: bool) ->
                             // Update uploaded_count
                             let mut files_in_batch: HashMap<String, usize> = HashMap::new();
                             for (chunk, _) in &accumulated {
-                                let file_id = engine::util::display_file_id(chunk.file_id);
+                                let file_id = chunk.file_id.clone();
                                 *files_in_batch.entry(file_id).or_insert(0) += 1;
                             }
 
@@ -735,11 +735,11 @@ fn run_search(config: &Config, text: &str, limit: usize, catalog: Option<&str>) 
 
     // Display results as blurbs
     for result in &results {
-        // Line 1: file_id:chunk_number  score  breadcrumb
+        // Line 1: file_id:chunk_ordinal  score  breadcrumb
         let breadcrumb = result.payload.breadcrumb.as_deref().unwrap_or("unknown");
         println!("{}:{}  {:.3}  {}",
             result.payload.file_id,
-            result.payload.chunk_number,
+            result.payload.chunk_ordinal,
             result.score,
             breadcrumb);
 
@@ -870,15 +870,15 @@ fn run_view(config: &Config, id_specs: &[String], show_full_paths: bool, chunks_
         let filtered: Vec<PointResult> = match &selector {
             ChunkSelector::All => chunks,
             ChunkSelector::Single(n) => {
-                chunks.into_iter().filter(|c| c.payload.chunk_number == *n).collect()
+                chunks.into_iter().filter(|c| c.payload.chunk_ordinal == *n).collect()
             }
             ChunkSelector::Range(start, end) => {
                 chunks.into_iter().filter(|c| {
-                    c.payload.chunk_number >= *start && c.payload.chunk_number <= *end
+                    c.payload.chunk_ordinal >= *start && c.payload.chunk_ordinal <= *end
                 }).collect()
             }
             ChunkSelector::ToEnd(start) => {
-                chunks.into_iter().filter(|c| c.payload.chunk_number >= *start).collect()
+                chunks.into_iter().filter(|c| c.payload.chunk_ordinal >= *start).collect()
             }
         };
 
@@ -921,10 +921,10 @@ fn run_view(config: &Config, id_specs: &[String], show_full_paths: bool, chunks_
         for result in results {
             let breadcrumb = result.payload.breadcrumb.as_deref().unwrap_or("unknown");
             let chunk_count = result.payload.chunk_count;
-            let chunk_number = result.payload.chunk_number;
+            let chunk_ordinal = result.payload.chunk_ordinal;
 
-            // Header line: <file_id>:<chunk_number> (<n>/<total>) <breadcrumb>
-            println!("{}:{} ({}/{}) {}", file_id, chunk_number, chunk_number, chunk_count, breadcrumb);
+            // Header line: <file_id>:<chunk_ordinal> (<n>/<total>) <breadcrumb>
+            println!("{}:{} ({}/{}) {}", file_id, chunk_ordinal, chunk_ordinal, chunk_count, breadcrumb);
 
             // Source line
             println!("Source: {}:{}", result.payload.catalog, result.payload.relative_path);

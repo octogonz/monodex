@@ -51,7 +51,7 @@ Create `src/engine/git_ops.rs`:
 
 ---
 
-## Phase 2: Schema Changes
+## Phase 2: Schema Changes ✅ COMPLETE
 
 **Goal:** Update Qdrant payload schema to support labels and commit-based identity.
 
@@ -59,7 +59,7 @@ Create `src/engine/git_ops.rs`:
 
 In `src/engine/uploader.rs`:
 
-- [ ] Add new fields to `PointPayload`:
+- [x] Add new fields to `PointPayload`:
   - `label_id: String`
   - `active_label_ids: Vec<String>`
   - `embedder_id: String`
@@ -67,32 +67,46 @@ In `src/engine/uploader.rs`:
   - `blob_id: String`
   - `package_name: String`
   - `chunk_ordinal: usize` (rename from `chunk_number`)
-- [ ] Remove `file_id` field
-- [ ] Keep `source_uri` but document it's not a key
+- [x] Keep `file_id` field (now a 16-char hex string instead of u64)
+- [x] Keep `source_uri` but document it's not a key
 
 ### 2.2 Add LabelMetadata Struct
 
-- [ ] Create `LabelMetadata` struct for label metadata points
-- [ ] Use `source_type: "label-metadata"` as discriminator
-- [ ] Point ID is the `label_id` string (direct lookup)
-- [ ] Store zero-vector (768 dims of 0.0) - required by Qdrant but never used in search
+- [x] Create `LabelMetadata` struct for label metadata points
+- [x] Use `source_type: "label-metadata"` as discriminator
+- [x] Point ID is the `label_id` string (direct lookup)
+- [x] Store zero-vector (768 dims of 0.0) - required by Qdrant but never used in search
 
 ### 2.3 Update Qdrant Operations
 
-- [ ] Add `upsert_label_metadata(label: LabelMetadata)`
-- [ ] Add `get_label_metadata(label_id) -> Option<LabelMetadata>`
-- [ ] Add `add_label_to_chunk(chunk_id, label_id)` for updating `active_label_ids`
-- [ ] Add `remove_label_from_chunks(label_id)` for cleanup scan
+- [x] Add `upsert_label_metadata(label: LabelMetadata)`
+- [x] Add `get_label_metadata(label_id) -> Option<LabelMetadata>`
+- [x] Add `add_label_to_chunk(chunk_id, label_id)` for updating `active_label_ids`
+- [x] Add `add_label_to_file_chunks(file_id, label_id)` for batch file updates
+- [x] Add `remove_label_from_chunks(label_id)` for cleanup scan
+- [x] Add `get_file_sentinel(file_id, label_id)` to check if file already indexed
+- [x] Add `set_active_labels(chunk_id, label_ids)` for atomic replacement
+- [x] Add `delete_point(chunk_id)` for cleanup
+- [x] Add `search_with_label(query, label_id)` for label-filtered search
+- [x] Add `get_chunks_by_file_id_with_label(file_id, label_id)` for label-filtered view
 
 ### 2.4 File and Chunk ID Computation
 
 In `src/engine/util.rs`:
 
-- [ ] Implement `compute_file_id(embedder_id, chunker_id, blob_id, relative_path) -> String`
+- [x] Implement `compute_file_id(embedder_id, chunker_id, blob_id, relative_path) -> String`
   - This is a file-scoped identity (semantic version of a file)
   - Does NOT include chunk_ordinal
-- [ ] Update `Chunk` struct to include `file_id` field
-- [ ] Point ID for Qdrant = hash of (file_id, chunk_ordinal)
+  - Returns 16-char hex string
+- [x] Add `EMBEDDER_ID` and `CHUNKER_ID` constants
+- [x] Implement `compute_point_id(file_id, chunk_ordinal) -> String`
+  - Returns `<file_id>:<ordinal>` format for deterministic chunk IDs
+- [x] Implement `compute_label_id(catalog, label_name) -> String`
+  - Returns `<catalog>:<label_name>` format
+- [x] Update `Chunk` struct to include new Phase 2 fields
+- [x] Add `ChunkContext` struct for content-based chunking
+- [x] Add `chunk_content()` function for Git blob-based chunking
+- [x] Add `Chunk::point_id()` method
 
 ---
 
@@ -117,10 +131,10 @@ In `src/engine/partitioner.rs`:
 
 ### 3.2 Update Chunk Metadata
 
-- [ ] Ensure chunks include `blob_id` field
-- [ ] Ensure chunks include `package_name` field
-- [ ] Compute `file_id` during chunking using util function
-- [ ] Point ID = hash of (file_id, chunk_ordinal)
+- [x] Ensure chunks include `blob_id` field
+- [x] Ensure chunks include `package_name` field
+- [x] Compute `file_id` during chunking using util function
+- [x] Point ID = hash of (file_id, chunk_ordinal)
 
 ### 3.3 Test Content-Based Chunking
 

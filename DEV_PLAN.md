@@ -219,29 +219,192 @@ In `src/main.rs`:
 - [ ] View specific chunks
 - [ ] Verify results are correct
 
----
-
-## Phase 6: Testing & Documentation
-
-**Goal:** Ensure system works end-to-end and is documented.
-
-### 6.1 Integration Testing
-
-- [ ] Crawl multiple labels from same commit (verify dedup)
-- [ ] Crawl same label from different commits (verify cleanup)
-- [ ] Verify incremental crawl resumes after interruption
-
-### 6.2 Update README.md
+### 5.5 Update README.md
 
 - [ ] Document new CLI commands
 - [ ] Document label concept
 - [ ] Update examples
 
-### 6.3 Final Verification
+### 5.6 Fix Error Handling in Crawl
 
-- [ ] Delete old Qdrant collection
+**Goal:** Ensure errors during crawl are properly propagated rather than swallowed, and partial state can be cleaned up.
+
+**Problem:** Current implementation logs errors but continues execution:
+- Upload failures: `Err(e) => eprintln!` at lines 658-659, 697-698
+- File completion marking: `if let Err(e) = ...` silently ignores failures
+- Label assignment: `let _ = uploader_guard...` discards errors
+
+**Files to modify:**
+- `src/main.rs` - `run_crawl_label()` function (lines 380-800)
+
+**Changes needed:**
+- [ ] Track upload failures in a counter/vec rather than just logging
+- [ ] Decide on failure policy: abort crawl on upload failure, or retry, or continue with warning
+- [ ] For file completion marking failures: at minimum, log prominently and track which files failed
+- [ ] For label assignment failures: these are critical - if label isn't added, chunks won't be found in search
+- [ ] Ensure `crawl_complete: false` metadata is preserved on any failure path
+- [ ] Add summary at end: "X files indexed, Y failed" with list of failed files
+- [ ] Test: simulate upload failure (e.g., stop Qdrant mid-crawl) and verify partial state is recoverable
+
+**Test scenarios:**
+- [ ] Kill Qdrant mid-crawl: verify partial chunks exist, label metadata shows incomplete
+- [ ] Resume after partial failure: verify crawl continues from where it stopped
+- [ ] Verify orphaned chunks (uploaded but not labeled) are found by future `monodex gc` command
+
+---
+
+## Phase 6: Edge Case Testing
+
+**Goal:** Test edge cases and failure modes that emerge from label-based indexing semantics.
+
+### 6.1 Multi-Label Scenarios
+
+- [ ] Crawl the same commit under two different labels (verify chunks share `active_label_ids`)
+- [ ] Verify both labels return same chunks in search
+- [ ] Crawl a different commit under one label (verify label reassignment)
+- [ ] Verify the other label still has its original chunks
+
+### 6.2 Incremental Crawl Edge Cases
+
+- [ ] Interrupt a crawl (CTRL+C) and verify:
+  - Label metadata shows `crawl_complete = false`
+  - Partial chunks exist but label membership is incomplete
+- [ ] Resume interrupted crawl and verify completion
+- [ ] Verify label reassignment does NOT run for partial crawls
+
+### 6.3 Chunk Deduplication Edge Cases
+
+- [ ] File moves between packages (path change):
+  - Verify new chunks are created (breadcrumb context changes)
+  - Verify old chunks remain for old labels
+- [ ] Same content, different path:
+  - Verify different `file_id` values
+  - Verify both can coexist in different labels
+
+### 6.4 Label Cleanup Edge Cases
+
+- [ ] Re-crawl same label with different commit
+  - Verify chunks from old commit are removed from label
+  - Verify chunks shared with other labels are NOT deleted
+  - Verify orphaned chunks (empty `active_label_ids`) are deleted
+- [ ] Purge a single label and verify other labels unaffected
+
+### 6.5 Search/View Edge Cases
+
+- [ ] Search with label that has no chunks yet
+- [ ] View chunks from file that exists in multiple labels
+- [ ] View chunks after label has been purged
+- [ ] Default context with non-existent catalog/label
+
+### 6.6 Fresh Installation Verification
+
+- [ ] Delete Qdrant collection
 - [ ] Fresh crawl with new schema
-- [ ] Verify all operations work
+- [ ] Verify all operations work from clean state
+
+---
+
+## Phase 7: Working Directory Crawling
+
+**Goal:** Support crawling the live working directory (uncommitted changes) in addition to Git commits.
+
+### 7.1 Design Working Directory Identity Model
+
+- [ ] Define identity scheme for working directory files:
+  - No `blob_id` (not in Git yet)
+  - Use content hash computed from file content
+  - Path + content hash determines `file_id`
+- [ ] Decide `source_kind` value for working directory labels (e.g., `"working-directory"`)
+- [ ] Decide how to represent "no commit" in `LabelMetadata.commit_oid` (empty string? "WORKING"?)
+- [ ] Document: working directory labels are mutable (re-crawl changes content), commit labels are immutable
+
+### 7.2 Implement Working Directory Enumeration
+
+In `src/engine/git_ops.rs` or new module:
+
+- [ ] Implement `enumerate_working_directory(repo_path) -> Vec<FileEntry>`
+  - Walk the filesystem, respecting `.gitignore`
+  - Skip `node_modules` and other excluded paths (reuse `should_skip_path`)
+  - Compute content hash for each file
+- [ ] Decide: use `git status` to find changed files, or full directory walk?
+  - Full walk: simpler, consistent with commit-based crawling
+  - `git status`: faster for incremental updates, but more complex
+
+### 7.3 Update Crawler for Working Directory Mode
+
+- [ ] Add `--working-dir` flag to `crawl` command (mutually exclusive with `--commit`)
+- [ ] Create `run_crawl_working_dir()` function or refactor `run_crawl_label()` to handle both modes
+- [ ] For working directory mode:
+  - Use `enumerate_working_directory()` instead of `enumerate_commit_tree()`
+  - Compute content hash instead of using `blob_id`
+  - Set `source_kind = "working-directory"` in label metadata
+  - Set `commit_oid = ""` (or chosen sentinel value)
+- [ ] Ensure package index works with working directory (walk up to nearest `package.json` on disk)
+
+### 7.4 Test Working Directory Crawling
+
+- [ ] Create a test repo with uncommitted changes
+- [ ] Crawl with `--working-dir` and verify:
+  - Label metadata shows `source_kind = "working-directory"`
+  - Chunks have correct content (from working tree, not HEAD)
+  - Search returns working directory content
+- [ ] Modify a file and re-crawl:
+  - Verify old chunks are replaced (label reassignment)
+  - Verify new content is indexed
+- [ ] Test alongside commit-based label:
+  - Crawl `--commit HEAD --label main`
+  - Crawl `--working-dir --label working`
+  - Verify both labels can coexist, search returns correct results for each
+
+### 7.5 Document Working Directory Mode
+
+- [ ] Update README.md with `--working-dir` usage examples
+- [ ] Document semantic differences (mutable vs immutable labels)
+
+---
+
+## Phase 8: Offline Garbage Collection
+
+**Goal:** Provide a command to clean up orphaned chunks and recover storage.
+
+### 8.1 Implement GC Command
+
+- [ ] Add `gc` command: `monodex gc --catalog rushstack`
+- [ ] Implementation:
+  - Scroll through all chunks with `source_type = "code"`
+  - Find chunks where `active_label_ids` is empty
+  - Delete them
+  - Report count and estimated storage recovered
+- [ ] Add `--dry-run` flag to show what would be deleted without actually deleting
+
+### 8.2 Test GC Scenarios
+
+- [ ] Create orphaned chunks (interrupt a crawl, or delete a label's chunks manually)
+- [ ] Run `monodex gc --dry-run` and verify correct chunks identified
+- [ ] Run `monodex gc` and verify orphans deleted, other chunks untouched
+- [ ] Verify `monodex gc` after successful crawl finds nothing to clean
+
+---
+
+## Phase 9: Watch Mode
+
+**Goal:** Continuously monitor and re-index a working directory as files change.
+
+### 9.1 Design Watch Mode Architecture
+
+- [ ] Research file watching libraries (notify, notify-debouncer-mini)
+- [ ] Decide on watch mode trigger:
+  - Debounced file system events (preferred)
+  - Polling interval (fallback for network filesystems)
+- [ ] Design state management:
+  - Which files are currently indexed under the working label?
+  - How to handle rapid successive changes (debouncing)
+- [ ] Design output/feedback:
+  - Log to stdout? Background daemon?
+  - How to show progress during re-indexing
+- [ ] Consider integration with existing `--working-dir` crawl:
+  - Watch mode could be `--watch` flag that runs indefinitely
+  - Initial crawl + incremental updates
 
 ---
 
@@ -259,13 +422,14 @@ In `src/main.rs`:
 src/
 ├── main.rs                    # CLI entry point
 └── engine/
-    ├── mod.rs                 # Module exports
-    ├── config.rs              # Config loading and file exclusion rules
     ├── chunker.rs             # File chunking dispatcher
-    ├── partitioner.rs         # AST-based TypeScript chunking
+    ├── config.rs              # Config loading and file exclusion rules
+    ├── git_ops.rs             # Git tree enumeration and blob reading
     ├── markdown_partitioner.rs # Markdown heading-based chunking
-    ├── parallel_embedder.rs   # Parallel embedding with multiple ONNX sessions
+    ├── mod.rs                 # Module exports
     ├── package_lookup.rs      # Package name resolution (walk up to package.json)
+    ├── parallel_embedder.rs   # Parallel embedding with multiple ONNX sessions
+    ├── partitioner.rs         # AST-based TypeScript chunking
     ├── uploader.rs            # Qdrant HTTP client
     └── util.rs                # Hash utilities for chunk IDs
 ```

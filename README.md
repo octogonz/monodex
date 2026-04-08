@@ -4,7 +4,7 @@
 
 ## Overview
 
-`monodex` is a production-quality CLI tool that indexes Rush monorepo source code and documentation into a Qdrant vector database for high-quality semantic search.
+`monodex` is a CLI tool that indexes Rush monorepo source code and documentation into a Qdrant vector database for scalable semantic search.
 
 ### Features
 
@@ -23,16 +23,19 @@ This tool is designed for AI assistants. The indexed database provides a complet
 **Typical workflow:**
 
 1. **Start with semantic search** to find relevant code:
+
    ```bash
    monodex search --text "how does rush handle pnpm shrinkwrap files"
    ```
 
 2. **View full chunks** using the `file_id:chunk_number` from search results:
+
    ```bash
    monodex view --id 700a4ba232fe9ddc:3
    ```
 
 3. **Get surrounding context** by viewing adjacent chunks:
+
    ```bash
    monodex view --id 700a4ba232fe9ddc:2-4
    ```
@@ -76,12 +79,12 @@ Create `~/.config/monodex/config.jsonc`:
 
 **Fields:**
 
-| Field | Required | Description |
-|-------|----------|-------------|
-| `qdrant.url` | No | Qdrant server URL (default: `http://localhost:6333`) |
-| `qdrant.collection` | Yes | Qdrant collection name |
-| `catalogs.<name>.type` | Yes | Catalog type: `"monorepo"` or `"folder"` |
-| `catalogs.<name>.path` | Yes | Absolute path to the repository root |
+| Field                  | Required | Description                                          |
+| ---------------------- | -------- | ---------------------------------------------------- |
+| `qdrant.url`           | No       | Qdrant server URL (default: `http://localhost:6333`) |
+| `qdrant.collection`    | Yes      | Qdrant collection name                               |
+| `catalogs.<name>.type` | Yes      | Catalog type: `"monorepo"` or `"folder"`             |
+| `catalogs.<name>.path` | Yes      | Absolute path to the repository root                 |
 
 **Catalog types:**
 
@@ -196,12 +199,14 @@ monodex/
 ### Chunking Strategy
 
 **TypeScript/TSX files** are chunked using AST-aware partitioning:
+
 - Splits at semantic boundaries (functions, classes, methods, enums)
 - Includes preceding JSDoc/TSDoc comments with each symbol
 - Handles oversized functions by splitting at statement blocks
 - Full breadcrumb context: `package:file:Class.method`
 
 **Quality indicators in breadcrumbs:**
+
 - No marker: Successful AST split with good chunk geometry
 - `:[degraded-ast-split]`: AST split with poor geometry (tiny chunks)
 - `:[fallback-split]`: No AST split found, used line-based recovery (failure mode)
@@ -246,6 +251,7 @@ curl http://localhost:6333/collections/rushstack | jq '.result.status'
 ```
 
 The collection uses:
+
 - **768 dimensions** (jina-embeddings-v2-base-code output size)
 - **Cosine distance** (best for semantic similarity)
 

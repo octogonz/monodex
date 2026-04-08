@@ -186,30 +186,30 @@ In `src/main.rs`:
 
 ---
 
-## Phase 5: Query Updates
+## Phase 5: Query Updates ✅ COMPLETE
 
 **Goal:** Update search and view to work with label filtering.
 
 ### 5.1 Use Command (Default Context)
 
-- [ ] Add `use` command to set default catalog and label
-- [ ] Store default context in `~/.config/monodex/context.json`
-- [ ] All commands check default context when flags not provided
-- [ ] Explicit flags override default context
+- [x] Add `use` command to set default catalog and label
+- [x] Store default context in `~/.config/monodex/context.json`
+- [x] All commands check default context when flags not provided
+- [x] Explicit flags override default context
 
 ### 5.2 Search Command
 
-- [ ] Add `--label` argument (uses default context if not provided)
-- [ ] Filter by `active_label_ids CONTAINS label_id`
-- [ ] Update output format to show `file_id:ordinal`
+- [x] Add `--label` argument (uses default context if not provided)
+- [x] Filter by `active_label_ids CONTAINS label_id`
+- [x] Update output format to show `file_id:ordinal`
 
 ### 5.3 View Command
 
-- [ ] Update to use file-oriented identity (file_id + selector)
-- [ ] Filter by `active_label_ids`
-- [ ] Support selector syntax (`:N`, `:N-M`, `:N-end`)
-- [ ] Support file reconstruction (view all chunks via file_id without selector)
-- [ ] Note: Path-based view is deferred to a later phase
+- [x] Update to use file-oriented identity (file_id + selector)
+- [x] Filter by `active_label_ids`
+- [x] Support selector syntax (`:N`, `:N-M`, `:N-end`)
+- [x] Support file reconstruction (view all chunks via file_id without selector)
+- [x] Note: Path-based view is deferred to a later phase
 
 ### 5.4 Test Query Flow
 

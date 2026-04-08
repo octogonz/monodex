@@ -59,6 +59,15 @@ struct Cli {
 /// Available commands
 #[derive(Subcommand)]
 enum Commands {
+    /// Set default catalog and label for subsequent commands
+    Use {
+        /// Catalog name
+        catalog: String,
+
+        /// Label name (optional - will prompt if not provided)
+        label: Option<String>,
+    },
+
     /// Crawl source and index into Qdrant (incremental sync).
     /// Reports warnings when AST chunking fails and fallback is used.
     /// These warnings indicate partitioner defects to investigate.
@@ -130,7 +139,12 @@ enum Commands {
         #[arg(long, default_value = "10")]
         limit: usize,
 
-        /// Filter by catalog (optional - searches all if omitted)
+        /// Filter by label (uses default context if not provided)
+        /// Format: <catalog>:<label>
+        #[arg(long)]
+        label: Option<String>,
+
+        /// Filter by catalog (optional - uses label or default context)
         #[arg(long)]
         catalog: Option<String>,
     },
@@ -145,6 +159,11 @@ enum Commands {
         ///   700a4ba232fe9ddc:3-end  - chunk 3 through the last chunk
         #[arg(long)]
         id: Vec<String>,
+
+        /// Filter by label (uses default context if not provided)
+        /// Format: <catalog>:<label>
+        #[arg(long)]
+        label: Option<String>,
 
         /// Show full filesystem paths
         #[arg(long)]
@@ -170,6 +189,86 @@ enum Commands {
 }
 
 const DEFAULT_CONFIG_PATH: &str = "~/.config/monodex/config.jsonc";
+
+/// Context file for storing default catalog/label
+const DEFAULT_CONTEXT_PATH: &str = "~/.config/monodex/context.json";
+
+/// Default context for commands
+#[derive(Debug, serde::Serialize, serde::Deserialize, Clone)]
+struct DefaultContext {
+    /// Default catalog name
+    catalog: String,
+    /// Default label name
+    label: String,
+    /// When the context was set
+    set_at: String,
+}
+
+/// Load default context from file
+fn load_default_context() -> Option<DefaultContext> {
+    let path = shellexpand::tilde(DEFAULT_CONTEXT_PATH);
+    let path = std::path::Path::new(path.as_ref());
+    
+    match std::fs::read_to_string(path) {
+        Ok(content) => serde_json::from_str(&content).ok(),
+        Err(_) => None,
+    }
+}
+
+/// Save default context to file
+fn save_default_context(catalog: &str, label: &str) -> anyhow::Result<()> {
+    let path = shellexpand::tilde(DEFAULT_CONTEXT_PATH);
+    let path = std::path::Path::new(path.as_ref());
+    
+    // Create parent directory if needed
+    if let Some(parent) = path.parent() {
+        std::fs::create_dir_all(parent)?;
+    }
+    
+    let context = DefaultContext {
+        catalog: catalog.to_string(),
+        label: label.to_string(),
+        set_at: chrono_timestamp(),
+    };
+    
+    let content = serde_json::to_string_pretty(&context)?;
+    std::fs::write(path, content)?;
+    
+    Ok(())
+}
+
+/// Resolve label ID from explicit flag or default context
+/// Returns (label_id, catalog, label_name) or error if neither provided
+fn resolve_label_id(explicit_label: Option<&str>, explicit_catalog: Option<&str>) -> anyhow::Result<(String, String, String)> {
+    // If explicit label provided, use it
+    if let Some(label_str) = explicit_label {
+        // Parse label format: <catalog>:<label>
+        let parts: Vec<&str> = label_str.splitn(2, ':').collect();
+        if parts.len() != 2 {
+            return Err(anyhow::anyhow!(
+                "Invalid label format '{}'. Expected <catalog>:<label>",
+                label_str
+            ));
+        }
+        let catalog = parts[0].to_string();
+        let label_name = parts[1].to_string();
+        let label_id = compute_label_id(&catalog, &label_name);
+        return Ok((label_id, catalog, label_name));
+    }
+    
+    // Try default context
+    if let Some(context) = load_default_context() {
+        // If explicit catalog provided, use it with default label
+        let catalog = explicit_catalog.unwrap_or(&context.catalog).to_string();
+        let label_name = context.label.clone();
+        let label_id = compute_label_id(&catalog, &label_name);
+        return Ok((label_id, catalog, label_name));
+    }
+    
+    Err(anyhow::anyhow!(
+        "No label specified. Use --label <catalog>:<label> or set a default with 'monodex use <catalog> <label>'"
+    ))
+}
 
 /// Get current timestamp for logging
 fn chrono_timestamp() -> String {
@@ -218,6 +317,9 @@ fn main() -> anyhow::Result<()> {
     let config = load_config(&config_path)?;
 
     match cli.command {
+        Commands::Use { catalog, label } => {
+            run_use(&catalog, label)?;
+        }
         Commands::Crawl { catalog, label, commit, incremental_warnings } => {
             run_crawl_label(&config, &catalog, &label, &commit, incremental_warnings)?;
         }
@@ -227,11 +329,11 @@ fn main() -> anyhow::Result<()> {
         Commands::DumpChunks { file, target_size, visualize, with_fallback, debug } => {
             run_dump_chunks(&file, target_size, visualize, with_fallback, debug)?;
         }
-        Commands::Search { text, limit, catalog } => {
-            run_search(&config, &text, limit, catalog.as_deref())?;
+        Commands::Search { text, limit, label, catalog } => {
+            run_search(&config, &text, limit, label.as_deref(), catalog.as_deref())?;
         }
-        Commands::View { id, full_paths, chunks_only } => {
-            run_view(&config, &id, full_paths, chunks_only)?;
+        Commands::View { id, label, full_paths, chunks_only } => {
+            run_view(&config, &id, label.as_deref(), full_paths, chunks_only)?;
         }
         Commands::AuditChunks { count, dir } => {
             run_audit_chunks(count, dir)?;
@@ -250,6 +352,29 @@ fn load_config(path: &PathBuf) -> anyhow::Result<Config> {
         .map_err(|e| anyhow::anyhow!("Failed to parse config file: {}", e))?;
 
     Ok(config)
+}
+
+/// Run the `use` command to set default context
+fn run_use(catalog: &str, label: Option<String>) -> anyhow::Result<()> {
+    let label_name = match label {
+        Some(l) => l,
+        None => {
+            // In interactive mode, we'd prompt, but for now require the argument
+            return Err(anyhow::anyhow!(
+                "Label name required. Usage: monodex use <catalog> <label>"
+            ));
+        }
+    };
+    
+    save_default_context(catalog, &label_name)?;
+    
+    let label_id = compute_label_id(catalog, &label_name);
+    println!("✓ Default context set to {}:{}", catalog, label_name);
+    println!("  Label ID: {}", label_id);
+    println!();
+    println!("Commands will now use this context when --label is not specified.");
+    
+    Ok(())
 }
 
 fn run_crawl_label(
@@ -670,14 +795,26 @@ fn run_crawl_label(
 }
 
 /// Run search with compact blurb output
-fn run_search(config: &Config, text: &str, limit: usize, catalog: Option<&str>) -> anyhow::Result<()> {
+fn run_search(
+    config: &Config,
+    text: &str,
+    limit: usize,
+    label: Option<&str>,
+    catalog: Option<&str>,
+) -> anyhow::Result<()> {
+    // Resolve label ID from explicit flag or default context
+    let (label_id, _, _) = resolve_label_id(label, catalog)?;
+
     // Generate embedding for query
     let embedder = ParallelEmbedder::new()?;
     let embedding = embedder.encode(text, 0)?;
 
-    // Query Qdrant
+    // Query Qdrant with label filter
     let uploader = QdrantUploader::new(&config.qdrant.collection, config.qdrant.url.as_deref())?;
-    let results = uploader.query(&embedding, limit, catalog)?;
+    
+    // Extract catalog from label_id (format: catalog:label)
+    let catalog = label_id.split(':').next().unwrap_or("");
+    let results = uploader.search_with_label(&embedding, limit, catalog, &label_id)?;
 
     // Display results as blurbs
     for result in &results {
@@ -791,10 +928,19 @@ fn parse_file_id_with_selector(s: &str) -> anyhow::Result<(String, ChunkSelector
     }
 }
 
-fn run_view(config: &Config, id_specs: &[String], show_full_paths: bool, chunks_only: bool) -> anyhow::Result<()> {
+fn run_view(
+    config: &Config,
+    id_specs: &[String],
+    label: Option<&str>,
+    show_full_paths: bool,
+    chunks_only: bool,
+) -> anyhow::Result<()> {
     if id_specs.is_empty() {
         return Err(anyhow::anyhow!("No IDs provided. Use --id <file_id>[:<selector>]"));
     }
+
+    // Resolve label ID from explicit flag or default context
+    let (label_id, _, _) = resolve_label_id(label, None)?;
 
     // Parse all file IDs with selectors
     let mut requests: Vec<(String, ChunkSelector)> = Vec::new();
@@ -810,7 +956,7 @@ fn run_view(config: &Config, id_specs: &[String], show_full_paths: bool, chunks_
     let mut all_results: Vec<(String, ChunkSelector, Vec<PointResult>)> = Vec::new();
 
     for (file_id, selector) in requests {
-        let chunks = uploader.get_chunks_by_file_id(&file_id)?;
+        let chunks = uploader.get_chunks_by_file_id_with_label(&file_id, &label_id)?;
 
         // Filter by selector
         let filtered: Vec<PointResult> = match &selector {

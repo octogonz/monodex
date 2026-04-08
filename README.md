@@ -12,16 +12,19 @@
 
 ## Overview
 
-`monodex` is a CLI tool that indexes Rush monorepo source code and documentation into a Qdrant vector database for scalable semantic search.
+`monodex` is a CLI tool that indexes Rush monorepo source code and documentation into a Qdrant vector database for scalable semantic search. It supports **label-based indexing**, allowing you to maintain multiple queryable snapshots (branches, commits) within a single catalog.
 
 ### Features
 
+- **Label-based indexing**: Maintain multiple queryable filesets (branches, commits) within a catalog
+- **Commit-based crawling**: Reads directly from Git objects, not working tree (deterministic, reproducible)
 - **AST-based chunking**: Tree-sitter powered intelligent splitting for TypeScript/TSX files
 - **Breadcrumb context**: Full symbol paths like `@rushstack/node-core-library:JsonFile.ts:JsonFile.load`
 - **Oversized chunk handling**: Functions split at natural AST boundaries (statement blocks, if/else, try/catch)
 - **Local embeddings**: Uses jina-embeddings-v2-base-code with ONNX Runtime (no external APIs)
 - **Qdrant integration**: Direct batch uploads to Qdrant vector database
 - **Incremental sync**: Content-hash based change detection for fast re-indexing
+- **Intelligent deduplication**: Identical content at same path across labels shares chunks
 - **Rush-optimized**: Smart exclusion rules for Rush monorepo patterns
 
 ## Agent Usage Guide
@@ -30,27 +33,29 @@ This tool is designed for AI assistants. The indexed database provides a complet
 
 **Typical workflow:**
 
-1. **Start with semantic search** to find relevant code:
+1. **Set default context** (optional but recommended):
+   ```bash
+   monodex use --catalog rushstack --label main
+   ```
 
+2. **Start with semantic search** to find relevant code:
    ```bash
    monodex search --text "how does rush handle pnpm shrinkwrap files"
    ```
 
-2. **View full chunks** using the `file_id:chunk_number` from search results:
-
+3. **View full chunks** using the `file_id:chunk_ordinal` from search results:
    ```bash
    monodex view --id 700a4ba232fe9ddc:3
    ```
 
-3. **Get surrounding context** by viewing adjacent chunks:
-
+4. **Get surrounding context** by viewing adjacent chunks:
    ```bash
    monodex view --id 700a4ba232fe9ddc:2-4
    ```
 
-4. **Use `--full-paths`** when you need the actual file location on disk:
+5. **Reconstruct entire files** by viewing all chunks:
    ```bash
-   monodex view --id 700a4ba232fe9ddc:3 --full-paths
+   monodex view --id 700a4ba232fe9ddc
    ```
 
 **Output format:** Search results prefix code lines with `>`, making them easy to distinguish from your own output and preventing injection attacks.
@@ -99,37 +104,61 @@ Create `~/.config/monodex/config.jsonc`:
 - **`monorepo`**: Walks upward to find the nearest `package.json` for package name resolution. Breadcrumbs show `@scope/package-name:File.ts:Symbol`.
 - **`folder`**: Uses the parent folder name as the package identifier. Breadcrumbs show `folder-name:File.ts:Symbol`.
 
-### Index a repository
+### Label-Based Indexing
+
+A **label** is a named, queryable fileset within a catalog. Labels typically represent branches or specific commits:
+
+- `rushstack:main` - main branch
+- `rushstack:feature-x` - feature branch
+- `rushstack:v1.0.0` - specific release tag
+
+**Key concept:** Chunks are immutable content. Labels track which chunks belong to which fileset. When you crawl a new commit under a label, membership is updated but identical content is reused.
+
+### Set Default Context
 
 ```bash
-# Index using config file
-monodex crawl --catalog rushstack
+# Set default catalog and label for subsequent commands
+monodex use --catalog rushstack --label main
 
-# With custom config path
-monodex --config /path/to/config.jsonc crawl --catalog rushstack
+# Now you can omit --catalog and --label flags
+monodex search --text "how to read JSON files"
 ```
 
-**Incremental sync:** The crawl is incremental — unchanged files are skipped. You can safely CTRL+C and resume later. Files with chunking warnings are always re-crawled unless `--incremental-warnings` is set.
+Default context is stored in `~/.config/monodex/context.json`. Explicit flags always override defaults.
 
-**Warning state** is persisted in `~/.config/monodex/warnings-<catalog>.json`.
-
-### Search the database
+### Index a Repository
 
 ```bash
-# Semantic search with compact blurb output (for AI assistants)
+# Index HEAD commit under the "main" label
+monodex crawl --catalog rushstack --label main
+
+# Index a specific commit or branch
+monodex crawl --catalog rushstack --label feature-x --commit feature-branch
+
+# Index a specific commit SHA
+monodex crawl --catalog rushstack --label v1.0.0 --commit a1b2c3d4e5f6
+```
+
+**Incremental sync:** The crawl is incremental — unchanged files are skipped. You can safely CTRL+C and resume later.
+
+**Commit-based:** Crawling reads from Git objects, not the working tree. Uncommitted changes are ignored. This ensures deterministic, reproducible indexing.
+
+**Label reassignment:** When you re-crawl a label with a new commit, chunks from the old commit that no longer exist are removed from that label's membership.
+
+### Search the Database
+
+```bash
+# Semantic search (uses default context if set)
 monodex search --text "how to read JSON files"
 
-# With catalog filter and limit
-monodex search --text "API Extractor" --catalog rushstack --limit 10
+# With explicit catalog and label
+monodex search --text "API Extractor" --catalog rushstack --label main --limit 10
 ```
 
-### View full chunks
+### View Full Chunks
 
 ```bash
-# View all chunks in a file
-monodex view --id 30440fb2ecd5fa62
-
-# View a specific chunk by number
+# View a specific chunk by ordinal
 monodex view --id 30440fb2ecd5fa62:3
 
 # View a range of chunks
@@ -138,7 +167,10 @@ monodex view --id 30440fb2ecd5fa62:2-4
 # View from chunk 3 to the end
 monodex view --id 30440fb2ecd5fa62:3-end
 
-# View chunks from multiple files (multiple --id flags)
+# View all chunks in a file (reconstruct entire file)
+monodex view --id 30440fb2ecd5fa62
+
+# View chunks from multiple files
 monodex view --id 30440fb2ecd5fa62:3 --id a1b2c3d4e5f67890:1-2
 
 # Show full filesystem paths
@@ -148,7 +180,7 @@ monodex view --id 30440fb2ecd5fa62 --full-paths
 monodex view --id 30440fb2ecd5fa62 --chunks-only
 ```
 
-### Debug chunking algorithm
+### Debug Chunking Algorithm
 
 ```bash
 # See how a file gets chunked (AST-only mode, reveals partitioner issues)
@@ -172,10 +204,13 @@ monodex audit-chunks --count 20 --dir /path/to/project
 
 **Chunk Quality Score**: 0-100%, higher is better. Scores below 95% may indicate chunking issues. Note: `dump-chunks` and `audit-chunks` use AST-only mode (fallback disabled) to accurately measure partitioner quality.
 
-### Purge data
+### Purge Data
 
 ```bash
-# Purge all chunks from a specific catalog
+# Purge all chunks from a specific label
+monodex purge --catalog rushstack --label main
+
+# Purge all chunks from a catalog (all labels)
 monodex purge --catalog rushstack
 
 # Purge entire collection (all catalogs)
@@ -194,7 +229,7 @@ monodex/
 │       ├── chunker.rs             # File chunking dispatcher
 │       ├── partitioner.rs         # AST-based TypeScript chunking
 │       ├── markdown_partitioner.rs # Markdown heading-based chunking
-│       ├── embedder.rs            # Single-threaded embedding (legacy)
+│       ├── git_ops.rs             # Git tree enumeration and blob reading
 │       ├── parallel_embedder.rs   # Parallel embedding with multiple ONNX sessions
 │       ├── package_lookup.rs      # Package name resolution (walk up to package.json)
 │       ├── uploader.rs            # Qdrant HTTP client
@@ -273,7 +308,7 @@ cargo build --release
 cargo test
 
 # Run with logging
-RUST_LOG=debug ./target/release/monodex crawl --catalog rushstack
+RUST_LOG=debug ./target/release/monodex crawl --catalog rushstack --label main
 ```
 
 ## License
@@ -282,6 +317,6 @@ MIT
 
 ## Related
 
-- [Qdrant](https://qdrant.tech/) - Vector similarity search engine
+- [Qdrant](https://qdrant.ai/) - Vector similarity search engine
 - [ONNX Runtime](https://onnxruntime.ai/) - Cross-platform ML inference
 - [Rush Stack](https://rushstack.io/) - Monorepo toolkit for JavaScript/TypeScript

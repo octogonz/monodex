@@ -109,7 +109,9 @@ pub struct PointPayload {
 
 **Field notes:**
 - `source_uri`: Best-effort display/debug locator for Git/GitHub links. Not guaranteed stable or canonical. Not a key.
-- `chunk_ordinal`: Renamed from `chunk_number` for clarity, but keeping old name is acceptable
+- `chunk_ordinal`: Renamed from `chunk_number` for clarity. Always use `chunk_ordinal`.
+- `file_id`: Semantic file identity for grouping chunks. Used for sentinel checks and file-level operations.
+- `label_id`: Transitional field. Prefer `active_label_ids` for label membership queries.
 
 ### Label Metadata
 
@@ -130,7 +132,7 @@ pub struct LabelMetadata {
 
 **Point ID:** The `label_id` string is used directly as the point ID, allowing direct lookup.
 
-**Vector:** Metadata points store a zero-vector of exactly 768 dimensions (matching the collection's vector size): `[0.0; 768]`. Qdrant requires vectors for all points, but these points are never used in similarity search.
+**Vector:** Metadata points store a zero-vector of exactly 768 dimensions (matching the collection's vector size): `[0.0; 768]`. Qdrant requires vectors for all points, but these points are never used in similarity search. The dimension MUST match the collection's configured vector size to avoid insertion errors.
 
 **Why single collection:** Using the main collection (rather than a separate metadata collection) avoids managing multiple Qdrant collections and keeps all state in one place. The tradeoff is mixing vector-bearing chunk records with metadata-only records. This is acceptable because:
 - The `source_type` discriminator clearly separates them
@@ -243,9 +245,10 @@ If behavior changes in a way that should invalidate reuse, the constant changes.
 
 ### Step 1: Resolve Label Target
 
-1. Resolve `--commit` to a concrete commit OID
+1. Resolve `--commit` to a full 40-character commit SHA (e.g., using `git rev-parse`)
 2. Compute `label_id = <catalog>:<label>`
-3. Upsert label metadata indicating which commit the label is being crawled from
+3. Upsert label metadata with `crawl_complete = false` (in-progress state)
+   - This marks the crawl as in-progress before any work begins
 
 ### Step 2: Enumerate Files from Commit
 
@@ -278,10 +281,12 @@ For each file:
 
 For each file:
 1. Compute `file_id`
-2. **Lookup sentinel by point ID**: `hash(file_id + chunk_ordinal=1)`
+2. **Lookup sentinel point by (file_id, chunk_ordinal=1)**:
+   - Point ID = `hash(file_id + chunk_ordinal=1)`
+   - Query Qdrant for chunk with `file_id` AND `chunk_ordinal = 1` AND `source_type = "code"`
 3. If sentinel exists and `file_complete = true`:
    - Skip re-embedding
-   - Retrieve all chunks for file by filtering on `file_id`
+   - **Retrieve all chunks for file by filtering on `file_id`** (with `source_type = "code"`)
    - Add label to `active_label_ids` for each chunk (if not present)
 4. If sentinel does not exist or not complete:
    - Read content from Git blob
@@ -299,7 +304,7 @@ For each file:
 2. Scan all chunks where `active_label_ids` contains the label
    - Filter: `source_type = "code"` (exclude metadata points)
 3. For each chunk:
-   - Use the `file_id` field from payload
+   - Extract the `file_id` field from the payload
    - If file_id NOT in touched set:
      - Remove label from `active_label_ids`
      - If `active_label_ids` becomes empty, delete the chunk

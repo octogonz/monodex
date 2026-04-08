@@ -19,6 +19,24 @@ pub struct FileEntry {
     pub blob_id: String,
 }
 
+/// Resolve a commit reference to its full SHA
+///
+/// Supports HEAD, branch names, tags, and SHA prefixes.
+/// Returns the full 40-character hex SHA.
+pub fn resolve_commit_oid(repo_path: &Path, commit: &str) -> Result<String> {
+    // Open the repository
+    let repo = gix::open(repo_path)
+        .map_err(|e| anyhow!("Failed to open repository at {:?}: {}", repo_path, e))?;
+
+    // Resolve the commit reference
+    let commit_id: ObjectId = repo
+        .rev_parse_single(commit)
+        .map_err(|e| anyhow!("Failed to resolve commit '{}': {}", commit, e))?
+        .detach();
+
+    Ok(commit_id.to_hex().to_string())
+}
+
 /// Package index for resolving package names from file paths
 ///
 /// Maps directory paths to package names extracted from package.json files.

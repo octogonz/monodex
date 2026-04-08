@@ -301,7 +301,7 @@ impl QdrantUploader {
                 self.url, self.collection, LIMIT
             );
 
-            // Build filter with catalog AND chunk_number=1
+            // Build filter with catalog AND chunk_ordinal=1
             #[derive(Debug, Serialize)]
             struct ScrollRequestWithIntFilter {
                 filter: FilterWithIntCondition,
@@ -321,8 +321,12 @@ impl QdrantUploader {
                     "match": { "value": catalog }
                 }),
                 serde_json::json!({
-                    "key": "chunk_number",
+                    "key": "chunk_ordinal",
                     "match": { "value": 1 }
+                }),
+                serde_json::json!({
+                    "key": "source_type",
+                    "match": { "value": "code" }
                 }),
             ];
 
@@ -473,8 +477,12 @@ impl QdrantUploader {
                 "match": { "value": file_id }
             }),
             serde_json::json!({
-                "key": "chunk_number",
+                "key": "chunk_ordinal",
                 "match": { "value": 1 }
+            }),
+            serde_json::json!({
+                "key": "source_type",
+                "match": { "value": "code" }
             }),
         ];
 
@@ -631,7 +639,7 @@ impl QdrantUploader {
     /// * `selector` - Which chunks to retrieve
     /// 
     /// # Returns
-    /// Vector of points sorted by chunk_number, or error
+    /// Vector of points sorted by chunk_ordinal, or error
     pub fn get_chunks_by_file_id(&self, file_id: &str) -> Result<Vec<PointResult>> {
         // Build scroll request with filter on file_id
         #[derive(Debug, Serialize)]

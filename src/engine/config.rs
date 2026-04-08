@@ -1,47 +1,47 @@
 //! Repository-specific configuration for Qdrant indexer
-//! 
+//!
 //! **EDIT THIS FILE** to customize indexing behavior for your Rush monorepo.
-//! 
+//!
 //! This file contains rules specific to the RushStack repository.
 //! When using this tool in other Rush repos, modify these functions
 //! to match your repository's structure.
-//! 
+//!
 //! Future: This will be replaced with a .jsonc configuration file
 
 use std::path::Path;
 
 /// Determines if a file should be skipped during indexing
-/// 
+///
 /// CUSTOMIZE THIS for your repository's structure!
-/// 
+///
 /// Common exclusions for Rush repositories:
 /// - **Build outputs**: `lib/`, `dist/`, `build/`, `lib-*/`
 /// - **Dependencies**: `node_modules/`
 /// - **Lock files**: `*.lock`, `package-lock.json`, `pnpm-lock.yaml`
 /// - **Temporary files**: `temp/`, `.cache/`, `.heft/`
 /// - **Generated files**: `.tsbuildinfo`, `.docusaurus/`
-/// 
+///
 /// # RushStack-specific exclusions
-/// 
+///
 /// - `api.rushstack.io/docs/` - Auto-generated API documentation (duplicates TypeScript source)
-/// 
+///
 /// # Arguments
-/// 
+///
 /// * `path` - File path relative to repository root
-/// 
+///
 /// # Returns
-/// 
+///
 /// `true` if is file should be skipped, `false` if it should be indexed
 pub fn should_skip_path(path: &str) -> bool {
     use std::path::Path;
-    
+
     // === NEVER INDEX THESE (absolute exclusions) ===
-    
+
     // Dependencies - always skip node_modules regardless of location
     if path.contains("/node_modules/") {
         return true;
     }
-    
+
     // RushStack-specific exclusions
     // Skip auto-generated API documentation (duplicates TypeScript source)
     if path.contains("api.rushstack.io/docs/") {
@@ -49,7 +49,7 @@ pub fn should_skip_path(path: &str) -> bool {
     }
 
     // === Standard Rush monorepo exclusions ===
-    
+
     // Build outputs and compiled code (except in src/ and test/ for examples)
     if !path.contains("/src/") && !path.contains("/test/") {
         if path.contains("/lib/")
@@ -64,7 +64,7 @@ pub fn should_skip_path(path: &str) -> bool {
             return true;
         }
     }
-    
+
     // Rush temporary and cache directories
     if path.contains("/temp/")
         || path.contains("/.cache/")
@@ -76,17 +76,17 @@ pub fn should_skip_path(path: &str) -> bool {
     {
         return true;
     }
-    
+
     // Lock files and build cache
     if path.ends_with("package-lock.json")
-        || path.ends_with("pnpm-lock.yaml") 
+        || path.ends_with("pnpm-lock.yaml")
         || path.ends_with("yarn.lock")
         || path.ends_with(".lock")
         || path.ends_with(".tsbuildinfo")
     {
         return true;
     }
-    
+
     // Test files and snapshots (not useful for semantic search)
     if path.ends_with(".snap")
         || path.ends_with(".test.ts")
@@ -98,36 +98,33 @@ pub fn should_skip_path(path: &str) -> bool {
     }
 
     // Skip test directories
-    if path.contains("/test/")
-        || path.contains("/tests/")
-        || path.contains("/__tests__/")
-    {
+    if path.contains("/test/") || path.contains("/tests/") || path.contains("/__tests__/") {
         return true;
     }
 
     // Skip .js files initially (RushStack rarely uses .js for important code)
-    if path.ends_with(".js") || path.ends_with(".jsx") || path.ends_with(".cjs") || path.ends_with(".mjs") {
-        return true;
-    }
-    
-    // Version control and IDE files
-    if path.contains("/.git/")
-        || path.contains("/.idea/")
-        || path.ends_with(".DS_Store")
+    if path.ends_with(".js")
+        || path.ends_with(".jsx")
+        || path.ends_with(".cjs")
+        || path.ends_with(".mjs")
     {
         return true;
     }
-    
+
+    // Version control and IDE files
+    if path.contains("/.git/") || path.contains("/.idea/") || path.ends_with(".DS_Store") {
+        return true;
+    }
+
     // Binary and media files
     let extension = Path::new(path)
         .extension()
         .and_then(|e| e.to_str())
         .unwrap_or("");
-    
+
     if matches!(
         extension,
-        "png" | "jpg" | "jpeg" | "gif" | "ico" | "svg" | 
-        "woff" | "woff2" | "ttf" | "eot" | "webp"
+        "png" | "jpg" | "jpeg" | "gif" | "ico" | "svg" | "woff" | "woff2" | "ttf" | "eot" | "webp"
     ) {
         return true;
     }
@@ -136,21 +133,21 @@ pub fn should_skip_path(path: &str) -> bool {
 }
 
 /// Determines chunking strategy for a file based on its extension
-/// 
+///
 /// # Supported strategies
-/// 
+///
 /// - **TypeScript/JavaScript** (.ts, .tsx, .js, .jsx, .cjs) - Simple line-based chunking
 /// - **Markdown** (.md) - Split by heading hierarchy
 /// - **JSON** (.json) - Split by 2-level key nesting
 /// - **YAML** (.yml, .yaml) - Simple line-based chunking
 /// - **Other** - Skip
-/// 
+///
 /// # Arguments
-/// 
+///
 /// * `path` - File path
-/// 
+///
 /// # Returns
-/// 
+///
 /// `ChunkingStrategy` enum indicating how to process file
 pub fn get_chunk_strategy(path: &str) -> ChunkingStrategy {
     let extension = Path::new(path)
@@ -179,22 +176,22 @@ pub fn get_chunk_strategy(path: &str) -> ChunkingStrategy {
 pub enum ChunkingStrategy {
     /// TypeScript files - Simple line-based chunking (will improve to AST later)
     TypeScript,
-    
+
     /// JavaScript files - Simple line-based chunking (will improve to AST later)
     JavaScript,
-    
+
     /// Markdown files - Split by heading hierarchy
     Markdown,
-    
+
     /// JSON files - Simple line-based chunking (will improve to nested key splitting later)
     Json,
-    
+
     /// YAML files - Simple line-based chunking
     YamlSimple,
-    
+
     /// Simple line-based chunking (50-100 lines)
     SimpleLine,
-    
+
     /// Skip this file (don't index)
     Skip,
 }
@@ -220,7 +217,9 @@ mod tests {
     #[test]
     fn test_should_skip_generated_api_docs() {
         // api.rushstack.io/docs/ is auto-generated API docs, should be skipped
-        assert!(should_skip_path("rushstack-websites/websites/api.rushstack.io/docs/pages/foo.md"));
+        assert!(should_skip_path(
+            "rushstack-websites/websites/api.rushstack.io/docs/pages/foo.md"
+        ));
         // But other markdown files should not be skipped
         assert!(!should_skip_path("docs/getting-started.md"));
     }
@@ -230,7 +229,10 @@ mod tests {
         assert_eq!(get_chunk_strategy("foo.ts"), ChunkingStrategy::TypeScript);
         assert_eq!(get_chunk_strategy("bar.js"), ChunkingStrategy::JavaScript);
         assert_eq!(get_chunk_strategy("README.md"), ChunkingStrategy::Markdown);
-        assert_eq!(get_chunk_strategy("config.json"), ChunkingStrategy::SimpleLine);
+        assert_eq!(
+            get_chunk_strategy("config.json"),
+            ChunkingStrategy::SimpleLine
+        );
         assert_eq!(get_chunk_strategy("image.png"), ChunkingStrategy::Skip);
     }
 }

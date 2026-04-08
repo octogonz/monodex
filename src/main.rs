@@ -6,18 +6,21 @@
 mod engine;
 
 use clap::{Parser, Subcommand};
+use engine::{
+    ParallelEmbedder, SMALL_CHUNK_CHARS,
+    chunker::{ChunkContext, chunk_content},
+    config::should_skip_path,
+    git_ops::{
+        build_package_index_for_commit, build_package_index_for_working_dir, enumerate_commit_tree,
+        enumerate_working_directory, read_blob_content, read_working_file_content,
+        resolve_commit_oid,
+    },
+    partitioner::{ChunkQualityReport, PartitionConfig, PartitionDebug, partition_typescript},
+    uploader::{LabelMetadata, PointResult, QdrantUploader},
+    util::compute_label_id,
+};
 use std::collections::{HashMap, HashSet};
 use std::path::PathBuf;
-use engine::{
-    config::should_skip_path,
-    chunker::{chunk_content, ChunkContext},
-    ParallelEmbedder,
-    partitioner::{partition_typescript, PartitionConfig, ChunkQualityReport, PartitionDebug},
-    uploader::{QdrantUploader, PointResult, LabelMetadata},
-    git_ops::{enumerate_commit_tree, read_blob_content, build_package_index_for_commit, resolve_commit_oid},
-    util::compute_label_id,
-    SMALL_CHUNK_CHARS,
-};
 
 /// Qdrant configuration
 #[derive(Debug, serde::Deserialize)]
@@ -85,8 +88,14 @@ enum Commands {
 
         /// Git commit to crawl (defaults to HEAD)
         /// Supports branch names, tags, or commit SHA
+        /// Mutually exclusive with --working-dir
         #[arg(long, default_value = "HEAD")]
         commit: String,
+
+        /// Crawl the working directory instead of a Git commit.
+        /// Indexes uncommitted changes. Mutually exclusive with --commit.
+        #[arg(long, default_value_t = false)]
+        working_dir: bool,
 
         /// Allow files with chunking warnings to participate in incremental skipping
         #[arg(long, default_value_t = false)]
@@ -210,7 +219,7 @@ struct DefaultContext {
 fn load_default_context() -> Option<DefaultContext> {
     let path = shellexpand::tilde(DEFAULT_CONTEXT_PATH);
     let path = std::path::Path::new(path.as_ref());
-    
+
     match std::fs::read_to_string(path) {
         Ok(content) => serde_json::from_str(&content).ok(),
         Err(_) => None,
@@ -221,27 +230,30 @@ fn load_default_context() -> Option<DefaultContext> {
 fn save_default_context(catalog: &str, label: &str) -> anyhow::Result<()> {
     let path = shellexpand::tilde(DEFAULT_CONTEXT_PATH);
     let path = std::path::Path::new(path.as_ref());
-    
+
     // Create parent directory if needed
     if let Some(parent) = path.parent() {
         std::fs::create_dir_all(parent)?;
     }
-    
+
     let context = DefaultContext {
         catalog: catalog.to_string(),
         label: label.to_string(),
         set_at: chrono_timestamp(),
     };
-    
+
     let content = serde_json::to_string_pretty(&context)?;
     std::fs::write(path, content)?;
-    
+
     Ok(())
 }
 
 /// Resolve label ID from explicit flag or default context
 /// Returns (label_id, catalog, label_name) or error if neither provided
-fn resolve_label_id(explicit_label: Option<&str>, explicit_catalog: Option<&str>) -> anyhow::Result<(String, String, String)> {
+fn resolve_label_id(
+    explicit_label: Option<&str>,
+    explicit_catalog: Option<&str>,
+) -> anyhow::Result<(String, String, String)> {
     // If explicit label provided, use it
     if let Some(label_str) = explicit_label {
         // Parse label format: <catalog>:<label>
@@ -257,7 +269,7 @@ fn resolve_label_id(explicit_label: Option<&str>, explicit_catalog: Option<&str>
         let label_id = compute_label_id(&catalog, &label_name);
         return Ok((label_id, catalog, label_name));
     }
-    
+
     // Try default context
     if let Some(context) = load_default_context() {
         // If explicit catalog provided, use it with default label
@@ -266,7 +278,7 @@ fn resolve_label_id(explicit_label: Option<&str>, explicit_catalog: Option<&str>
         let label_id = compute_label_id(&catalog, &label_name);
         return Ok((label_id, catalog, label_name));
     }
-    
+
     Err(anyhow::anyhow!(
         "No label specified. Use --label <catalog>:<label> or set a default with 'monodex use <catalog> <label>'"
     ))
@@ -283,7 +295,6 @@ fn chrono_timestamp() -> String {
     let s = now % 60;
     format!("{:02}:{:02}:{:02}", h, m, s)
 }
-
 
 /// Format duration in seconds to human-readable string (e.g., "1h 23m" or "5m 30s")
 fn format_duration(secs: f64) -> String {
@@ -313,28 +324,54 @@ fn main() -> anyhow::Result<()> {
     let cli = Cli::parse();
 
     // Load config
-    let config_path = cli.config.unwrap_or_else(|| {
-        PathBuf::from(shellexpand::tilde(DEFAULT_CONFIG_PATH).as_ref())
-    });
+    let config_path = cli
+        .config
+        .unwrap_or_else(|| PathBuf::from(shellexpand::tilde(DEFAULT_CONFIG_PATH).as_ref()));
     let config = load_config(&config_path)?;
 
     match cli.command {
         Commands::Use { catalog, label } => {
             run_use(catalog.as_deref(), label)?;
         }
-        Commands::Crawl { catalog, label, commit, incremental_warnings } => {
-            run_crawl_label(&config, &catalog, &label, &commit, incremental_warnings)?;
+        Commands::Crawl {
+            catalog,
+            label,
+            commit,
+            working_dir,
+            incremental_warnings,
+        } => {
+            if working_dir {
+                run_crawl_working_dir(&config, &catalog, &label, incremental_warnings)?;
+            } else {
+                run_crawl_label(&config, &catalog, &label, &commit, incremental_warnings)?;
+            }
         }
         Commands::Purge { catalog, all } => {
             run_purge(&config, catalog.as_deref(), all)?;
         }
-        Commands::DumpChunks { file, target_size, visualize, with_fallback, debug } => {
+        Commands::DumpChunks {
+            file,
+            target_size,
+            visualize,
+            with_fallback,
+            debug,
+        } => {
             run_dump_chunks(&file, target_size, visualize, with_fallback, debug)?;
         }
-        Commands::Search { text, limit, label, catalog } => {
+        Commands::Search {
+            text,
+            limit,
+            label,
+            catalog,
+        } => {
             run_search(&config, &text, limit, label.as_deref(), catalog.as_deref())?;
         }
-        Commands::View { id, label, full_paths, chunks_only } => {
+        Commands::View {
+            id,
+            label,
+            full_paths,
+            chunks_only,
+        } => {
             run_view(&config, &id, label.as_deref(), full_paths, chunks_only)?;
         }
         Commands::AuditChunks { count, dir } => {
@@ -379,7 +416,7 @@ fn run_use(catalog: Option<&str>, label: Option<String>) -> anyhow::Result<()> {
         (Some(catalog_name), Some(label_name)) => {
             // Set new context
             save_default_context(catalog_name, &label_name)?;
-            
+
             let label_id = compute_label_id(catalog_name, &label_name);
             println!("✓ Default context set to {}:{}", catalog_name, label_name);
             println!("  Label ID: {}", label_id);
@@ -393,7 +430,7 @@ fn run_use(catalog: Option<&str>, label: Option<String>) -> anyhow::Result<()> {
             ));
         }
     }
-    
+
     Ok(())
 }
 
@@ -404,11 +441,11 @@ fn run_crawl_label(
     commit: &str,
     _incremental_warnings: bool,
 ) -> anyhow::Result<()> {
-    use engine::util::{EMBEDDER_ID, CHUNKER_ID, compute_file_id};
-    use std::sync::atomic::{AtomicUsize, AtomicBool, Ordering};
-    use std::sync::{Arc, Mutex};
-    use crossbeam_channel::{unbounded, Sender, Receiver};
+    use crossbeam_channel::{Receiver, Sender, unbounded};
+    use engine::util::{CHUNKER_ID, EMBEDDER_ID, compute_file_id};
     use rayon::prelude::*;
+    use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
+    use std::sync::{Arc, Mutex};
 
     let total_start = std::time::Instant::now();
     println!("🔍 Starting label-aware crawl...");
@@ -416,7 +453,9 @@ fn run_crawl_label(
     println!("Label: {}", label_name);
 
     // Get catalog config
-    let catalog_config = config.catalogs.get(catalog_name)
+    let catalog_config = config
+        .catalogs
+        .get(catalog_name)
         .ok_or_else(|| anyhow::anyhow!("Catalog '{}' not found in config", catalog_name))?;
 
     let repo_path = std::path::Path::new(&catalog_config.path);
@@ -438,7 +477,7 @@ fn run_crawl_label(
     println!("📦 Resolving commit...");
     let commit_oid = resolve_commit_oid(repo_path, commit)?;
     println!("Resolved {} to {}", commit, &commit_oid[..12]);
-    
+
     // Write in-progress metadata before any work begins
     let in_progress_metadata = LabelMetadata {
         source_type: "label-metadata".to_string(),
@@ -454,7 +493,7 @@ fn run_crawl_label(
             .as_secs(),
     };
     uploader.upsert_label_metadata(&in_progress_metadata)?;
-    
+
     let files = enumerate_commit_tree(repo_path, commit)?;
     println!("Found {} files in commit tree", files.len());
 
@@ -466,17 +505,21 @@ fn run_crawl_label(
 
     // Step 3: Filter files (skip non-text, excluded paths)
     println!("📂 Filtering files...");
-    let files_to_process: Vec<_> = files.iter()
+    let files_to_process: Vec<_> = files
+        .iter()
         .filter(|f| !should_skip_path(&f.relative_path))
         .filter(|f| is_text_file(&f.relative_path))
         .cloned()
         .collect();
-    println!("{} files to process after filtering", files_to_process.len());
+    println!(
+        "{} files to process after filtering",
+        files_to_process.len()
+    );
     println!();
 
     // Step 4: Process each file - check for existing chunks, then embed if needed
     println!("⚡ Phase 1: Checking existing chunks and collecting new files...");
-    
+
     let mut new_files: Vec<(String, String)> = Vec::new(); // (relative_path, blob_id)
     let mut existing_files: HashSet<String> = HashSet::new();
     let mut new_count = 0;
@@ -503,7 +546,10 @@ fn run_crawl_label(
                 new_count += 1;
             }
             Err(e) => {
-                eprintln!("  ⚠️  Error checking sentinel for {}: {}", file_entry.relative_path, e);
+                eprintln!(
+                    "  ⚠️  Error checking sentinel for {}: {}",
+                    file_entry.relative_path, e
+                );
                 new_files.push((file_entry.relative_path.clone(), file_entry.blob_id.clone()));
                 new_count += 1;
             }
@@ -516,7 +562,10 @@ fn run_crawl_label(
 
     // Step 5: Add label to existing files
     if !existing_files.is_empty() {
-        println!("🏷️  Adding label to {} existing files...", existing_files.len());
+        println!(
+            "🏷️  Adding label to {} existing files...",
+            existing_files.len()
+        );
         for file_id in &existing_files {
             if let Err(e) = uploader.add_label_to_file_chunks(file_id, &label_id) {
                 eprintln!("  ⚠️  Failed to add label to file {}: {}", file_id, e);
@@ -536,19 +585,30 @@ fn run_crawl_label(
         let embedder = ParallelEmbedder::new()?;
         println!();
 
-        println!("📦 Phase 2: Chunking and embedding {} new files...", new_count);
+        println!(
+            "📦 Phase 2: Chunking and embedding {} new files...",
+            new_count
+        );
 
         for (idx, (relative_path, blob_id)) in new_files.iter().enumerate() {
-            print!("\r  Processing file {}/{} ({:.0}%)   ",
-                idx + 1, new_count,
-                ((idx + 1) as f64 / new_count as f64) * 100.0);
+            print!(
+                "\r  Processing file {}/{} ({:.0}%)   ",
+                idx + 1,
+                new_count,
+                ((idx + 1) as f64 / new_count as f64) * 100.0
+            );
             std::io::Write::flush(&mut std::io::stdout())?;
 
             // Read content from Git blob
             let content = match read_blob_content(repo_path, blob_id) {
                 Ok(c) => c,
                 Err(e) => {
-                    eprintln!("\n  ⚠️  Failed to read blob {} for {}: {}", &blob_id[..8], relative_path, e);
+                    eprintln!(
+                        "\n  ⚠️  Failed to read blob {} for {}: {}",
+                        &blob_id[..8],
+                        relative_path,
+                        e
+                    );
                     continue;
                 }
             };
@@ -562,7 +622,8 @@ fn run_crawl_label(
             };
 
             // Resolve package name
-            let package_name = package_index.find_package_name(relative_path)
+            let package_name = package_index
+                .find_package_name(relative_path)
                 .unwrap_or(catalog_name)
                 .to_string();
 
@@ -596,12 +657,18 @@ fn run_crawl_label(
 
         if !all_chunks.is_empty() {
             // Phase 3: Parallel embedding
-            println!("⚡ Phase 3: Embedding {} chunks with {} parallel sessions...",
-                total_chunks, embedder.num_workers());
+            println!(
+                "⚡ Phase 3: Embedding {} chunks with {} parallel sessions...",
+                total_chunks,
+                embedder.num_workers()
+            );
             println!("  (Checkpoints every 60s - safe to CTRL+C)");
             let embed_start = std::time::Instant::now();
 
-            let (embed_tx, embed_rx): (Sender<(engine::Chunk, Vec<f32>)>, Receiver<(engine::Chunk, Vec<f32>)>) = unbounded();
+            let (embed_tx, embed_rx): (
+                Sender<(engine::Chunk, Vec<f32>)>,
+                Receiver<(engine::Chunk, Vec<f32>)>,
+            ) = unbounded();
             let processed = Arc::new(AtomicUsize::new(0));
             let stop_flag = Arc::new(AtomicBool::new(false));
             let last_upload_time = Arc::new(Mutex::new(std::time::Instant::now()));
@@ -624,11 +691,15 @@ fn run_crawl_label(
                         let rate = current as f64 / elapsed.as_secs_f64().max(0.001);
                         let remaining = (total_chunks_for_thread - current) as f64 / rate;
                         let eta = format_eta(remaining);
-                        eprintln!("[{}] Embedded {}/{} ({:.0}%) - {:.1} chunks/sec - ETA: {}",
+                        eprintln!(
+                            "[{}] Embedded {}/{} ({:.0}%) - {:.1} chunks/sec - ETA: {}",
                             chrono_timestamp(),
-                            current, total_chunks_for_thread,
+                            current,
+                            total_chunks_for_thread,
                             (current as f64 / total_chunks_for_thread as f64) * 100.0,
-                            rate, eta);
+                            rate,
+                            eta
+                        );
                         *last = std::time::Instant::now();
                     }
                 }
@@ -669,7 +740,9 @@ fn run_crawl_label(
 
                     while let Ok(embedded) = embed_rx.try_recv() {
                         let file_id = embedded.0.file_id.clone();
-                        if let std::collections::hash_map::Entry::Vacant(e) = expected_count.entry(file_id.clone()) {
+                        if let std::collections::hash_map::Entry::Vacant(e) =
+                            expected_count.entry(file_id.clone())
+                        {
                             e.insert(embedded.0.chunk_count);
                         }
                         accumulated.push(embedded);
@@ -677,7 +750,11 @@ fn run_crawl_label(
 
                     if should_upload && !accumulated.is_empty() {
                         let count = accumulated.len();
-                        eprintln!("[{}] Uploading checkpoint ({} chunks)...", chrono_timestamp(), count);
+                        eprintln!(
+                            "[{}] Uploading checkpoint ({} chunks)...",
+                            chrono_timestamp(),
+                            count
+                        );
 
                         let uploader_guard = uploader_clone.lock().unwrap();
                         match uploader_guard.upload_batch(&accumulated) {
@@ -698,13 +775,16 @@ fn run_crawl_label(
                                     *files_in_batch.entry(chunk.file_id.clone()).or_insert(0) += 1;
                                 }
                                 for (file_id, batch_count) in &files_in_batch {
-                                    *uploaded_count.entry(file_id.clone()).or_insert(0) += batch_count;
+                                    *uploaded_count.entry(file_id.clone()).or_insert(0) +=
+                                        batch_count;
                                 }
 
                                 let mut completed_files: Vec<String> = Vec::new();
                                 for file_id in files_in_batch.keys() {
-                                    let uploaded = uploaded_count.get(file_id).copied().unwrap_or(0);
-                                    let expected = expected_count.get(file_id).copied().unwrap_or(0);
+                                    let uploaded =
+                                        uploaded_count.get(file_id).copied().unwrap_or(0);
+                                    let expected =
+                                        expected_count.get(file_id).copied().unwrap_or(0);
                                     if uploaded == expected && expected > 0 {
                                         completed_files.push(file_id.clone());
                                     }
@@ -712,13 +792,29 @@ fn run_crawl_label(
 
                                 for file_id in &completed_files {
                                     if let Err(e) = uploader_guard.mark_file_complete(file_id) {
-                                        eprintln!("[{}] ❌ Failed to mark file complete: {}", chrono_timestamp(), e);
-                                        file_complete_failures_clone.lock().unwrap().push(format!("{}: {}", file_id, e));
+                                        eprintln!(
+                                            "[{}] ❌ Failed to mark file complete: {}",
+                                            chrono_timestamp(),
+                                            e
+                                        );
+                                        file_complete_failures_clone
+                                            .lock()
+                                            .unwrap()
+                                            .push(format!("{}: {}", file_id, e));
                                     }
                                     // Add label to the file
-                                    if let Err(e) = uploader_guard.add_label_to_file_chunks(file_id, &label_id_clone) {
-                                        eprintln!("[{}] ❌ Failed to add label: {}", chrono_timestamp(), e);
-                                        label_add_failures_clone.lock().unwrap().push(format!("{}: {}", file_id, e));
+                                    if let Err(e) = uploader_guard
+                                        .add_label_to_file_chunks(file_id, &label_id_clone)
+                                    {
+                                        eprintln!(
+                                            "[{}] ❌ Failed to add label: {}",
+                                            chrono_timestamp(),
+                                            e
+                                        );
+                                        label_add_failures_clone
+                                            .lock()
+                                            .unwrap()
+                                            .push(format!("{}: {}", file_id, e));
                                     }
                                 }
                             }
@@ -730,28 +826,54 @@ fn run_crawl_label(
                         // Final upload
                         if !accumulated.is_empty() {
                             let count = accumulated.len();
-                            eprintln!("[{}] Final upload ({} chunks)...", chrono_timestamp(), count);
+                            eprintln!(
+                                "[{}] Final upload ({} chunks)...",
+                                chrono_timestamp(),
+                                count
+                            );
 
                             let uploader_guard = uploader_clone.lock().unwrap();
                             match uploader_guard.upload_batch(&accumulated) {
                                 Ok(_) => {
                                     let mut files_in_batch: HashMap<String, usize> = HashMap::new();
                                     for (chunk, _) in &accumulated {
-                                        *files_in_batch.entry(chunk.file_id.clone()).or_insert(0) += 1;
+                                        *files_in_batch
+                                            .entry(chunk.file_id.clone())
+                                            .or_insert(0) += 1;
                                     }
                                     for file_id in files_in_batch.keys() {
                                         if let Err(e) = uploader_guard.mark_file_complete(file_id) {
-                                            eprintln!("[{}] ❌ Failed to mark file complete: {}", chrono_timestamp(), e);
-                                            file_complete_failures_clone.lock().unwrap().push(format!("{}: {}", file_id, e));
+                                            eprintln!(
+                                                "[{}] ❌ Failed to mark file complete: {}",
+                                                chrono_timestamp(),
+                                                e
+                                            );
+                                            file_complete_failures_clone
+                                                .lock()
+                                                .unwrap()
+                                                .push(format!("{}: {}", file_id, e));
                                         }
-                                        if let Err(e) = uploader_guard.add_label_to_file_chunks(file_id, &label_id_clone) {
-                                            eprintln!("[{}] ❌ Failed to add label: {}", chrono_timestamp(), e);
-                                            label_add_failures_clone.lock().unwrap().push(format!("{}: {}", file_id, e));
+                                        if let Err(e) = uploader_guard
+                                            .add_label_to_file_chunks(file_id, &label_id_clone)
+                                        {
+                                            eprintln!(
+                                                "[{}] ❌ Failed to add label: {}",
+                                                chrono_timestamp(),
+                                                e
+                                            );
+                                            label_add_failures_clone
+                                                .lock()
+                                                .unwrap()
+                                                .push(format!("{}: {}", file_id, e));
                                         }
                                     }
                                 }
                                 Err(e) => {
-                                    eprintln!("[{}] ❌ Final upload failed: {}", chrono_timestamp(), e);
+                                    eprintln!(
+                                        "[{}] ❌ Final upload failed: {}",
+                                        chrono_timestamp(),
+                                        e
+                                    );
                                     let mut failures = upload_failures_clone.lock().unwrap();
                                     for (chunk, _) in &accumulated {
                                         let file_id = &chunk.file_id;
@@ -773,13 +895,12 @@ fn run_crawl_label(
             let processed_clone = Arc::clone(&processed);
             let _stop_clone = Arc::clone(&stop_flag);
 
-            all_chunks.into_par_iter()
-                .for_each(|chunk| {
-                    if let Ok(embedding) = embedder.encode(&chunk.text, 0) {
-                        let _ = embed_tx.send((chunk, embedding));
-                        processed_clone.fetch_add(1, Ordering::Relaxed);
-                    }
-                });
+            all_chunks.into_par_iter().for_each(|chunk| {
+                if let Ok(embedding) = embedder.encode(&chunk.text, 0) {
+                    let _ = embed_tx.send((chunk, embedding));
+                    processed_clone.fetch_add(1, Ordering::Relaxed);
+                }
+            });
 
             // Signal completion
             stop_flag.store(true, Ordering::Relaxed);
@@ -788,18 +909,27 @@ fn run_crawl_label(
 
             let embed_elapsed = embed_start.elapsed();
             let rate = total_chunks as f64 / embed_elapsed.as_secs_f64().max(0.001);
-            println!("\n  Embedding complete: {} chunks in {} ({:.1} chunks/sec)",
-                total_chunks, format_duration(embed_elapsed.as_secs_f64()), rate);
-            
+            println!(
+                "\n  Embedding complete: {} chunks in {} ({:.1} chunks/sec)",
+                total_chunks,
+                format_duration(embed_elapsed.as_secs_f64()),
+                rate
+            );
+
             // Report any failures from the uploader thread
             let upload_failures_count = upload_failures.lock().unwrap().len();
             let file_complete_failures_count = file_complete_failures.lock().unwrap().len();
             let label_add_failures_count = label_add_failures.lock().unwrap().len();
-            
-            if upload_failures_count > 0 || file_complete_failures_count > 0 || label_add_failures_count > 0 {
+
+            if upload_failures_count > 0
+                || file_complete_failures_count > 0
+                || label_add_failures_count > 0
+            {
                 println!();
-                println!("  ⚠️  Encountered {} upload failures, {} file-complete failures, {} label-add failures",
-                    upload_failures_count, file_complete_failures_count, label_add_failures_count);
+                println!(
+                    "  ⚠️  Encountered {} upload failures, {} file-complete failures, {} label-add failures",
+                    upload_failures_count, file_complete_failures_count, label_add_failures_count
+                );
                 println!("      These files may not be searchable. Check logs above for details.");
             }
             println!();
@@ -810,9 +940,10 @@ fn run_crawl_label(
     // Remove label from chunks that were NOT touched in this crawl
     println!("🧹 Phase 4: Label reassignment cleanup...");
     let all_touched: HashSet<String> = existing_files.union(&touched_file_ids).cloned().collect();
-    
+
     // Create a new uploader for cleanup (the previous one was moved into the uploader thread)
-    let cleanup_uploader = QdrantUploader::new(&config.qdrant.collection, config.qdrant.url.as_deref())?;
+    let cleanup_uploader =
+        QdrantUploader::new(&config.qdrant.collection, config.qdrant.url.as_deref())?;
     match cleanup_uploader.remove_label_from_chunks(&label_id, &all_touched) {
         Ok(processed) => {
             println!("  Processed {} chunks for label cleanup", processed);
@@ -850,23 +981,482 @@ fn run_crawl_label(
     // Summary
     let total_elapsed = total_start.elapsed();
     println!("✅ Crawl complete!");
-    println!("  Total time: {}", format_duration(total_elapsed.as_secs_f64()));
+    println!(
+        "  Total time: {}",
+        format_duration(total_elapsed.as_secs_f64())
+    );
     println!("  New files indexed: {}", new_count);
     println!("  Existing files updated: {}", existing_count);
-    
+
     // Report any critical failures (these are captured during the embed phase)
     // Note: upload_failures, file_complete_failures, label_add_failures are only
     // populated inside the embedder branch, so we need to handle the case where
     // they don't exist. For now, we track failures inline during processing.
-    
+
     // Track if there were any errors during the crawl
     let mut error_count = 0;
     // Count blob read failures and chunk failures from earlier phases
     // (These are tracked via eprintln, not captured in counters yet)
-    
+
     if error_count > 0 {
         println!("  ⚠️  Files with errors: {} (see logs above)", error_count);
     }
+
+    Ok(())
+}
+
+/// Run crawl for working directory (indexes uncommitted changes)
+fn run_crawl_working_dir(
+    config: &Config,
+    catalog_name: &str,
+    label_name: &str,
+    _incremental_warnings: bool,
+) -> anyhow::Result<()> {
+    use crossbeam_channel::{Receiver, Sender, unbounded};
+    use engine::util::{CHUNKER_ID, EMBEDDER_ID, compute_file_id};
+    use rayon::prelude::*;
+    use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
+    use std::sync::{Arc, Mutex};
+
+    let total_start = std::time::Instant::now();
+    println!("🔍 Starting working directory crawl...");
+    println!("Catalog: {}", catalog_name);
+    println!("Label: {}", label_name);
+
+    // Get catalog config
+    let catalog_config = config
+        .catalogs
+        .get(catalog_name)
+        .ok_or_else(|| anyhow::anyhow!("Catalog '{}' not found in config", catalog_name))?;
+
+    let repo_path = std::path::Path::new(&catalog_config.path);
+    println!("Repository: {}", repo_path.display());
+    println!("Type: {}", catalog_config.r#type);
+    println!("Collection: {}", config.qdrant.collection);
+    println!("Source: working directory (uncommitted changes)");
+    println!();
+
+    // Compute label_id
+    let label_id = compute_label_id(catalog_name, label_name);
+    println!("Label ID: {}", label_id);
+    println!();
+
+    // Initialize uploader
+    let uploader = QdrantUploader::new(&config.qdrant.collection, config.qdrant.url.as_deref())?;
+
+    // Write in-progress metadata
+    let in_progress_metadata = LabelMetadata {
+        source_type: "label-metadata".to_string(),
+        catalog: catalog_name.to_string(),
+        label_id: label_id.clone(),
+        label_name: label_name.to_string(),
+        commit_oid: "".to_string(), // No commit for working directory
+        source_kind: "working-directory".to_string(),
+        crawl_complete: false,
+        updated_at_unix_secs: std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_secs(),
+    };
+    uploader.upsert_label_metadata(&in_progress_metadata)?;
+
+    // Enumerate working directory files
+    println!("📂 Enumerating working directory...");
+    let files = enumerate_working_directory(repo_path, should_skip_path)?;
+    println!("Found {} files in working directory", files.len());
+    println!();
+
+    // Build package index from working directory
+    println!("📦 Building package index...");
+    let package_index = build_package_index_for_working_dir(repo_path)?;
+    println!("Package index built successfully");
+    println!();
+
+    // Filter files
+    println!("📂 Filtering files...");
+    let files_to_process: Vec<_> = files
+        .iter()
+        .filter(|f| is_text_file(&f.relative_path))
+        .cloned()
+        .collect();
+    println!(
+        "{} files to process after filtering",
+        files_to_process.len()
+    );
+    println!();
+
+    // Check for existing chunks and collect new files
+    println!("⚡ Phase 1: Checking existing chunks and collecting new files...");
+
+    let mut new_files: Vec<(String, String)> = Vec::new(); // (relative_path, content_hash)
+    let mut existing_files: HashSet<String> = HashSet::new();
+    let mut new_count = 0;
+    let mut existing_count = 0;
+
+    for file_entry in &files_to_process {
+        // For working directory, use content_hash as blob_id
+        let file_id = compute_file_id(
+            EMBEDDER_ID,
+            CHUNKER_ID,
+            &file_entry.content_hash,
+            &file_entry.relative_path,
+        );
+
+        match uploader.get_file_sentinel(&file_id) {
+            Ok(Some(_)) => {
+                existing_files.insert(file_id);
+                existing_count += 1;
+            }
+            Ok(None) => {
+                new_files.push((
+                    file_entry.relative_path.clone(),
+                    file_entry.content_hash.clone(),
+                ));
+                new_count += 1;
+            }
+            Err(e) => {
+                eprintln!(
+                    "  ⚠️  Error checking sentinel for {}: {}",
+                    file_entry.relative_path, e
+                );
+                new_files.push((
+                    file_entry.relative_path.clone(),
+                    file_entry.content_hash.clone(),
+                ));
+                new_count += 1;
+            }
+        }
+    }
+
+    println!("  New files to index: {}", new_count);
+    println!("  Existing files (label update only): {}", existing_count);
+    println!();
+
+    // Add label to existing files
+    if !existing_files.is_empty() {
+        println!(
+            "🏷️  Adding label to {} existing files...",
+            existing_files.len()
+        );
+        for file_id in &existing_files {
+            if let Err(e) = uploader.add_label_to_file_chunks(file_id, &label_id) {
+                eprintln!("  ⚠️  Failed to add label to file {}: {}", file_id, e);
+            }
+        }
+        println!("  Done.");
+        println!();
+    }
+
+    // Index new files
+    let mut all_chunks: Vec<engine::Chunk> = Vec::new();
+    let mut touched_file_ids: HashSet<String> = HashSet::new();
+
+    if !new_files.is_empty() {
+        println!("⚙️  Loading embedding model...");
+        let embedder = ParallelEmbedder::new()?;
+        println!();
+
+        println!(
+            "📦 Phase 2: Chunking and embedding {} new files...",
+            new_count
+        );
+
+        for (idx, (relative_path, content_hash)) in new_files.iter().enumerate() {
+            print!(
+                "\r  Processing file {}/{} ({:.0}%)   ",
+                idx + 1,
+                new_count,
+                ((idx + 1) as f64 / new_count as f64) * 100.0
+            );
+            std::io::Write::flush(&mut std::io::stdout())?;
+
+            // Read content from working directory
+            let content = match read_working_file_content(repo_path, relative_path) {
+                Ok(c) => c,
+                Err(e) => {
+                    eprintln!("\n  ⚠️  Failed to read {}: {}", relative_path, e);
+                    continue;
+                }
+            };
+
+            let content_str = match String::from_utf8(content) {
+                Ok(s) => s,
+                Err(_) => continue,
+            };
+
+            // Resolve package name
+            let package_name = package_index
+                .find_package_name(relative_path)
+                .unwrap_or(catalog_name)
+                .to_string();
+
+            // Create chunk context - use content_hash as blob_id
+            let ctx = ChunkContext {
+                catalog: catalog_name.to_string(),
+                label_id: label_id.clone(),
+                package_name,
+                relative_path: relative_path.clone(),
+                blob_id: content_hash.clone(), // Use content hash as blob_id
+                source_uri: format!("{}:{}", repo_path.display(), relative_path),
+            };
+
+            match chunk_content(&content_str, &ctx, 6000) {
+                Ok(chunks) => {
+                    if !chunks.is_empty() {
+                        touched_file_ids.insert(chunks[0].file_id.clone());
+                    }
+                    all_chunks.extend(chunks);
+                }
+                Err(e) => {
+                    eprintln!("\n  ⚠️  Failed to chunk {}: {}", relative_path, e);
+                }
+            }
+        }
+
+        let total_chunks = all_chunks.len();
+        println!("\n  Found {} chunks to embed", total_chunks);
+        println!();
+
+        if !all_chunks.is_empty() {
+            // Embed and upload (same as commit-based crawl)
+            println!(
+                "⚡ Phase 3: Embedding {} chunks with {} parallel sessions...",
+                total_chunks,
+                embedder.num_workers()
+            );
+            println!("  (Checkpoints every 60s - safe to CTRL+C)");
+            let embed_start = std::time::Instant::now();
+
+            let (embed_tx, embed_rx): (
+                Sender<(engine::Chunk, Vec<f32>)>,
+                Receiver<(engine::Chunk, Vec<f32>)>,
+            ) = unbounded();
+            let processed = Arc::new(AtomicUsize::new(0));
+            let stop_flag = Arc::new(AtomicBool::new(false));
+            let last_upload_time = Arc::new(Mutex::new(std::time::Instant::now()));
+
+            let processed_clone = Arc::clone(&processed);
+            let stop_clone = Arc::clone(&stop_flag);
+            let total_chunks_for_thread = total_chunks;
+            let embed_start_for_thread = std::time::Instant::now();
+            let last_print_clone = Arc::clone(&last_upload_time);
+
+            let progress_thread = std::thread::spawn(move || {
+                while !stop_clone.load(Ordering::Relaxed) {
+                    std::thread::sleep(std::time::Duration::from_secs(5));
+                    let mut last = last_print_clone.lock().unwrap();
+                    if last.elapsed() >= std::time::Duration::from_secs(30) {
+                        let current = processed_clone.load(Ordering::Relaxed);
+                        let elapsed = embed_start_for_thread.elapsed();
+                        let rate = current as f64 / elapsed.as_secs_f64().max(0.001);
+                        let remaining = (total_chunks_for_thread - current) as f64 / rate;
+                        let eta = format_eta(remaining);
+                        eprintln!(
+                            "[{}] Embedded {}/{} ({:.0}%) - {:.1} chunks/sec - ETA: {}",
+                            chrono_timestamp(),
+                            current,
+                            total_chunks_for_thread,
+                            (current as f64 / total_chunks_for_thread as f64) * 100.0,
+                            rate,
+                            eta
+                        );
+                        *last = std::time::Instant::now();
+                    }
+                }
+            });
+
+            let uploader = Arc::new(Mutex::new(uploader));
+            let stop_uploader = Arc::clone(&stop_flag);
+            let last_upload_time_clone = Arc::clone(&last_upload_time);
+            let uploader_clone = Arc::clone(&uploader);
+            let label_id_clone = label_id.clone();
+
+            let uploader_thread = std::thread::spawn(move || {
+                let mut accumulated: Vec<(engine::Chunk, Vec<f32>)> = Vec::new();
+                let mut expected_count: HashMap<String, usize> = HashMap::new();
+                let mut uploaded_count: HashMap<String, usize> = HashMap::new();
+
+                loop {
+                    let should_upload = {
+                        let mut last = last_upload_time_clone.lock().unwrap();
+                        if last.elapsed() >= std::time::Duration::from_secs(60) {
+                            *last = std::time::Instant::now();
+                            true
+                        } else {
+                            false
+                        }
+                    };
+
+                    while let Ok(embedded) = embed_rx.try_recv() {
+                        let file_id = embedded.0.file_id.clone();
+                        if let std::collections::hash_map::Entry::Vacant(e) =
+                            expected_count.entry(file_id.clone())
+                        {
+                            e.insert(embedded.0.chunk_count);
+                        }
+                        accumulated.push(embedded);
+                    }
+
+                    if should_upload && !accumulated.is_empty() {
+                        let count = accumulated.len();
+                        eprintln!(
+                            "[{}] Uploading checkpoint ({} chunks)...",
+                            chrono_timestamp(),
+                            count
+                        );
+
+                        let uploader_guard = uploader_clone.lock().unwrap();
+                        if let Err(e) = uploader_guard.upload_batch(&accumulated) {
+                            eprintln!("[{}] ❌ Upload failed: {}", chrono_timestamp(), e);
+                        } else {
+                            let mut files_in_batch: HashMap<String, usize> = HashMap::new();
+                            for (chunk, _) in &accumulated {
+                                *files_in_batch.entry(chunk.file_id.clone()).or_insert(0) += 1;
+                            }
+                            for (file_id, batch_count) in &files_in_batch {
+                                *uploaded_count.entry(file_id.clone()).or_insert(0) += batch_count;
+                            }
+
+                            let mut completed_files: Vec<String> = Vec::new();
+                            for file_id in files_in_batch.keys() {
+                                let uploaded = uploaded_count.get(file_id).copied().unwrap_or(0);
+                                let expected = expected_count.get(file_id).copied().unwrap_or(0);
+                                if uploaded == expected && expected > 0 {
+                                    completed_files.push(file_id.clone());
+                                }
+                            }
+
+                            for file_id in &completed_files {
+                                if let Err(e) = uploader_guard.mark_file_complete(file_id) {
+                                    eprintln!(
+                                        "[{}] ❌ Failed to mark file complete: {}",
+                                        chrono_timestamp(),
+                                        e
+                                    );
+                                }
+                                if let Err(e) = uploader_guard
+                                    .add_label_to_file_chunks(file_id, &label_id_clone)
+                                {
+                                    eprintln!(
+                                        "[{}] ❌ Failed to add label: {}",
+                                        chrono_timestamp(),
+                                        e
+                                    );
+                                }
+                            }
+                        }
+                        accumulated.clear();
+                    }
+
+                    if stop_uploader.load(Ordering::Relaxed) && embed_rx.is_empty() {
+                        if !accumulated.is_empty() {
+                            let count = accumulated.len();
+                            eprintln!(
+                                "[{}] Final upload ({} chunks)...",
+                                chrono_timestamp(),
+                                count
+                            );
+
+                            let uploader_guard = uploader_clone.lock().unwrap();
+                            if let Err(e) = uploader_guard.upload_batch(&accumulated) {
+                                eprintln!("[{}] ❌ Final upload failed: {}", chrono_timestamp(), e);
+                            } else {
+                                for file_id in accumulated
+                                    .iter()
+                                    .map(|(c, _)| c.file_id.clone())
+                                    .collect::<std::collections::HashSet<_>>()
+                                {
+                                    if let Err(e) = uploader_guard.mark_file_complete(&file_id) {
+                                        eprintln!(
+                                            "[{}] ❌ Failed to mark file complete: {}",
+                                            chrono_timestamp(),
+                                            e
+                                        );
+                                    }
+                                    if let Err(e) = uploader_guard
+                                        .add_label_to_file_chunks(&file_id, &label_id_clone)
+                                    {
+                                        eprintln!(
+                                            "[{}] ❌ Failed to add label: {}",
+                                            chrono_timestamp(),
+                                            e
+                                        );
+                                    }
+                                }
+                            }
+                        }
+                        break;
+                    }
+
+                    std::thread::sleep(std::time::Duration::from_millis(100));
+                }
+            });
+
+            let processed_clone = Arc::clone(&processed);
+            all_chunks.into_par_iter().for_each(|chunk| {
+                if let Ok(embedding) = embedder.encode(&chunk.text, 0) {
+                    let _ = embed_tx.send((chunk, embedding));
+                    processed_clone.fetch_add(1, Ordering::Relaxed);
+                }
+            });
+
+            stop_flag.store(true, Ordering::Relaxed);
+            progress_thread.join().ok();
+            uploader_thread.join().ok();
+
+            let embed_elapsed = embed_start.elapsed();
+            let rate = total_chunks as f64 / embed_elapsed.as_secs_f64().max(0.001);
+            println!(
+                "\n  Embedding complete: {} chunks in {} ({:.1} chunks/sec)",
+                total_chunks,
+                format_duration(embed_elapsed.as_secs_f64()),
+                rate
+            );
+            println!();
+        }
+    }
+
+    // Label reassignment cleanup
+    println!("🧹 Phase 4: Label reassignment cleanup...");
+    let all_touched: HashSet<String> = existing_files.union(&touched_file_ids).cloned().collect();
+
+    let cleanup_uploader =
+        QdrantUploader::new(&config.qdrant.collection, config.qdrant.url.as_deref())?;
+    match cleanup_uploader.remove_label_from_chunks(&label_id, &all_touched) {
+        Ok(processed) => println!("  Processed {} chunks for label cleanup", processed),
+        Err(e) => eprintln!("  ⚠️ Label cleanup failed: {}", e),
+    }
+    println!();
+
+    // Update label metadata
+    println!("📝 Updating label metadata...");
+    let metadata = LabelMetadata {
+        source_type: "label-metadata".to_string(),
+        catalog: catalog_name.to_string(),
+        label_id: label_id.clone(),
+        label_name: label_name.to_string(),
+        commit_oid: "".to_string(),
+        source_kind: "working-directory".to_string(),
+        crawl_complete: true,
+        updated_at_unix_secs: std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_secs(),
+    };
+
+    let uploader = QdrantUploader::new(&config.qdrant.collection, config.qdrant.url.as_deref())?;
+    uploader.upsert_label_metadata(&metadata)?;
+    println!("  Label metadata saved.");
+    println!();
+
+    let total_elapsed = total_start.elapsed();
+    println!("✅ Working directory crawl complete!");
+    println!(
+        "  Total time: {}",
+        format_duration(total_elapsed.as_secs_f64())
+    );
+    println!("  New files indexed: {}", new_count);
+    println!("  Existing files updated: {}", existing_count);
 
     Ok(())
 }
@@ -888,7 +1478,7 @@ fn run_search(
 
     // Query Qdrant with label filter
     let uploader = QdrantUploader::new(&config.qdrant.collection, config.qdrant.url.as_deref())?;
-    
+
     // Extract catalog from label_id (format: catalog:label)
     let catalog = label_id.split(':').next().unwrap_or("");
     let results = uploader.search_with_label(&embedding, limit, catalog, &label_id)?;
@@ -897,11 +1487,10 @@ fn run_search(
     for result in &results {
         // Line 1: file_id:chunk_ordinal  score  breadcrumb
         let breadcrumb = result.payload.breadcrumb.as_deref().unwrap_or("unknown");
-        println!("{}:{}  {:.3}  {}",
-            result.payload.file_id,
-            result.payload.chunk_ordinal,
-            result.score,
-            breadcrumb);
+        println!(
+            "{}:{}  {:.3}  {}",
+            result.payload.file_id, result.payload.chunk_ordinal, result.score, breadcrumb
+        );
 
         // Lines 2-4: first 3 lines of code (quoted with >)
         for line in result.payload.text.lines().take(3) {
@@ -961,24 +1550,37 @@ fn parse_file_id_with_selector(s: &str) -> anyhow::Result<(String, ChunkSelector
         } else if selector.ends_with("-end") {
             // :N-end format
             let start_str = &selector[..selector.len() - 4];
-            let start: usize = start_str.parse()
+            let start: usize = start_str
+                .parse()
                 .map_err(|_| anyhow::anyhow!("Invalid chunk number in selector '{}'", selector))?;
             if start < 1 {
-                return Err(anyhow::anyhow!("Chunk numbers are 1-indexed, got {}", start));
+                return Err(anyhow::anyhow!(
+                    "Chunk numbers are 1-indexed, got {}",
+                    start
+                ));
             }
             Ok((file_id, ChunkSelector::ToEnd(start)))
         } else if selector.contains('-') {
             // :N-M format
             let parts: Vec<&str> = selector.split('-').collect();
             if parts.len() != 2 {
-                return Err(anyhow::anyhow!("Invalid selector '{}'. Expected ':N-M' format.", selector));
+                return Err(anyhow::anyhow!(
+                    "Invalid selector '{}'. Expected ':N-M' format.",
+                    selector
+                ));
             }
-            let start: usize = parts[0].parse()
+            let start: usize = parts[0]
+                .parse()
                 .map_err(|_| anyhow::anyhow!("Invalid start chunk in selector '{}'", selector))?;
-            let end: usize = parts[1].parse()
+            let end: usize = parts[1]
+                .parse()
                 .map_err(|_| anyhow::anyhow!("Invalid end chunk in selector '{}'", selector))?;
             if start < 1 || end < 1 {
-                return Err(anyhow::anyhow!("Chunk numbers are 1-indexed, got {}:{}", start, end));
+                return Err(anyhow::anyhow!(
+                    "Chunk numbers are 1-indexed, got {}:{}",
+                    start,
+                    end
+                ));
             }
             if start > end {
                 return Err(anyhow::anyhow!("Start chunk {} > end chunk {}", start, end));
@@ -986,10 +1588,14 @@ fn parse_file_id_with_selector(s: &str) -> anyhow::Result<(String, ChunkSelector
             Ok((file_id, ChunkSelector::Range(start, end)))
         } else {
             // :N format (single chunk)
-            let chunk_num: usize = selector.parse()
+            let chunk_num: usize = selector
+                .parse()
                 .map_err(|_| anyhow::anyhow!("Invalid chunk number in selector '{}'", selector))?;
             if chunk_num < 1 {
-                return Err(anyhow::anyhow!("Chunk numbers are 1-indexed, got {}", chunk_num));
+                return Err(anyhow::anyhow!(
+                    "Chunk numbers are 1-indexed, got {}",
+                    chunk_num
+                ));
             }
             Ok((file_id, ChunkSelector::Single(chunk_num)))
         }
@@ -1013,7 +1619,9 @@ fn run_view(
     chunks_only: bool,
 ) -> anyhow::Result<()> {
     if id_specs.is_empty() {
-        return Err(anyhow::anyhow!("No IDs provided. Use --id <file_id>[:<selector>]"));
+        return Err(anyhow::anyhow!(
+            "No IDs provided. Use --id <file_id>[:<selector>]"
+        ));
     }
 
     // Resolve label ID from explicit flag or default context
@@ -1038,17 +1646,18 @@ fn run_view(
         // Filter by selector
         let filtered: Vec<PointResult> = match &selector {
             ChunkSelector::All => chunks,
-            ChunkSelector::Single(n) => {
-                chunks.into_iter().filter(|c| c.payload.chunk_ordinal == *n).collect()
-            }
-            ChunkSelector::Range(start, end) => {
-                chunks.into_iter().filter(|c| {
-                    c.payload.chunk_ordinal >= *start && c.payload.chunk_ordinal <= *end
-                }).collect()
-            }
-            ChunkSelector::ToEnd(start) => {
-                chunks.into_iter().filter(|c| c.payload.chunk_ordinal >= *start).collect()
-            }
+            ChunkSelector::Single(n) => chunks
+                .into_iter()
+                .filter(|c| c.payload.chunk_ordinal == *n)
+                .collect(),
+            ChunkSelector::Range(start, end) => chunks
+                .into_iter()
+                .filter(|c| c.payload.chunk_ordinal >= *start && c.payload.chunk_ordinal <= *end)
+                .collect(),
+            ChunkSelector::ToEnd(start) => chunks
+                .into_iter()
+                .filter(|c| c.payload.chunk_ordinal >= *start)
+                .collect(),
         };
 
         all_results.push((file_id, selector, filtered));
@@ -1093,10 +1702,16 @@ fn run_view(
             let chunk_ordinal = result.payload.chunk_ordinal;
 
             // Header line: <file_id>:<chunk_ordinal> (<n>/<total>) <breadcrumb>
-            println!("{}:{} ({}/{}) {}", file_id, chunk_ordinal, chunk_ordinal, chunk_count, breadcrumb);
+            println!(
+                "{}:{} ({}/{}) {}",
+                file_id, chunk_ordinal, chunk_ordinal, chunk_count, breadcrumb
+            );
 
             // Source line
-            println!("Source: {}:{}", result.payload.catalog, result.payload.relative_path);
+            println!(
+                "Source: {}:{}",
+                result.payload.catalog, result.payload.relative_path
+            );
 
             // Full path (optional)
             if show_full_paths {
@@ -1104,7 +1719,10 @@ fn run_view(
             }
 
             // Lines and type
-            println!("Lines: {}-{}", result.payload.start_line, result.payload.end_line);
+            println!(
+                "Lines: {}-{}",
+                result.payload.start_line, result.payload.end_line
+            );
             println!("Type: {}", result.payload.chunk_type);
 
             // Content
@@ -1125,13 +1743,20 @@ fn run_purge(config: &Config, catalog: Option<&str>, all: bool) -> anyhow::Resul
     let uploader = QdrantUploader::new(&config.qdrant.collection, config.qdrant.url.as_deref())?;
 
     if all {
-        println!("🗑️  Purging entire collection: {}", config.qdrant.collection);
+        println!(
+            "🗑️  Purging entire collection: {}",
+            config.qdrant.collection
+        );
         println!("This will delete ALL data from the collection!");
 
         // Delete all points with empty filter
         let endpoint = format!(
             "{}/collections/{}/points/delete",
-            config.qdrant.url.as_deref().unwrap_or("http://localhost:6333"),
+            config
+                .qdrant
+                .url
+                .as_deref()
+                .unwrap_or("http://localhost:6333"),
             config.qdrant.collection
         );
 
@@ -1143,7 +1768,10 @@ fn run_purge(config: &Config, catalog: Option<&str>, all: bool) -> anyhow::Resul
             .send()?;
 
         if !response.status().is_success() {
-            return Err(anyhow::anyhow!("Failed to purge collection: HTTP {}", response.status()));
+            return Err(anyhow::anyhow!(
+                "Failed to purge collection: HTTP {}",
+                response.status()
+            ));
         }
 
         println!("✅ Collection purged successfully");
@@ -1151,9 +1779,14 @@ fn run_purge(config: &Config, catalog: Option<&str>, all: bool) -> anyhow::Resul
         println!("🗑️  Purging catalog: {}", catalog_name);
 
         let operation_id = uploader.delete_catalog(catalog_name)?;
-        println!("✅ Catalog purged successfully (operation ID: {})", operation_id);
+        println!(
+            "✅ Catalog purged successfully (operation ID: {})",
+            operation_id
+        );
     } else {
-        return Err(anyhow::anyhow!("Must specify either --catalog <name> or --all"));
+        return Err(anyhow::anyhow!(
+            "Must specify either --catalog <name> or --all"
+        ));
     }
 
     Ok(())
@@ -1162,20 +1795,28 @@ fn run_purge(config: &Config, catalog: Option<&str>, all: bool) -> anyhow::Resul
 /// Check if a file is a text file we want to index
 fn is_text_file(path: &str) -> bool {
     let extensions = [
-        "ts", "tsx", "js", "jsx",           // TypeScript/JavaScript
-        "md", "mdx",                        // Markdown
-        "json",                             // JSON
-        "yaml", "yml",                      // YAML
-        "txt", "rst", "mdn",                // Text docs
-        "toml", "ini", "conf",              // Config files
+        "ts", "tsx", "js", "jsx", // TypeScript/JavaScript
+        "md", "mdx",  // Markdown
+        "json", // JSON
+        "yaml", "yml", // YAML
+        "txt", "rst", "mdn", // Text docs
+        "toml", "ini", "conf", // Config files
     ];
 
     let path_lower = path.to_lowercase();
-    extensions.iter().any(|ext| path_lower.ends_with(&format!(".{}", ext)))
+    extensions
+        .iter()
+        .any(|ext| path_lower.ends_with(&format!(".{}", ext)))
 }
 
 /// Run chunking diagnostics on a TypeScript file
-fn run_dump_chunks(file: &PathBuf, target_size: usize, visualize: bool, with_fallback: bool, enable_debug: bool) -> anyhow::Result<()> {
+fn run_dump_chunks(
+    file: &PathBuf,
+    target_size: usize,
+    visualize: bool,
+    with_fallback: bool,
+    enable_debug: bool,
+) -> anyhow::Result<()> {
     println!("📦 Chunks for: {}", file.display());
     if !with_fallback {
         println!("🔍 Strict mode: AST-only (fallback disabled)");
@@ -1183,11 +1824,12 @@ fn run_dump_chunks(file: &PathBuf, target_size: usize, visualize: bool, with_fal
     println!();
 
     // Read file
-    let source = std::fs::read_to_string(file)
-        .map_err(|e| anyhow::anyhow!("Failed to read file: {}", e))?;
+    let source =
+        std::fs::read_to_string(file).map_err(|e| anyhow::anyhow!("Failed to read file: {}", e))?;
 
     // Determine file name and package name
-    let file_name = file.file_name()
+    let file_name = file
+        .file_name()
         .and_then(|n| n.to_str())
         .unwrap_or("unknown.ts");
 
@@ -1200,8 +1842,10 @@ fn run_dump_chunks(file: &PathBuf, target_size: usize, visualize: bool, with_fal
         target_size,
         file_name: file_name.to_string(),
         package_name: package_name.clone(),
-        debug: PartitionDebug { enabled: enable_debug },
-        allow_fallback: with_fallback,  // AST-only by default, enable fallback with flag
+        debug: PartitionDebug {
+            enabled: enable_debug,
+        },
+        allow_fallback: with_fallback, // AST-only by default, enable fallback with flag
     };
 
     // Partition
@@ -1219,7 +1863,12 @@ fn run_dump_chunks(file: &PathBuf, target_size: usize, visualize: bool, with_fal
             let line_count = chunk.end_line - chunk.start_line + 1;
             let size = chunk.text.len();
 
-            println!("-- [CHUNK {}] [{} lines] [{} chars] --", i + 1, line_count, size);
+            println!(
+                "-- [CHUNK {}] [{} lines] [{} chars] --",
+                i + 1,
+                line_count,
+                size
+            );
 
             for line_num in chunk.start_line..=chunk.end_line {
                 if line_num > 0 && line_num <= lines.len() {
@@ -1232,8 +1881,14 @@ fn run_dump_chunks(file: &PathBuf, target_size: usize, visualize: bool, with_fal
         println!("=== QUALITY SCORE ===");
         println!("Score: {:.1}%", report.score);
         println!("Total chunks: {}", chunks.len());
-        println!("Small chunks (<{} chars): {}", SMALL_CHUNK_CHARS, report.small_chunks);
-        println!("Chars: {}-{} (mean {:.0})", report.min_chars, report.max_chars, report.mean_chars);
+        println!(
+            "Small chunks (<{} chars): {}",
+            SMALL_CHUNK_CHARS, report.small_chunks
+        );
+        println!(
+            "Chars: {}-{} (mean {:.0})",
+            report.min_chars, report.max_chars, report.mean_chars
+        );
     } else {
         // Default mode: show summary with previews
         println!("Total chunks: {}", chunks.len());
@@ -1262,10 +1917,17 @@ fn run_dump_chunks(file: &PathBuf, target_size: usize, visualize: bool, with_fal
                 println!("Symbol: {}", symbol);
             }
             println!("Lines: {}-{}", chunk.start_line, chunk.end_line);
-            println!("Size: {} chars (text: {}, breadcrumb: {})",
-                total_size, text_size, chunk.breadcrumb.len());
+            println!(
+                "Size: {} chars (text: {}, breadcrumb: {})",
+                total_size,
+                text_size,
+                chunk.breadcrumb.len()
+            );
             if text_size > target_size {
-                println!("⚠️  OVERSIZED (target: {}, actual: {})", target_size, text_size);
+                println!(
+                    "⚠️  OVERSIZED (target: {}, actual: {})",
+                    target_size, text_size
+                );
             } else if text_size < 200 {
                 println!("⚡ Small chunk");
             }
@@ -1283,11 +1945,17 @@ fn run_dump_chunks(file: &PathBuf, target_size: usize, visualize: bool, with_fal
         println!("━━━━━ Summary ━━━━━");
         println!("Total chunks: {}", chunks.len());
         println!("Total chars: {}", total_chars);
-        println!("Average size: {:.0} chars", total_chars as f64 / chunks.len() as f64);
+        println!(
+            "Average size: {:.0} chars",
+            total_chars as f64 / chunks.len() as f64
+        );
         println!("Oversized chunks (>{}): {}", target_size, oversized);
         println!("Small chunks (<200): {}", undersized);
         println!("Quality score: {:.1}%", report.score);
-        println!("  Small chunks (<{} chars): {}", SMALL_CHUNK_CHARS, report.small_chunks);
+        println!(
+            "  Small chunks (<{} chars): {}",
+            SMALL_CHUNK_CHARS, report.small_chunks
+        );
     }
 
     Ok(())
@@ -1306,7 +1974,10 @@ fn run_audit_chunks(count: usize, dir: String) -> anyhow::Result<()> {
         .filter_map(|e| e.ok())
         .filter(|e| {
             let path = e.path();
-            let ext = path.extension().map(|s| s.to_string_lossy()).unwrap_or_default();
+            let ext = path
+                .extension()
+                .map(|s| s.to_string_lossy())
+                .unwrap_or_default();
             ext == "ts" && !path.to_string_lossy().contains("node_modules")
         })
         .map(|e| e.path().to_owned())
@@ -1336,7 +2007,7 @@ fn run_audit_chunks(count: usize, dir: String) -> anyhow::Result<()> {
             let config = PartitionConfig {
                 file_name,
                 package_name: "n/a".to_string(),
-                allow_fallback: false,  // AST-only mode for accurate quality measurement
+                allow_fallback: false, // AST-only mode for accurate quality measurement
                 ..Default::default()
             };
             let chunks = partition_typescript(&source, &config, path.to_str().unwrap(), "n/a");

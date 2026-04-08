@@ -8,6 +8,9 @@
 
 # Rush Monodex
 
+[![crates.io](https://img.shields.io/crates/v/monodex.svg)](https://crates.io/crates/monodex)
+[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
+
 **Semantic search indexer for Rush monorepos using Qdrant vector database**
 
 ## Overview
@@ -34,21 +37,25 @@ This tool is designed for AI assistants. The indexed database provides a complet
 **Typical workflow:**
 
 1. **Set default context** (optional but recommended):
+
    ```bash
    monodex use --catalog rushstack --label main
    ```
 
 2. **Start with semantic search** to find relevant code:
+
    ```bash
    monodex search --text "how does rush handle pnpm shrinkwrap files"
    ```
 
 3. **View full chunks** using the `file_id:chunk_ordinal` from search results:
+
    ```bash
    monodex view --id 700a4ba232fe9ddc:3
    ```
 
 4. **Get surrounding context** by viewing adjacent chunks:
+
    ```bash
    monodex view --id 700a4ba232fe9ddc:2-4
    ```
@@ -60,14 +67,58 @@ This tool is designed for AI assistants. The indexed database provides a complet
 
 **Output format:** Search results prefix code lines with `>`, making them easy to distinguish from your own output and preventing injection attacks.
 
+## Prerequisites
+
+- **Rust**: 1.91+ (for edition 2024)
+- **Qdrant**: Vector database running on localhost:6333 (only needed for crawling/searching)
+
+  Installation instructions can be found in the [Qdrant Quickstart](https://qdrant.tech/documentation/quickstart/) documentation.
+
+- **Model**: jina-embeddings-v2-base-code (auto-downloaded from HuggingFace to `models/` on first use)
+
 ## Installation
 
+### From crates.io
+
 ```bash
-# Build from source
+cargo install monodex
+```
+
+### Build from Source
+
+```bash
+git clone https://github.com/microsoft/monodex.git
+cd monodex
 cargo build --release
 
 # Binary will be at ./target/release/monodex
 ```
+
+## Qdrant Setup
+
+Create the collection before first use:
+
+```bash
+curl -X PUT "http://localhost:6333/collections/monodex" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "vectors": {
+      "size": 768,
+      "distance": "Cosine"
+    }
+  }'
+```
+
+Verify the collection exists:
+
+```bash
+curl http://localhost:6333/collections/monodex | jq '.result.status'
+```
+
+The collection uses:
+
+- **768 dimensions** (jina-embeddings-v2-base-code output size)
+- **Cosine distance** (best for semantic similarity)
 
 ## Usage
 
@@ -108,7 +159,7 @@ Create `~/.config/monodex/config.jsonc`:
 }
 ```
 
-**Note:** Use `sparo` (or another small monorepo) for development testing. `rushstack` is used for final verification and takes hours to crawl.
+> **Note:** We use the [Sparo](https://github.com/tiktok/sparo) monorepo for development testing, since it's a small open-source Rush monorepo.
 
 **Fields:**
 
@@ -162,11 +213,16 @@ monodex crawl --catalog rushstack --label feature-x --commit feature-branch
 
 # Index a specific commit SHA
 monodex crawl --catalog rushstack --label v1.0.0 --commit a1b2c3d4e5f6
+
+# Index uncommitted changes from the working directory
+monodex crawl --catalog rushstack --label working --working-dir
 ```
 
 **Incremental sync:** The crawl is incremental — unchanged files are skipped. You can safely CTRL+C and resume later.
 
 **Commit-based:** Crawling reads from Git objects, not the working tree. Uncommitted changes are ignored. This ensures deterministic, reproducible indexing.
+
+**Working directory mode:** Use `--working-dir` to index uncommitted changes. This reads directly from the filesystem instead of Git objects. The label metadata will show `source_kind = "working-directory"` and `commit_oid = ""`. Working directory labels are mutable — re-crawling updates the indexed content.
 
 **Label reassignment:** When you re-crawl a label with a new commit, chunks from the old commit that no longer exist are removed from that label's membership.
 
@@ -246,6 +302,42 @@ monodex purge --all
 
 **Note:** Purge operates at catalog level. To remove a specific label's chunks, re-crawl that label with a different commit or manually update the `active_label_ids` field.
 
+## Development
+
+Run CI checks using [Just](https://github.com/casey/just) (recommended):
+
+```bash
+# Install just
+cargo install just
+
+# Run all CI checks (format, clippy, check, test)
+just ci
+
+# Individual commands
+just fmt          # Auto-format code
+just fmt-check    # Check formatting
+just clippy       # Run lints
+just check        # Type check
+just test         # Run tests
+just build        # Build release binary
+```
+
+Or run directly with cargo:
+
+```bash
+# Run all CI checks
+cargo fmt --all -- --check
+cargo clippy --workspace --all-targets --locked
+cargo check --workspace --all-targets --locked
+cargo test --workspace --all-targets --locked
+
+# Build
+cargo build --release
+
+# Run with logging (use sparo for testing, not rushstack)
+RUST_LOG=debug ./target/release/monodex crawl --catalog sparo --label main
+```
+
 ## Architecture
 
 ```
@@ -289,56 +381,15 @@ monodex/
 
 **Exclusions:** Folders like `node_modules` and files like `*.test.ts` are automatically skipped. Exclusion rules are currently hardcoded in `config.rs` but will be configurable in a future release.
 
-## Chunk Size Target
+### Chunk Size Target
 
 - **Target**: 6000 characters (text only)
 - **Fits**: 8192-token embedding model limit (jina-embeddings-v2-base-code)
 - **Breadcrumb**: Extra overhead for navigation context
 
-## Prerequisites
+## Status
 
-- **Qdrant**: Vector database running on localhost:6333
-- **Rust**: 1.91+ (for edition 2024)
-- **Model**: jina-embeddings-v2-base-code (auto-downloaded from HuggingFace to `models/`)
-
-## Qdrant Setup
-
-Create the collection before first use:
-
-```bash
-curl -X PUT "http://localhost:6333/collections/monodex" \
-  -H "Content-Type: application/json" \
-  -d '{
-    "vectors": {
-      "size": 768,
-      "distance": "Cosine"
-    }
-  }'
-```
-
-Verify the collection exists:
-
-```bash
-curl http://localhost:6333/collections/monodex | jq '.result.status'
-```
-
-The collection uses:
-
-- **768 dimensions** (jina-embeddings-v2-base-code output size)
-- **Cosine distance** (best for semantic similarity)
-
-## Development
-
-```bash
-# Build
-cargo build --release
-
-# Test
-cargo test
-
-# Run with logging (use sparo for testing, not rushstack)
-RUST_LOG=debug ./target/release/monodex crawl --catalog sparo --label main
-```
+This project is under active development. The crate is published to reserve the name. Expect breaking changes between versions.
 
 ## License
 

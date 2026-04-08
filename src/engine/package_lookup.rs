@@ -22,14 +22,14 @@ use std::path::Path;
 /// Package name string (either from package.json or derived from folder structure)
 pub fn find_package_name(file_path: &str, repo_root: &str) -> String {
     let path = Path::new(file_path);
-    
+
     // Start from the file's directory
     let mut current = path.parent().unwrap_or(path);
-    
+
     // Walk upwards looking for package.json
     loop {
         let package_json = current.join("package.json");
-        
+
         if package_json.exists() {
             // Found package.json - try to read and parse it
             if let Some(name) = extract_package_name(&package_json) {
@@ -37,14 +37,14 @@ pub fn find_package_name(file_path: &str, repo_root: &str) -> String {
             }
             // package.json exists but couldn't parse - keep walking up
         }
-        
+
         // Go to parent
         match current.parent() {
             Some(parent) => current = parent,
             None => break, // Reached root
         }
     }
-    
+
     // No package.json found - use relative folder path as identifier
     // e.g., "/repo/libs/util/src/helper.ts" -> "libs/util/src"
     strip_to_relative_path(file_path, repo_root)
@@ -56,25 +56,25 @@ pub fn find_package_name(file_path: &str, repo_root: &str) -> String {
 /// No need for a full JSON parser since we only need the name field.
 fn extract_package_name(package_json: &Path) -> Option<String> {
     let content = std::fs::read_to_string(package_json).ok()?;
-    
+
     // Find "name": "value" in JSON
     // Look for pattern: "name" : "package-name"
     let name_key = "\"name\"";
     let key_pos = content.find(name_key)?;
-    
+
     // Find the colon after "name"
     let after_key = &content[key_pos + name_key.len()..];
     let colon_pos = after_key.find(':')?;
-    
+
     // Find the opening quote of the value
     let after_colon = &after_key[colon_pos + 1..];
     let first_quote = after_colon.find('"')?;
-    
+
     // Find the closing quote
     let value_start = first_quote + 1;
     let after_first_quote = &after_colon[value_start..];
     let end_quote = after_first_quote.find('"')?;
-    
+
     Some(after_first_quote[..end_quote].to_string())
 }
 
@@ -85,7 +85,7 @@ fn extract_package_name(package_json: &Path) -> Option<String> {
 fn strip_to_relative_path(file_path: &str, repo_root: &str) -> String {
     let repo_path = Path::new(repo_root);
     let file_path = Path::new(file_path);
-    
+
     // Try to strip the repo root
     if let Ok(rel) = file_path.strip_prefix(repo_path) {
         // Get the directory part only (remove the filename)
@@ -94,7 +94,8 @@ fn strip_to_relative_path(file_path: &str, repo_root: &str) -> String {
         dir.to_string_lossy().replace('\\', "/")
     } else {
         // Couldn't strip - use just the folder name
-        file_path.parent()
+        file_path
+            .parent()
             .and_then(|p| p.file_name())
             .and_then(|n| n.to_str())
             .map(|s| s.to_string())

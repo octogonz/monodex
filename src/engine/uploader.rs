@@ -737,8 +737,11 @@ impl QdrantUploader {
             payload: LabelMetadata,
         }
 
+        // Convert label_id to UUID for Qdrant compatibility
+        let point_id = super::util::string_to_uuid(&metadata.label_id);
+
         let point = LabelPoint {
-            id: metadata.label_id.clone(),
+            id: point_id,
             vector: zero_vector,
             payload: metadata.clone(),
         };

@@ -1,13 +1,13 @@
 //! File chunking logic for different file types
-//! 
+//!
 //! This module handles splitting files into semantically meaningful chunks
 //! based on their file type and content structure.
 
+use super::config::{ChunkingStrategy, get_chunk_strategy};
+use super::partitioner::{PartitionConfig, PartitionedChunk, partition_typescript};
+use super::util::{CHUNKER_ID, EMBEDDER_ID, compute_file_id, compute_hash, compute_point_id};
 use anyhow::Result;
 use std::fs;
-use super::config::{ChunkingStrategy, get_chunk_strategy};
-use super::partitioner::{partition_typescript, PartitionConfig, PartitionedChunk};
-use super::util::{compute_hash, compute_file_id, compute_point_id, EMBEDDER_ID, CHUNKER_ID};
 
 /// Represents a chunk of code or documentation
 #[derive(Debug, Clone)]
@@ -46,7 +46,6 @@ pub struct Chunk {
     pub breadcrumb: String,
 
     // --- Phase 2: Label-aware indexing fields ---
-
     /// The initiating label for this chunk (transitional)
     pub label_id: String,
 
@@ -102,52 +101,47 @@ pub struct ChunkContext {
 }
 
 /// Chunks file content based on its type
-/// 
+///
 /// This is the new content-based chunking API for Phase 2.
-/// 
+///
 /// # Arguments
-/// 
+///
 /// * `content` - File content as string
 /// * `ctx` - Chunk context with identity information
 /// * `target_size` - Target chunk size in characters (default 6000)
-/// 
+///
 /// # Returns
-/// 
+///
 /// Vector of chunks or an error
-pub fn chunk_content(
-    content: &str,
-    ctx: &ChunkContext,
-    target_size: usize,
-) -> Result<Vec<Chunk>> {
+pub fn chunk_content(content: &str, ctx: &ChunkContext, target_size: usize) -> Result<Vec<Chunk>> {
     let strategy = get_chunk_strategy(&ctx.relative_path);
-    
+
     // Compute file ID from the new identity components
-    let file_id = compute_file_id(
-        EMBEDDER_ID,
-        CHUNKER_ID,
-        &ctx.blob_id,
-        &ctx.relative_path,
-    );
-    
+    let file_id = compute_file_id(EMBEDDER_ID, CHUNKER_ID, &ctx.blob_id, &ctx.relative_path);
+
     match strategy {
         ChunkingStrategy::TypeScript => {
             let file_name = std::path::Path::new(&ctx.relative_path)
                 .file_name()
                 .map(|n| n.to_string_lossy().to_string())
                 .unwrap_or_else(|| ctx.relative_path.to_string());
-            
+
             let config = PartitionConfig {
                 target_size,
                 file_name,
                 package_name: ctx.package_name.clone(),
                 ..Default::default()
             };
-            
+
             let partitioned = partition_typescript(content, &config, &ctx.source_uri, &ctx.catalog);
-            let mut chunks: Vec<Chunk> = partitioned.into_iter().enumerate().map(|(i, p)| {
-                Chunk::from_partitioned(p, &file_id, &ctx, i + 1, 0) // chunk_count set later
-            }).collect();
-            
+            let mut chunks: Vec<Chunk> = partitioned
+                .into_iter()
+                .enumerate()
+                .map(|(i, p)| {
+                    Chunk::from_partitioned(p, &file_id, &ctx, i + 1, 0) // chunk_count set later
+                })
+                .collect();
+
             // Assign chunk ordinals (1-indexed, sorted by start_line)
             chunks.sort_by_key(|c| c.start_line);
             let chunk_count = chunks.len();
@@ -155,7 +149,7 @@ pub fn chunk_content(
                 chunk.chunk_ordinal = i + 1;
                 chunk.chunk_count = chunk_count;
             }
-            
+
             Ok(chunks)
         }
         ChunkingStrategy::JavaScript => {
@@ -171,12 +165,8 @@ pub fn chunk_content(
             Ok(Vec::new())
         }
         ChunkingStrategy::Skip => Ok(Vec::new()),
-        ChunkingStrategy::YamlSimple => {
-            chunk_by_lines(content, &file_id, ctx, target_size, "yaml")
-        }
-        ChunkingStrategy::SimpleLine => {
-            chunk_by_lines(content, &file_id, ctx, target_size, "text")
-        }
+        ChunkingStrategy::YamlSimple => chunk_by_lines(content, &file_id, ctx, target_size, "yaml"),
+        ChunkingStrategy::SimpleLine => chunk_by_lines(content, &file_id, ctx, target_size, "text"),
     }
 }
 
@@ -257,7 +247,7 @@ fn chunk_by_lines(
 ) -> Result<Vec<Chunk>> {
     let content_hash = compute_hash(content);
     let lines: Vec<&str> = content.lines().collect();
-    
+
     let mut chunks = Vec::new();
     let mut start = 0;
     let file_name = std::path::Path::new(&ctx.relative_path)
@@ -268,20 +258,20 @@ fn chunk_by_lines(
     while start < lines.len() {
         let mut end = start;
         let mut size = 0;
-        
+
         // Build chunk up to max_chars
         while end < lines.len() && size + lines[end].len() + 1 <= max_chars {
             size += lines[end].len() + 1;
             end += 1;
         }
-        
+
         // Ensure at least one line per chunk
         if end == start && start < lines.len() {
             end = start + 1;
         }
-        
+
         let chunk_text = lines[start..end].join("\n");
-        
+
         // Skip empty or whitespace-only chunks
         if !chunk_text.trim().is_empty() {
             chunks.push(Chunk {
@@ -306,13 +296,13 @@ fn chunk_by_lines(
                 file_id: file_id.to_string(),
                 relative_path: ctx.relative_path.clone(),
                 chunk_ordinal: 0, // Will update after loop
-                chunk_count: 0,  // Will update after loop
+                chunk_count: 0,   // Will update after loop
             });
         }
-        
+
         start = end;
     }
-    
+
     // Update chunk_ordinal and chunk_count for all chunks
     let total_chunks = chunks.len().max(1);
     for (i, chunk) in chunks.iter_mut().enumerate() {
@@ -328,38 +318,38 @@ fn chunk_by_lines(
 // ========================================
 
 /// Chunks a file based on its type and content (legacy filesystem API)
-/// 
+///
 /// # Arguments
-/// 
+///
 /// * `file_path` - Path to the file to chunk
 /// * `catalog` - Catalog name for this file
 /// * `catalog_base_path` - Base path of the catalog (for computing relative paths)
 /// * `package_name` - Package name for breadcrumb (e.g., "@rushstack/node-core-library")
 /// * `target_size` - Target chunk size in characters (default 6000)
-/// 
+///
 /// # Returns
-/// 
+///
 /// Vector of chunks or an error
-/// 
+///
 /// Note: This legacy API produces chunks with empty label_id and blob_id.
 /// Use `chunk_content` for the new Phase 2 API.
 #[allow(dead_code)]
 pub fn chunk_file(
-    file_path: &str, 
-    catalog: &str, 
+    file_path: &str,
+    catalog: &str,
     catalog_base_path: &str,
     package_name: &str,
     target_size: usize,
 ) -> Result<Vec<Chunk>> {
     let content = fs::read_to_string(file_path)?;
-    
+
     // Compute relative path from catalog base
     let relative_path = file_path
         .strip_prefix(catalog_base_path)
         .unwrap_or(file_path)
         .trim_start_matches('/')
         .to_string();
-    
+
     let ctx = ChunkContext {
         catalog: catalog.to_string(),
         label_id: String::new(), // Legacy: no label
@@ -368,7 +358,7 @@ pub fn chunk_file(
         blob_id: String::new(), // Legacy: no blob_id
         source_uri: file_path.to_string(),
     };
-    
+
     chunk_content(&content, &ctx, target_size)
 }
 
@@ -397,14 +387,21 @@ export function hello() {
 }
 "#;
         let ctx = test_context("abc123", "src/index.ts", "@test/pkg");
-        
+
         let chunks1 = chunk_content(content, &ctx, 6000).unwrap();
         let chunks2 = chunk_content(content, &ctx, 6000).unwrap();
-        
+
         assert_eq!(chunks1.len(), chunks2.len());
         for (c1, c2) in chunks1.iter().zip(chunks2.iter()) {
-            assert_eq!(c1.file_id, c2.file_id, "Same content+path should produce same file_id");
-            assert_eq!(c1.point_id(), c2.point_id(), "Same content+path should produce same point_id");
+            assert_eq!(
+                c1.file_id, c2.file_id,
+                "Same content+path should produce same file_id"
+            );
+            assert_eq!(
+                c1.point_id(),
+                c2.point_id(),
+                "Same content+path should produce same point_id"
+            );
         }
     }
 
@@ -419,17 +416,18 @@ export function hello() {
 "#;
         let ctx1 = test_context("abc123", "src/index.ts", "@test/pkg");
         let ctx2 = test_context("abc123", "lib/index.ts", "@test/pkg");
-        
+
         let chunks1 = chunk_content(content, &ctx1, 6000).unwrap();
         let chunks2 = chunk_content(content, &ctx2, 6000).unwrap();
-        
+
         assert!(!chunks1.is_empty() && !chunks2.is_empty());
         assert_ne!(
             chunks1[0].file_id, chunks2[0].file_id,
             "Different paths should produce different file_id"
         );
         assert_ne!(
-            chunks1[0].point_id(), chunks2[0].point_id(),
+            chunks1[0].point_id(),
+            chunks2[0].point_id(),
             "Different paths should produce different point_id"
         );
     }
@@ -448,24 +446,30 @@ export class JsonFile {
         // Simulate a file moving from libraries/foo to libraries/bar
         let ctx1 = test_context("abc123", "libraries/foo/src/JsonFile.ts", "@scope/foo");
         let ctx2 = test_context("abc123", "libraries/bar/src/JsonFile.ts", "@scope/bar");
-        
+
         let chunks1 = chunk_content(content, &ctx1, 6000).unwrap();
         let chunks2 = chunk_content(content, &ctx2, 6000).unwrap();
-        
+
         // Both should produce chunks
         assert!(!chunks1.is_empty() && !chunks2.is_empty());
-        
+
         // File IDs should be different (path is part of identity)
         assert_ne!(chunks1[0].file_id, chunks2[0].file_id);
-        
+
         // Point IDs should be different
         assert_ne!(chunks1[0].point_id(), chunks2[0].point_id());
-        
+
         // Breadcrumbs should reflect the different package context
-        assert!(chunks1[0].breadcrumb.starts_with("@scope/foo"), 
-                "Breadcrumb should start with @scope/foo, got: {}", chunks1[0].breadcrumb);
-        assert!(chunks2[0].breadcrumb.starts_with("@scope/bar"),
-                "Breadcrumb should start with @scope/bar, got: {}", chunks2[0].breadcrumb);
+        assert!(
+            chunks1[0].breadcrumb.starts_with("@scope/foo"),
+            "Breadcrumb should start with @scope/foo, got: {}",
+            chunks1[0].breadcrumb
+        );
+        assert!(
+            chunks2[0].breadcrumb.starts_with("@scope/bar"),
+            "Breadcrumb should start with @scope/bar, got: {}",
+            chunks2[0].breadcrumb
+        );
     }
 
     /// Test that blob_id changes produce different file_id
@@ -479,10 +483,10 @@ export function hello() {
         // Same path, different blob_id (different content)
         let ctx1 = test_context("abc123", "src/index.ts", "@test/pkg");
         let ctx2 = test_context("def456", "src/index.ts", "@test/pkg");
-        
+
         let chunks1 = chunk_content(content, &ctx1, 6000).unwrap();
         let chunks2 = chunk_content(content, &ctx2, 6000).unwrap();
-        
+
         assert!(!chunks1.is_empty() && !chunks2.is_empty());
         assert_ne!(
             chunks1[0].file_id, chunks2[0].file_id,
@@ -496,7 +500,8 @@ export function hello() {
         // Create a file large enough to be split into multiple chunks
         let mut content = String::new();
         for i in 0..50 {
-            content.push_str(&format!(r#"
+            content.push_str(&format!(
+                r#"
 export function function_{}() {{
     console.log("Function {}");
     // This is a long comment to increase the size of this function
@@ -507,27 +512,40 @@ export function function_{}() {{
     let z = x + y;
     return z;
 }}
-"#, i, i, i * 10, i * 20));
+"#,
+                i,
+                i,
+                i * 10,
+                i * 20
+            ));
         }
-        
+
         let ctx = test_context("abc123", "src/large.ts", "@test/pkg");
         let chunks = chunk_content(&content, &ctx, 1000).unwrap(); // Small target to force splits
-        
+
         // Should have multiple chunks
-        assert!(chunks.len() > 1, "Expected multiple chunks, got {}", chunks.len());
-        
+        assert!(
+            chunks.len() > 1,
+            "Expected multiple chunks, got {}",
+            chunks.len()
+        );
+
         // Check ordinals are sequential starting from 1
         for (i, chunk) in chunks.iter().enumerate() {
-            assert_eq!(chunk.chunk_ordinal, i + 1, 
-                       "Chunk ordinal should be {}", i + 1);
+            assert_eq!(
+                chunk.chunk_ordinal,
+                i + 1,
+                "Chunk ordinal should be {}",
+                i + 1
+            );
         }
-        
+
         // All chunks should have the same chunk_count
         let expected_count = chunks.len();
         for chunk in &chunks {
             assert_eq!(chunk.chunk_count, expected_count);
         }
-        
+
         // Chunks should have non-empty file_id
         for chunk in &chunks {
             assert!(!chunk.file_id.is_empty());

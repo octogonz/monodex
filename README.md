@@ -37,21 +37,25 @@ This tool is designed for AI assistants. The indexed database provides a complet
 **Typical workflow:**
 
 1. **Set default context** (optional but recommended):
+
    ```bash
    monodex use --catalog rushstack --label main
    ```
 
 2. **Start with semantic search** to find relevant code:
+
    ```bash
    monodex search --text "how does rush handle pnpm shrinkwrap files"
    ```
 
 3. **View full chunks** using the `file_id:chunk_ordinal` from search results:
+
    ```bash
    monodex view --id 700a4ba232fe9ddc:3
    ```
 
 4. **Get surrounding context** by viewing adjacent chunks:
+
    ```bash
    monodex view --id 700a4ba232fe9ddc:2-4
    ```
@@ -63,19 +67,58 @@ This tool is designed for AI assistants. The indexed database provides a complet
 
 **Output format:** Search results prefix code lines with `>`, making them easy to distinguish from your own output and preventing injection attacks.
 
+## Prerequisites
+
+- **Rust**: 1.91+ (for edition 2024)
+- **Qdrant**: Vector database running on localhost:6333 (only needed for crawling/searching)
+
+  Installation instructions can be found in the [Qdrant Quickstart](https://qdrant.tech/documentation/quickstart/) documentation.
+
+- **Model**: jina-embeddings-v2-base-code (auto-downloaded from HuggingFace to `models/` on first use)
+
 ## Installation
 
-```bash
-# From crates.io
-cargo install monodex
+### From crates.io
 
-# Build from source
+```bash
+cargo install monodex
+```
+
+### Build from Source
+
+```bash
 git clone https://github.com/microsoft/monodex.git
 cd monodex
 cargo build --release
 
 # Binary will be at ./target/release/monodex
 ```
+
+## Qdrant Setup
+
+Create the collection before first use:
+
+```bash
+curl -X PUT "http://localhost:6333/collections/monodex" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "vectors": {
+      "size": 768,
+      "distance": "Cosine"
+    }
+  }'
+```
+
+Verify the collection exists:
+
+```bash
+curl http://localhost:6333/collections/monodex | jq '.result.status'
+```
+
+The collection uses:
+
+- **768 dimensions** (jina-embeddings-v2-base-code output size)
+- **Cosine distance** (best for semantic similarity)
 
 ## Usage
 
@@ -116,7 +159,7 @@ Create `~/.config/monodex/config.jsonc`:
 }
 ```
 
-**Note:** Use `sparo` (or another small monorepo) for development testing. `rushstack` is used for final verification and takes hours to crawl.
+> **Note:** We use the [Sparo](https://github.com/tiktok/sparo) monorepo for development testing, since it's a small open-source Rush monorepo.
 
 **Fields:**
 
@@ -259,6 +302,42 @@ monodex purge --all
 
 **Note:** Purge operates at catalog level. To remove a specific label's chunks, re-crawl that label with a different commit or manually update the `active_label_ids` field.
 
+## Development
+
+Run CI checks using [Just](https://github.com/casey/just) (recommended):
+
+```bash
+# Install just
+cargo install just
+
+# Run all CI checks (format, clippy, check, test)
+just ci
+
+# Individual commands
+just fmt          # Auto-format code
+just fmt-check    # Check formatting
+just clippy       # Run lints
+just check        # Type check
+just test         # Run tests
+just build        # Build release binary
+```
+
+Or run directly with cargo:
+
+```bash
+# Run all CI checks
+cargo fmt --all -- --check
+cargo clippy --workspace --all-targets --locked
+cargo check --workspace --all-targets --locked
+cargo test --workspace --all-targets --locked
+
+# Build
+cargo build --release
+
+# Run with logging (use sparo for testing, not rushstack)
+RUST_LOG=debug ./target/release/monodex crawl --catalog sparo --label main
+```
+
 ## Architecture
 
 ```
@@ -302,56 +381,11 @@ monodex/
 
 **Exclusions:** Folders like `node_modules` and files like `*.test.ts` are automatically skipped. Exclusion rules are currently hardcoded in `config.rs` but will be configurable in a future release.
 
-## Chunk Size Target
+### Chunk Size Target
 
 - **Target**: 6000 characters (text only)
 - **Fits**: 8192-token embedding model limit (jina-embeddings-v2-base-code)
 - **Breadcrumb**: Extra overhead for navigation context
-
-## Prerequisites
-
-- **Qdrant**: Vector database running on localhost:6333
-- **Rust**: 1.91+ (for edition 2024)
-- **Model**: jina-embeddings-v2-base-code (auto-downloaded from HuggingFace to `models/`)
-
-## Qdrant Setup
-
-Create the collection before first use:
-
-```bash
-curl -X PUT "http://localhost:6333/collections/monodex" \
-  -H "Content-Type: application/json" \
-  -d '{
-    "vectors": {
-      "size": 768,
-      "distance": "Cosine"
-    }
-  }'
-```
-
-Verify the collection exists:
-
-```bash
-curl http://localhost:6333/collections/monodex | jq '.result.status'
-```
-
-The collection uses:
-
-- **768 dimensions** (jina-embeddings-v2-base-code output size)
-- **Cosine distance** (best for semantic similarity)
-
-## Development
-
-```bash
-# Build
-cargo build --release
-
-# Test
-cargo test
-
-# Run with logging (use sparo for testing, not rushstack)
-RUST_LOG=debug ./target/release/monodex crawl --catalog sparo --label main
-```
 
 ## Status
 

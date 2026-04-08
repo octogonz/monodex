@@ -1,5 +1,5 @@
 //! Parallel embedding generation using multiple ONNX sessions
-//! 
+//!
 //! This module implements a pool of ONNX sessions for parallel embedding generation.
 //! Each session runs with limited intra-op threads, allowing multiple sessions to
 //! run concurrently without oversubscribing CPU cores.
@@ -10,11 +10,11 @@
 //! - Individual processing (no batching) is faster on CPU
 
 use anyhow::Result;
+use hf_hub::{Repo, RepoType, api::sync::Api};
 use ort::session::{Session, builder::GraphOptimizationLevel};
 use ort::value::Tensor;
-use tokenizers::Tokenizer;
-use hf_hub::{api::sync::Api, Repo, RepoType};
 use std::sync::{Arc, Mutex};
+use tokenizers::Tokenizer;
 
 const MODEL_ID: &str = "jinaai/jina-embeddings-v2-base-code";
 const MAX_LENGTH: usize = 8192;
@@ -35,7 +35,7 @@ impl Default for ParallelConfig {
         let total_cores = num_cpus::get();
         let num_workers = 4;
         let intra_threads = (total_cores / num_workers).max(1);
-        
+
         Self {
             num_workers,
             intra_threads,
@@ -54,7 +54,7 @@ impl ParallelEmbedder {
     pub fn new() -> Result<Self> {
         Self::with_config(ParallelConfig::default())
     }
-    
+
     /// Create a new parallel embedder with custom configuration
     pub fn with_config(config: ParallelConfig) -> Result<Self> {
         // Download model files from HuggingFace (cached locally after first download)
@@ -68,9 +68,11 @@ impl ParallelEmbedder {
         // Load base tokenizer (will be cloned for each worker)
         let base_tokenizer = Tokenizer::from_file(&tokenizer_path)
             .map_err(|e| anyhow::anyhow!("Failed to load tokenizer: {}", e))?;
-        
-        println!("Creating {} ONNX sessions with {} threads each...", 
-            config.num_workers, config.intra_threads);
+
+        println!(
+            "Creating {} ONNX sessions with {} threads each...",
+            config.num_workers, config.intra_threads
+        );
 
         // Create worker pool - each worker gets its own session AND tokenizer
         // This avoids lock contention on the tokenizer during parallel encoding
@@ -84,36 +86,39 @@ impl ParallelEmbedder {
                     .expect("Failed to set intra threads")
                     .commit_from_file(&onnx_path)
                     .expect("Failed to commit session");
-                
+
                 // Clone tokenizer for this worker
                 let tokenizer = base_tokenizer.clone();
-                
+
                 if i == 0 {
-                    println!("Worker pool created: {} workers × {} threads = {} total threads",
-                        config.num_workers, config.intra_threads, 
-                        config.num_workers * config.intra_threads);
+                    println!(
+                        "Worker pool created: {} workers × {} threads = {} total threads",
+                        config.num_workers,
+                        config.intra_threads,
+                        config.num_workers * config.intra_threads
+                    );
                 }
-                
+
                 Arc::new(Mutex::new((session, tokenizer)))
             })
             .collect();
 
         Ok(Self { workers })
     }
-    
+
     /// Get the number of workers
     pub fn num_workers(&self) -> usize {
         self.workers.len()
     }
-    
+
     /// Encode a single text using a specific worker (for parallel processing)
-    /// 
+    ///
     /// Call this from parallel iterator, passing worker_index = chunk_index % num_workers
     pub fn encode(&self, text: &str, worker_index: usize) -> Result<Vec<f32>> {
         let worker = &self.workers[worker_index % self.workers.len()];
         let mut guard = worker.lock().unwrap();
         let (session, tokenizer) = &mut *guard;
-        
+
         // Tokenize with this worker's tokenizer
         let encoding = tokenizer
             .encode(text, true)
@@ -127,7 +132,10 @@ impl ParallelEmbedder {
 
         // Create input tensors
         let input_ids: Vec<i64> = ids[..seq_len].iter().map(|&id| id as i64).collect();
-        let attention_mask_data: Vec<i64> = attention_mask[..seq_len].iter().map(|&m| m as i64).collect();
+        let attention_mask_data: Vec<i64> = attention_mask[..seq_len]
+            .iter()
+            .map(|&m| m as i64)
+            .collect();
 
         // Run inference
         let outputs = session.run(ort::inputs![
@@ -140,11 +148,7 @@ impl ParallelEmbedder {
 
         // Mean pooling over sequence dimension
         let embedding: Vec<f32> = (0..HIDDEN_SIZE)
-            .map(|i| {
-                (0..seq_len)
-                    .map(|j| data[j * HIDDEN_SIZE + i])
-                    .sum::<f32>() / seq_len as f32
-            })
+            .map(|i| (0..seq_len).map(|j| data[j * HIDDEN_SIZE + i]).sum::<f32>() / seq_len as f32)
             .collect();
 
         Ok(embedding)
@@ -164,14 +168,14 @@ mod tests {
         let emb = embedding.unwrap();
         assert_eq!(emb.len(), 768);
     }
-    
+
     #[test]
     fn test_parallel_performance() {
         let embedder = ParallelEmbedder::new().unwrap();
         let texts: Vec<&str> = (0..100).map(|_| "function test() { return 42; }").collect();
-        
+
         use rayon::prelude::*;
-        
+
         let start = Instant::now();
         let embeddings: Vec<_> = texts
             .par_iter()
@@ -180,10 +184,10 @@ mod tests {
             .collect::<Result<Vec<_>>>()
             .unwrap();
         let elapsed = start.elapsed();
-        
+
         println!("Embedded {} chunks in {:?}", embeddings.len(), elapsed);
         println!("Per embedding: {:?}", elapsed / embeddings.len() as u32);
-        
+
         assert_eq!(embeddings.len(), 100);
         for emb in &embeddings {
             assert_eq!(emb.len(), 768);

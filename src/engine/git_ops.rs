@@ -4,11 +4,11 @@
 //! from Git commits without touching the working tree, as well as
 //! enumerating files from the working directory for indexing uncommitted changes.
 
-use anyhow::{anyhow, Result};
+use anyhow::{Result, anyhow};
+use gix::ObjectId;
 use gix::objs::TreeRefIter;
 use gix::traverse::tree::Recorder;
-use gix::ObjectId;
-use sha2::{Sha256, Digest};
+use sha2::{Digest, Sha256};
 use std::collections::HashMap;
 use std::path::Path;
 
@@ -174,8 +174,8 @@ pub fn read_blob_content(repo_path: &Path, blob_id: &str) -> Result<Vec<u8>> {
         .map_err(|e| anyhow!("Failed to open repository at {:?}: {}", repo_path, e))?;
 
     // Parse the blob ID from hex string
-    let object_id =
-        ObjectId::from_hex(blob_id.as_bytes()).map_err(|e| anyhow!("Invalid blob ID '{}': {}", blob_id, e))?;
+    let object_id = ObjectId::from_hex(blob_id.as_bytes())
+        .map_err(|e| anyhow!("Invalid blob ID '{}': {}", blob_id, e))?;
 
     // Find the blob object
     let blob = repo
@@ -242,7 +242,10 @@ pub fn build_package_index_for_commit(repo_path: &Path, commit: &str) -> Result<
         .filter(|entry| entry.mode.is_blob())
         .filter_map(|entry| {
             let filepath_bytes: &[u8] = entry.filepath.as_ref();
-            let filename = filepath_bytes.rsplit(|b| *b == b'/').next().unwrap_or_default();
+            let filename = filepath_bytes
+                .rsplit(|b| *b == b'/')
+                .next()
+                .unwrap_or_default();
 
             if filename == b"package.json" {
                 let dir_path = filepath_bytes
@@ -347,7 +350,10 @@ where
         .filter_entry(|e| {
             // Skip hidden directories and common exclusions
             let path = e.path();
-            let name = path.file_name().map(|n| n.to_string_lossy()).unwrap_or_default();
+            let name = path
+                .file_name()
+                .map(|n| n.to_string_lossy())
+                .unwrap_or_default();
 
             // Skip hidden directories (except .git is handled separately)
             if name.starts_with('.') && name != ".git" {
@@ -355,7 +361,10 @@ where
             }
 
             // Skip common directories that should never be indexed
-            if matches!(name.as_ref(), "node_modules" | "target" | "dist" | "build" | ".cache" | "temp") {
+            if matches!(
+                name.as_ref(),
+                "node_modules" | "target" | "dist" | "build" | ".cache" | "temp"
+            ) {
                 return false;
             }
 
@@ -434,14 +443,20 @@ pub fn build_package_index_for_working_dir(repo_path: &Path) -> Result<PackageIn
         .into_iter()
         .filter_entry(|e| {
             let path = e.path();
-            let name = path.file_name().map(|n| n.to_string_lossy()).unwrap_or_default();
+            let name = path
+                .file_name()
+                .map(|n| n.to_string_lossy())
+                .unwrap_or_default();
 
             // Skip hidden directories and common exclusions
             if name.starts_with('.') && name != ".git" {
                 return false;
             }
 
-            if matches!(name.as_ref(), "node_modules" | "target" | "dist" | "build" | ".cache" | "temp") {
+            if matches!(
+                name.as_ref(),
+                "node_modules" | "target" | "dist" | "build" | ".cache" | "temp"
+            ) {
                 return false;
             }
 
@@ -456,7 +471,10 @@ pub fn build_package_index_for_working_dir(repo_path: &Path) -> Result<PackageIn
             continue;
         }
 
-        let file_name = path.file_name().map(|n| n.to_string_lossy()).unwrap_or_default();
+        let file_name = path
+            .file_name()
+            .map(|n| n.to_string_lossy())
+            .unwrap_or_default();
         if file_name != "package.json" {
             continue;
         }
@@ -484,8 +502,7 @@ pub fn build_package_index_for_working_dir(repo_path: &Path) -> Result<PackageIn
 /// Simple wrapper around fs::read that returns the content as bytes.
 pub fn read_working_file_content(repo_path: &Path, relative_path: &str) -> Result<Vec<u8>> {
     let full_path = repo_path.join(relative_path);
-    std::fs::read(&full_path)
-        .map_err(|e| anyhow!("Failed to read file {}: {}", relative_path, e))
+    std::fs::read(&full_path).map_err(|e| anyhow!("Failed to read file {}: {}", relative_path, e))
 }
 
 #[cfg(test)]
@@ -556,7 +573,10 @@ mod tests {
 
         // This repo has a Cargo.toml at root, no package.json
         // So we shouldn't find any packages
-        println!("Package index has {} entries", index.package_name_by_dir.len());
+        println!(
+            "Package index has {} entries",
+            index.package_name_by_dir.len()
+        );
 
         // Print any packages found
         for (dir, name) in &index.package_name_by_dir {
@@ -601,7 +621,10 @@ mod tests {
 
         // Content hashes should be non-empty and start with "sha256:"
         for entry in entries.iter().take(5) {
-            assert!(entry.content_hash.starts_with("sha256:"), "Content hash should start with sha256:");
+            assert!(
+                entry.content_hash.starts_with("sha256:"),
+                "Content hash should start with sha256:"
+            );
             println!("  {} ({})", entry.relative_path, &entry.content_hash[..16]);
         }
     }

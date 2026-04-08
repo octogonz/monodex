@@ -585,7 +585,7 @@ monodex gc --catalog rushstack
 
 ### Config File
 
-`~/.config/monodex/config.jsonc`:
+`~/.config/monodex/config.json`:
 
 ```json
 {
@@ -607,6 +607,8 @@ monodex gc --catalog rushstack
 ```
 
 **Note:** Use `sparo` for development testing. `rushstack` is for final verification only.
+
+**File extension:** All config files use `.json` extension (not `.jsonc`) per Rush Stack conventions.
 
 ### Catalog to Repo Mapping
 
@@ -679,6 +681,138 @@ monodex search --text "uncommitted feature" --label rushstack:working
 monodex search --text "same query" --label rushstack:main
 monodex search --text "same query" --label rushstack:working
 ```
+
+---
+
+## Crawl Configuration
+
+### Overview
+
+Crawl policy (file types, exclusions, overrides) is externalized from Rust code into a JSON config file. This enables:
+- Per-repo customization without code changes
+- Easy sharing of configs between repos or teams
+- Deterministic, debuggable behavior
+
+### Config File Format
+
+File: `monodex-crawl.json` (JSON format, `.json` extension per Rush Stack conventions)
+
+```json
+{
+  "version": 1,
+  "fileTypes": {
+    ".ts": "typescript",
+    ".tsx": "typescript",
+    ".md": "markdown",
+    ".json": "simpleLine"
+  },
+  "patternsToExclude": [
+    "node_modules/",
+    "dist/",
+    "build/",
+    "lib/",
+    "*.snap",
+    "*.test.ts",
+    "*.spec.ts",
+    "package-lock.json",
+    "pnpm-lock.yaml",
+    "yarn.lock"
+  ],
+  "patternsToKeep": [
+    "src/",
+    "test/"
+  ]
+}
+```
+
+### Fields
+
+| Field | Required | Description |
+|-------|----------|-------------|
+| `version` | Yes | Config schema version (must be `1`) |
+| `fileTypes` | Yes | Map of file suffix → chunking strategy |
+| `patternsToExclude` | Yes | Array of glob patterns for paths to skip |
+| `patternsToKeep` | Yes | Array of glob patterns that override exclusion |
+
+### Evaluation Rule
+
+```text
+shouldCrawl = matchesFileType
+  && (matchesPatternsToKeep || !matchesPatternsToExclude)
+```
+
+**Key properties:**
+- `fileTypes` is the primary filter (allowlist)
+- `patternsToKeep` only overrides exclusion, does NOT force unsupported file types
+- No multi-layer include/exclude semantics (single tier only)
+
+### Chunking Strategies
+
+Valid strategy names (from `src/engine/config.rs`):
+
+| Strategy | File Types | Description |
+|----------|------------|-------------|
+| `typescript` | `.ts`, `.tsx` | AST-based semantic chunking |
+| `javascript` | `.js`, `.jsx`, `.cjs`, `.mjs` | Currently skipped (returns empty) |
+| `markdown` | `.md` | Heading-based chunking |
+| `json` | `.json` | Currently skipped (low value for search) |
+| `simpleLine` | `.txt`, `.css`, `.scss`, `.yml`, `.yaml` | Line-based chunking |
+
+**Note:** `javascript` and `json` strategies exist but return empty chunks in current implementation. Config may specify them, but files won't be indexed until strategies are implemented.
+
+### Pattern Matching
+
+- Patterns use Rust glob semantics via `globset` crate
+- Matching is against **repo-relative paths** (not absolute)
+- Path separator is `/`
+- Paths must be normalized before matching
+- Matching is case-sensitive (v1)
+- Invalid patterns → config validation error
+
+### Config Discovery
+
+Exactly one config is used. No merging. Precedence:
+
+1. **Repo-local config**: `<repo-root>/monodex-crawl.json`
+2. **User-global config**: `~/.config/monodex/crawl.json`
+3. **Built-in default**: Embedded in binary (same JSON format)
+
+### Validation
+
+Strict validation (no silent fallback):
+
+- Required fields must be present
+- Unknown fields → error
+- Incorrect types → error
+- Unsupported `version` → error
+- Unknown strategy names → error
+- Invalid glob patterns → error
+
+### Working Directory Mode
+
+The same crawl config applies to both:
+- Commit-based crawling (`--commit`)
+- Working directory crawling (`--working-dir`)
+
+Working directory is treated as a "degenerate commit" - same filtering rules apply.
+
+### Example: Exclusion with Override
+
+Given config:
+```json
+{
+  "fileTypes": { ".ts": "typescript" },
+  "patternsToExclude": ["*.test.ts"],
+  "patternsToKeep": ["src/"]
+}
+```
+
+| Path | Result | Reason |
+|------|--------|--------|
+| `src/utils.test.ts` | **Crawled** | Matches `patternsToKeep` (overrides exclude) |
+| `lib/utils.test.ts` | **Skipped** | Matches `patternsToExclude`, no keep override |
+| `src/utils.ts` | **Crawled** | No exclusion match |
+| `lib/utils.ts` | **Crawled** | No exclusion match |
 
 ---
 

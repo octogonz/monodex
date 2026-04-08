@@ -168,6 +168,8 @@ monodex crawl --catalog rushstack --label v1.0.0 --commit a1b2c3d4e5f6
 
 **Label reassignment:** When you re-crawl a label with a new commit, chunks from the old commit that no longer exist are removed from that label's membership.
 
+**Incremental warnings:** By default, files with chunking warnings are always re-processed. Use `--incremental-warnings` to allow them to be skipped if unchanged (useful for large codebases with known chunking issues).
+
 ### Search the Database
 
 ```bash

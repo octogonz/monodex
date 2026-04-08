@@ -14,40 +14,40 @@ This plan implements label-based semantic indexing with incremental crawl. The w
 
 Create `src/engine/git_ops.rs`:
 
-- [ ] Add `gix` dependency to Cargo.toml (pure Rust Git implementation)
-- [ ] Implement `enumerate_commit_tree(repo_path, commit) -> Vec<FileEntry>`
+- [x] Add `gix` dependency to Cargo.toml (pure Rust Git implementation)
+- [x] Implement `enumerate_commit_tree(repo_path, commit) -> Vec<FileEntry>`
   ```rust
   pub struct FileEntry {
       pub relative_path: String,
       pub blob_id: String,
   }
   ```
-- [ ] Handle NUL-delimited output from `git ls-tree -r -z`
-- [ ] Filter out non-blob entries
-- [ ] Test with a sample commit in rushstack repo
+- [x] Handle NUL-delimited output from `git ls-tree -r -z`
+- [x] Filter out non-blob entries
+- [x] Test with a sample commit in rushstack repo
 
 ### 1.2 Git Blob Content Reading
 
-- [ ] Implement `read_blob_content(repo_path, blob_id) -> Result<Vec<u8>>`
-- [ ] Use `git cat-file --batch` for batch reading (or gix equivalent)
-- [ ] Handle UTF-8 decoding errors gracefully
-- [ ] Test reading a few blobs from sample commit
+- [x] Implement `read_blob_content(repo_path, blob_id) -> Result<Vec<u8>>`
+- [x] Use `git cat-file --batch` for batch reading (or gix equivalent)
+- [x] Handle UTF-8 decoding errors gracefully
+- [x] Test reading a few blobs from sample commit
 
 ### 1.3 Package Index Building
 
-- [ ] Implement `build_package_index_for_commit(repo_path, commit) -> Result<PackageIndex>`
+- [x] Implement `build_package_index_for_commit(repo_path, commit) -> Result<PackageIndex>`
   - Enumerate all `package.json` files from commit tree
   - Batch-read blob contents
   - Parse JSON to extract `"name"` field
   - Build `HashMap<String, String>` mapping directory -> package name
-- [ ] Implement `find_package_name_from_index(relative_path, index) -> Option<&str>`
+- [x] Implement `find_package_name_from_index(relative_path, index) -> Option<&str>`
   - Walk ancestor directories to find nearest package
-- [ ] Test on rushstack commit, verify correct package resolution
+- [x] Test on rushstack commit, verify correct package resolution
 
 ### 1.4 Integration Test
 
-- [ ] Verify we can enumerate a commit, resolve packages, and read content
-- [ ] Confirm no dependency on working tree state
+- [x] Verify we can enumerate a commit, resolve packages, and read content
+- [x] Confirm no dependency on working tree state
 
 ---
 

@@ -51,7 +51,7 @@ struct Config {
 #[derive(Parser)]
 #[command(name = "monodex", version, about)]
 struct Cli {
-    /// Config file path (default: ~/.config/monodex/config.jsonc)
+    /// Config file path (default: ~/.config/monodex/config.json)
     #[arg(long)]
     config: Option<PathBuf>,
 
@@ -199,7 +199,7 @@ enum Commands {
     },
 }
 
-const DEFAULT_CONFIG_PATH: &str = "~/.config/monodex/config.jsonc";
+const DEFAULT_CONFIG_PATH: &str = "~/.config/monodex/config.json";
 
 /// Context file for storing default catalog/label
 const DEFAULT_CONTEXT_PATH: &str = "~/.config/monodex/context.json";

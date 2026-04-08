@@ -428,11 +428,11 @@ In `src/engine/git_ops.rs`:
 
 ### 8.1 File Extension Naming Convention
 
-- [ ] Rename `~/.config/monodex/config.jsonc` → `config.json` in docs and code
-- [ ] Rename `~/.config/monodex/context.json` - verify it uses `.json` (already correct)
-- [ ] Update README.md to use `.json` extension
-- [ ] Update DESIGN.md to use `.json` extension
-- [ ] Align with Rush Stack JSON conventions
+- [x] Rename `~/.config/monodex/config.jsonc` → `config.json` in docs and code
+- [x] Rename `~/.config/monodex/context.json` - verify it uses `.json` (already correct)
+- [x] Update README.md to use `.json` extension
+- [x] Update DESIGN.md to use `.json` extension
+- [x] Align with Rush Stack JSON conventions
 
 ### 8.2 Define Crawl Config Schema
 

@@ -894,45 +894,7 @@ impl QdrantUploader {
     }
 
     /// Add a label to a chunk's active_label_ids
-    /// 
-    /// This updates the chunk's payload to include the label in active_label_ids.
-    pub fn add_label_to_chunk(&self, point_id: &str, label_id: &str) -> Result<()> {
-        let endpoint = format!(
-            "{}/collections/{}/points/payload",
-            self.url, self.collection
-        );
-
-        #[derive(Debug, Serialize)]
-        struct AddLabelRequest {
-            payload: serde_json::Value,
-            points: Vec<String>,
-        }
-
-        // We need to append to the array, not replace it
-        // Qdrant supports this with the "values" field for array appending
-        let payload = serde_json::json!({
-            "active_label_ids": {
-                "values": [label_id]
-            }
-        });
-
-        let request_body = AddLabelRequest {
-            payload,
-            points: vec![point_id.to_string()],
-        };
-
-        let response = self.client.post(&endpoint).json(&request_body).send()?;
-
-        if !response.status().is_success() {
-            return Err(anyhow!("Failed to add label to chunk: HTTP {}", response.status()));
-        }
-
-        Ok(())
-    }
-
     /// Add a label to all chunks for a file (by file_id)
-    /// 
-    /// This is more efficient than calling add_label_to_chunk for each chunk.
     pub fn add_label_to_file_chunks(&self, file_id: &str, label_id: &str) -> Result<()> {
         // Get all chunks for this file with their current labels
         // We need to read-modify-write to properly append the label
@@ -1074,7 +1036,7 @@ impl QdrantUploader {
 
             let must_values = vec![
                 serde_json::json!({
-                    "key": "active_label_ids.values",
+                    "key": "active_label_ids",
                     "match": { "value": label_id }
                 }),
                 serde_json::json!({
@@ -1234,7 +1196,7 @@ impl QdrantUploader {
                 "match": { "value": catalog }
             }),
             serde_json::json!({
-                "key": "active_label_ids.values",
+                "key": "active_label_ids",
                 "match": { "value": label_id }
             }),
             serde_json::json!({
@@ -1292,7 +1254,7 @@ impl QdrantUploader {
                 "match": { "value": file_id }
             }),
             serde_json::json!({
-                "key": "active_label_ids.values",
+                "key": "active_label_ids",
                 "match": { "value": label_id }
             }),
             serde_json::json!({

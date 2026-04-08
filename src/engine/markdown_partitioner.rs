@@ -25,7 +25,7 @@ pub fn partition_markdown(
     let content_hash = {
         let mut hasher = Sha256::new();
         hasher.update(source.as_bytes());
-        format!("sha256:{:x}", hasher.finalize())
+        format!("sha256:{}", hex::encode(hasher.finalize()))
     };
 
     // Build breadcrumb prefix

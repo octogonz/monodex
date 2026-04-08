@@ -994,7 +994,7 @@ fn run_crawl_label(
     // they don't exist. For now, we track failures inline during processing.
 
     // Track if there were any errors during the crawl
-    let mut error_count = 0;
+    let error_count = 0;
     // Count blob read failures and chunk failures from earlier phases
     // (These are tracked via eprintln, not captured in counters yet)
 
@@ -1991,10 +1991,7 @@ fn run_audit_chunks(count: usize, dir: String) -> anyhow::Result<()> {
 
     // Random sample
     let mut rng = rand::rng();
-    let sample: Vec<_> = ts_files
-        .choose_multiple(&mut rng, count)
-        .into_iter()
-        .collect();
+    let sample: Vec<_> = ts_files.sample(&mut rng, count).into_iter().collect();
 
     // Compute quality scores using AST-only mode (allow_fallback=false)
     // This measures how well the AST-based chunker performs, without fallback

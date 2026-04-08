@@ -6,9 +6,33 @@
 use anyhow::{anyhow, Result};
 use reqwest::blocking::Client;
 use serde::{Deserialize, Serialize};
-use uuid::Uuid;
 
 const DEFAULT_QDRANT_URL: &str = "http://localhost:6333";
+
+/// Custom deserializer for active_label_ids that handles both formats:
+/// - Normal array: `["label1", "label2"]`
+/// - Qdrant values wrapper: `{"values": ["label1", "label2"]}`
+fn deserialize_label_ids<'de, D>(deserializer: D) -> Result<Vec<String>, D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    #[derive(Deserialize)]
+    #[serde(untagged)]
+    enum LabelIdsFormat {
+        Array(Vec<String>),
+        Values { values: Vec<String> },
+    }
+    
+    match LabelIdsFormat::deserialize(deserializer) {
+        Ok(LabelIdsFormat::Array(arr)) => Ok(arr),
+        Ok(LabelIdsFormat::Values { values }) => Ok(values),
+        Err(_) => {
+            // If deserialization fails, return empty vec (field may be missing)
+            // This matches the #[serde(default)] behavior
+            Ok(Vec::new())
+        }
+    }
+}
 
 /// Qdrant filter for queries
 #[derive(Debug, Serialize)]
@@ -54,30 +78,65 @@ struct Point {
     payload: PointPayload,
 }
 
-/// Payload associated with a point
+/// Payload associated with a code chunk point
 #[derive(Debug, Serialize, Deserialize)]
 pub struct PointPayload {
     pub text: String,
-    pub source_uri: String,
-    pub source_type: String,
+    pub source_type: String,          // "code"
+
+    // Label membership
     pub catalog: String,
-    pub content_hash: String,
+    pub label_id: String,             // Transitional: the initiating label. Prefer active_label_ids.
+    #[serde(default, deserialize_with = "deserialize_label_ids")]
+    pub active_label_ids: Vec<String>, // All labels this chunk belongs to (authoritative)
+
+    // Implementation identity
+    pub embedder_id: String,          // e.g., "jina-embeddings-v2-base-code:v1"
+    pub chunker_id: String,           // e.g., "typescript-partitioner:v1"
+
+    // Provenance
+    pub blob_id: String,              // Git blob SHA
+    pub content_hash: String,         // Hash of chunk text
+
+    // File identity
+    pub file_id: String,              // Semantic file identity (for grouping chunks)
+
+    // Path context (for retrieval without Git)
+    pub relative_path: String,
+    pub package_name: String,
+    pub source_uri: String,           // Useful for locating in Git/GitHub, but NOT a key
+
+    // Chunk metadata
+    pub chunk_ordinal: usize,         // 1-indexed position in file
+    pub chunk_count: usize,
     pub start_line: usize,
     pub end_line: usize,
+
+    // Semantic context
     #[serde(skip_serializing_if = "Option::is_none")]
     pub symbol_name: Option<String>,
-    pub chunk_type: String,
-    pub chunk_kind: String,  // "content" | "imports" | "changelog" | "config"
+    pub chunk_type: String,           // AST node type: function, class, method, etc.
+    pub chunk_kind: String,           // content, imports, changelog, config
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub breadcrumb: Option<String>,
-    // Phase 6+ fields
-    pub file_id: String,        // 16-char hex hash of relative path
-    pub relative_path: String,  // Path relative to catalog base
-    pub chunk_number: usize,    // 1-indexed position in file
-    pub chunk_count: usize,     // Total chunks in file
-    // File completion tracking (Phase 10)
+    pub breadcrumb: Option<String>,   // Human-readable: package:File.ts:Symbol
+
+    // Sentinel for incremental crawl
     #[serde(default)]
-    pub file_complete: bool,    // true on chunk #1 when all chunks uploaded
+    pub file_complete: bool,          // Only true on chunk_ordinal=1
+}
+
+/// Metadata for a label, stored as a special point in the collection
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct LabelMetadata {
+    pub source_type: String,          // "label-metadata"
+    pub catalog: String,
+    pub label_id: String,             // e.g., "rushstack:main"
+    pub label_name: String,           // e.g., "main"
+    pub commit_oid: String,           // Resolved commit SHA
+    pub source_kind: String,          // "git-commit"
+    #[serde(default)]
+    pub crawl_complete: bool,
+    pub updated_at_unix_secs: u64,
 }
 
 /// Information about a file for incremental sync
@@ -267,7 +326,7 @@ impl QdrantUploader {
                 self.url, self.collection, LIMIT
             );
 
-            // Build filter with catalog AND chunk_number=1
+            // Build filter with catalog AND chunk_ordinal=1
             #[derive(Debug, Serialize)]
             struct ScrollRequestWithIntFilter {
                 filter: FilterWithIntCondition,
@@ -287,8 +346,12 @@ impl QdrantUploader {
                     "match": { "value": catalog }
                 }),
                 serde_json::json!({
-                    "key": "chunk_number",
+                    "key": "chunk_ordinal",
                     "match": { "value": 1 }
+                }),
+                serde_json::json!({
+                    "key": "source_type",
+                    "match": { "value": "code" }
                 }),
             ];
 
@@ -338,6 +401,10 @@ impl QdrantUploader {
     }
 
     /// Uploads a batch of chunks with their embeddings
+    /// Uploads a batch of chunks with their embeddings
+    /// 
+    /// Uses the chunk's point_id() for deterministic IDs, enabling
+    /// upsert-by-ID semantics for label membership updates.
     pub fn upload_batch(&self, chunks: &[(crate::engine::Chunk, Vec<f32>)]) -> Result<u64> {
         if chunks.is_empty() {
             return Ok(0);
@@ -347,26 +414,46 @@ impl QdrantUploader {
             .iter()
             .map(|(chunk, embedding)| {
                 Point {
-                    id: Uuid::new_v4().to_string(),  // Random UUID
+                    id: chunk.point_id(),  // Deterministic ID based on file_id + chunk_ordinal
                     vector: embedding.clone(),
                     payload: PointPayload {
                         text: chunk.text.clone(),
-                        source_uri: chunk.source_uri.clone(),
                         source_type: chunk.source_type.clone(),
+
+                        // Label membership
                         catalog: chunk.catalog.clone(),
+                        label_id: chunk.label_id.clone(),
+                        active_label_ids: chunk.active_label_ids.clone(),
+
+                        // Implementation identity
+                        embedder_id: chunk.embedder_id.clone(),
+                        chunker_id: chunk.chunker_id.clone(),
+
+                        // Provenance
+                        blob_id: chunk.blob_id.clone(),
                         content_hash: chunk.content_hash.clone(),
+
+                        // File identity
+                        file_id: chunk.file_id.clone(),
+
+                        // Path context
+                        relative_path: chunk.relative_path.clone(),
+                        package_name: chunk.package_name.clone(),
+                        source_uri: chunk.source_uri.clone(),
+
+                        // Chunk metadata
+                        chunk_ordinal: chunk.chunk_ordinal,
+                        chunk_count: chunk.chunk_count,
                         start_line: chunk.start_line,
                         end_line: chunk.end_line,
+
+                        // Semantic context
                         symbol_name: chunk.symbol_name.clone(),
                         chunk_type: chunk.chunk_type.clone(),
                         chunk_kind: chunk.chunk_kind.clone(),
                         breadcrumb: Some(chunk.breadcrumb.clone()),
-                        // Phase 6+ fields
-                        file_id: super::util::display_file_id(chunk.file_id),
-                        relative_path: chunk.relative_path.clone(),
-                        chunk_number: chunk.chunk_number,
-                        chunk_count: chunk.chunk_count,
-                        // Phase 10: file completion tracking
+
+                        // Sentinel
                         file_complete: false,
                     },
                 }
@@ -415,8 +502,12 @@ impl QdrantUploader {
                 "match": { "value": file_id }
             }),
             serde_json::json!({
-                "key": "chunk_number",
+                "key": "chunk_ordinal",
                 "match": { "value": 1 }
+            }),
+            serde_json::json!({
+                "key": "source_type",
+                "match": { "value": "code" }
             }),
         ];
 
@@ -573,7 +664,7 @@ impl QdrantUploader {
     /// * `selector` - Which chunks to retrieve
     /// 
     /// # Returns
-    /// Vector of points sorted by chunk_number, or error
+    /// Vector of points sorted by chunk_ordinal, or error
     pub fn get_chunks_by_file_id(&self, file_id: &str) -> Result<Vec<PointResult>> {
         // Build scroll request with filter on file_id
         #[derive(Debug, Serialize)]
@@ -644,8 +735,583 @@ impl QdrantUploader {
             }
         }
 
-        // Sort by chunk_number
-        results.sort_by_key(|p| p.payload.chunk_number);
+        // Sort by chunk_ordinal
+        results.sort_by_key(|p| p.payload.chunk_ordinal);
+
+        Ok(results)
+    }
+
+    // ========================================
+    // Label-aware operations (Phase 2)
+    // ========================================
+
+    /// Upsert label metadata point
+    /// 
+    /// Creates or updates a metadata point for a label. The label_id is used
+    /// directly as the point ID for easy lookup.
+    pub fn upsert_label_metadata(&self, metadata: &LabelMetadata) -> Result<()> {
+        let endpoint = format!("{}/collections/{}/points", self.url, self.collection);
+
+        // Create a zero vector (768 dimensions) - required by Qdrant but never used in search
+        let zero_vector: Vec<f32> = vec![0.0; 768];
+
+        #[derive(Debug, Serialize)]
+        struct LabelPoint {
+            id: String,
+            vector: Vec<f32>,
+            payload: LabelMetadata,
+        }
+
+        // Convert label_id to UUID for Qdrant compatibility
+        let point_id = super::util::string_to_uuid(&metadata.label_id);
+
+        let point = LabelPoint {
+            id: point_id,
+            vector: zero_vector,
+            payload: metadata.clone(),
+        };
+
+        #[derive(Debug, Serialize)]
+        struct UpsertLabelRequest {
+            points: Vec<LabelPoint>,
+        }
+
+        let request_body = UpsertLabelRequest { points: vec![point] };
+
+        let response = self.client.put(&endpoint).json(&request_body).send()?;
+
+        if !response.status().is_success() {
+            return Err(anyhow!("Failed to upsert label metadata: HTTP {}", response.status()));
+        }
+
+        Ok(())
+    }
+
+    /// Get label metadata by label_id
+    pub fn get_label_metadata(&self, label_id: &str) -> Result<Option<LabelMetadata>> {
+        let endpoint = format!(
+            "{}/collections/{}/points/{}",
+            self.url, self.collection, label_id
+        );
+
+        let response = self.client.get(&endpoint).send()?;
+
+        if !response.status().is_success() {
+            // Point doesn't exist
+            return Ok(None);
+        }
+
+        #[derive(Debug, Deserialize)]
+        struct LabelPointResponse {
+            result: LabelPointResult,
+        }
+
+        #[derive(Debug, Deserialize)]
+        struct LabelPointResult {
+            payload: LabelMetadata,
+        }
+
+        let label_response: LabelPointResponse = response.json()?;
+        Ok(Some(label_response.result.payload))
+    }
+
+    /// Get sentinel (chunk 1) for a file to check if already indexed
+    /// 
+    /// Returns FileSyncInfo if the sentinel exists and is complete.
+    pub fn get_file_sentinel(&self, file_id: &str) -> Result<Option<FileSyncInfo>> {
+        // Query for chunk_ordinal=1 with the given file_id
+        #[derive(Debug, Serialize)]
+        struct SentinelRequest {
+            filter: SentinelFilter,
+            with_payload: bool,
+            limit: u32,
+        }
+
+        #[derive(Debug, Serialize)]
+        struct SentinelFilter {
+            must: Vec<serde_json::Value>,
+        }
+
+        let must_values = vec![
+            serde_json::json!({
+                "key": "file_id",
+                "match": { "value": file_id }
+            }),
+            serde_json::json!({
+                "key": "chunk_ordinal",
+                "match": { "value": 1 }
+            }),
+            serde_json::json!({
+                "key": "source_type",
+                "match": { "value": "code" }
+            }),
+        ];
+
+        let endpoint = format!(
+            "{}/collections/{}/points/scroll?limit=1",
+            self.url, self.collection
+        );
+
+        let request_body = SentinelRequest {
+            filter: SentinelFilter { must: must_values },
+            with_payload: true,
+            limit: 1,
+        };
+
+        let response = self.client.post(&endpoint).json(&request_body).send()?;
+
+        if !response.status().is_success() {
+            return Err(anyhow!("Failed to query sentinel: HTTP {}", response.status()));
+        }
+
+        #[derive(Debug, Deserialize)]
+        struct SentinelResponse {
+            result: SentinelResult,
+        }
+
+        #[derive(Debug, Deserialize)]
+        struct SentinelResult {
+            points: Vec<SentinelPoint>,
+        }
+
+        #[derive(Debug, Deserialize)]
+        struct SentinelPoint {
+            payload: PointPayload,
+        }
+
+        let sentinel_response: SentinelResponse = response.json()?;
+
+        if let Some(point) = sentinel_response.result.points.first() {
+            if point.payload.file_complete {
+                return Ok(Some(FileSyncInfo {
+                    content_hash: point.payload.content_hash.clone(),
+                    file_complete: true,
+                }));
+            }
+        }
+
+        Ok(None)
+    }
+
+    /// Add a label to a chunk's active_label_ids
+    /// Add a label to all chunks for a file (by file_id)
+    pub fn add_label_to_file_chunks(&self, file_id: &str, label_id: &str) -> Result<()> {
+        // Get all chunks for this file with their current labels
+        // We need to read-modify-write to properly append the label
+        let mut chunks_to_update: Vec<(String, Vec<String>)> = Vec::new();
+        let mut offset: Option<QdrantId> = None;
+        const LIMIT: u32 = 100;
+
+        loop {
+            #[derive(Debug, Serialize)]
+            struct ScrollForLabels {
+                filter: FilterForLabels,
+                with_payload: bool,
+                #[serde(skip_serializing_if = "Option::is_none")]
+                offset: Option<QdrantId>,
+            }
+
+            #[derive(Debug, Serialize)]
+            struct FilterForLabels {
+                must: Vec<serde_json::Value>,
+            }
+
+            let must_values = vec![
+                serde_json::json!({
+                    "key": "file_id",
+                    "match": { "value": file_id }
+                }),
+                serde_json::json!({
+                    "key": "source_type",
+                    "match": { "value": "code" }
+                }),
+            ];
+
+            let endpoint = format!(
+                "{}/collections/{}/points/scroll?limit={}",
+                self.url, self.collection, LIMIT
+            );
+
+            let request_body = ScrollForLabels {
+                filter: FilterForLabels { must: must_values },
+                with_payload: true,  // Need payload to get current labels
+                offset: offset.clone(),
+            };
+
+            let response = self.client.post(&endpoint).json(&request_body).send()?;
+
+            if !response.status().is_success() {
+                return Err(anyhow!("Failed to scroll file chunks: HTTP {}", response.status()));
+            }
+
+            #[derive(Debug, Deserialize)]
+            struct LabelsResponse {
+                result: LabelsResult,
+            }
+
+            #[derive(Debug, Deserialize)]
+            struct LabelsResult {
+                points: Vec<LabelPoint>,
+                #[serde(default)]
+                next_page_offset: Option<QdrantId>,
+            }
+
+            #[derive(Debug, Deserialize)]
+            struct LabelPoint {
+                id: QdrantId,
+                payload: LabelPayload,
+            }
+
+            #[derive(Debug, Deserialize)]
+            struct LabelPayload {
+                #[serde(default, deserialize_with = "deserialize_label_ids")]
+                active_label_ids: Vec<String>,
+            }
+
+            let labels_response: LabelsResponse = response.json()?;
+
+            if labels_response.result.points.is_empty() {
+                break;
+            }
+
+            for point in labels_response.result.points {
+                let id_str = match point.id {
+                    QdrantId::String(s) => s,
+                    QdrantId::Integer(n) => n.to_string(),
+                };
+                chunks_to_update.push((id_str, point.payload.active_label_ids));
+            }
+
+            offset = labels_response.result.next_page_offset;
+            if offset.is_none() {
+                break;
+            }
+        }
+
+        // Now update each chunk, appending the new label if not already present
+        for (point_id, mut current_labels) in chunks_to_update {
+            if !current_labels.contains(&label_id.to_string()) {
+                current_labels.push(label_id.to_string());
+            }
+            self.set_active_labels(&point_id, &current_labels)?;
+        }
+
+        Ok(())
+    }
+
+    /// Remove a label from chunks where it's in active_label_ids
+    /// 
+    /// This scans all chunks with the label and removes the label from active_label_ids.
+    /// If active_label_ids becomes empty, the chunk is deleted.
+    /// 
+    /// # Arguments
+    /// * `label_id` - The label to remove
+    /// * `exclude_file_ids` - File IDs to skip (files that were touched in the current crawl)
+    /// 
+    /// # Returns
+    /// Number of chunks processed
+    pub fn remove_label_from_chunks(
+        &self,
+        label_id: &str,
+        exclude_file_ids: &std::collections::HashSet<String>,
+    ) -> Result<u64> {
+        let mut processed: u64 = 0;
+        let mut offset: Option<QdrantId> = None;
+        const LIMIT: u32 = 100;
+
+        loop {
+            // Scroll for chunks with this label
+            #[derive(Debug, Serialize)]
+            struct ScrollWithLabel {
+                filter: LabelFilter,
+                with_payload: bool,
+                #[serde(skip_serializing_if = "Option::is_none")]
+                offset: Option<QdrantId>,
+            }
+
+            #[derive(Debug, Serialize)]
+            struct LabelFilter {
+                must: Vec<serde_json::Value>,
+            }
+
+            let must_values = vec![
+                serde_json::json!({
+                    "key": "active_label_ids",
+                    "match": { "value": label_id }
+                }),
+                serde_json::json!({
+                    "key": "source_type",
+                    "match": { "value": "code" }
+                }),
+            ];
+
+            let endpoint = format!(
+                "{}/collections/{}/points/scroll?limit={}",
+                self.url, self.collection, LIMIT
+            );
+
+            let request_body = ScrollWithLabel {
+                filter: LabelFilter { must: must_values },
+                with_payload: true,
+                offset: offset.clone(),
+            };
+
+            let response = self.client.post(&endpoint).json(&request_body).send()?;
+
+            if !response.status().is_success() {
+                return Err(anyhow!("Failed to scroll chunks with label: HTTP {}", response.status()));
+            }
+
+            let response_text = response.text()?;
+            let scroll_response: ScrollResponse = match serde_json::from_str(&response_text) {
+                Ok(r) => r,
+                Err(e) => {
+                    return Err(anyhow!("Deserialization error: {}", e));
+                }
+            };
+
+            if scroll_response.result.points.is_empty() {
+                break;
+            }
+
+            for point in scroll_response.result.points {
+                let file_id = point.payload.file_id.clone();
+
+                // Skip if this file was touched in the current crawl
+                if exclude_file_ids.contains(&file_id) {
+                    continue;
+                }
+
+                // Remove label from active_label_ids
+                let mut new_labels = point.payload.active_label_ids.clone();
+                new_labels.retain(|l| l != label_id);
+
+                let point_id_str = match point.id {
+                    QdrantId::String(s) => s,
+                    QdrantId::Integer(n) => n.to_string(),
+                };
+
+                if new_labels.is_empty() {
+                    // Delete the chunk
+                    self.delete_point(&point_id_str)?;
+                } else {
+                    // Update active_label_ids
+                    self.set_active_labels(&point_id_str, &new_labels)?;
+                }
+
+                processed += 1;
+            }
+
+            offset = scroll_response.result.next_page_offset;
+            if offset.is_none() {
+                break;
+            }
+        }
+
+        Ok(processed)
+    }
+
+    /// Delete a single point by ID
+    fn delete_point(&self, point_id: &str) -> Result<()> {
+        let endpoint = format!(
+            "{}/collections/{}/points/delete",
+            self.url, self.collection
+        );
+
+        #[derive(Debug, Serialize)]
+        struct DeletePointRequest {
+            points: Vec<String>,
+        }
+
+        let request_body = DeletePointRequest {
+            points: vec![point_id.to_string()],
+        };
+
+        let response = self.client.post(&endpoint).json(&request_body).send()?;
+
+        if !response.status().is_success() {
+            return Err(anyhow!("Failed to delete point: HTTP {}", response.status()));
+        }
+
+        Ok(())
+    }
+
+    /// Set active_label_ids on a point
+    fn set_active_labels(&self, point_id: &str, labels: &[String]) -> Result<()> {
+        let endpoint = format!(
+            "{}/collections/{}/points/payload",
+            self.url, self.collection
+        );
+
+        #[derive(Debug, Serialize)]
+        struct SetLabelsRequest {
+            payload: serde_json::Value,
+            points: Vec<String>,
+        }
+
+        let payload = serde_json::json!({
+            "active_label_ids": labels
+        });
+
+        let request_body = SetLabelsRequest {
+            payload,
+            points: vec![point_id.to_string()],
+        };
+
+        let response = self.client.post(&endpoint).json(&request_body).send()?;
+
+        if !response.status().is_success() {
+            return Err(anyhow!("Failed to set active labels: HTTP {}", response.status()));
+        }
+
+        Ok(())
+    }
+
+    /// Search with label filtering
+    /// 
+    /// Filters by catalog, label (via active_label_ids), and source_type.
+    pub fn search_with_label(
+        &self,
+        embedding: &[f32],
+        limit: usize,
+        catalog: &str,
+        label_id: &str,
+    ) -> Result<Vec<SearchResult>> {
+        #[derive(Debug, Serialize)]
+        struct LabelSearchRequest {
+            vector: Vec<f32>,
+            limit: usize,
+            with_payload: bool,
+            filter: LabelSearchFilter,
+        }
+
+        #[derive(Debug, Serialize)]
+        struct LabelSearchFilter {
+            must: Vec<serde_json::Value>,
+        }
+
+        let must_values = vec![
+            serde_json::json!({
+                "key": "catalog",
+                "match": { "value": catalog }
+            }),
+            serde_json::json!({
+                "key": "active_label_ids",
+                "match": { "value": label_id }
+            }),
+            serde_json::json!({
+                "key": "source_type",
+                "match": { "value": "code" }
+            }),
+        ];
+
+        let request_body = LabelSearchRequest {
+            vector: embedding.to_vec(),
+            limit,
+            with_payload: true,
+            filter: LabelSearchFilter { must: must_values },
+        };
+
+        let endpoint = format!(
+            "{}/collections/{}/points/search",
+            self.url, self.collection
+        );
+
+        let response = self.client.post(&endpoint).json(&request_body).send()?;
+
+        if !response.status().is_success() {
+            return Err(anyhow!("Failed to search with label: HTTP {}", response.status()));
+        }
+
+        let search_response: SearchResponse = response.json()?;
+        Ok(search_response.result)
+    }
+
+    /// Get chunks by file_id filtered by active_label_ids
+    /// 
+    /// Returns chunks that belong to the specified label, sorted by chunk_ordinal.
+    pub fn get_chunks_by_file_id_with_label(
+        &self,
+        file_id: &str,
+        label_id: &str,
+    ) -> Result<Vec<PointResult>> {
+        #[derive(Debug, Serialize)]
+        struct ScrollWithLabelFilter {
+            filter: LabelFilterCondition,
+            with_payload: bool,
+            #[serde(skip_serializing_if = "Option::is_none")]
+            offset: Option<QdrantId>,
+        }
+
+        #[derive(Debug, Serialize)]
+        struct LabelFilterCondition {
+            must: Vec<serde_json::Value>,
+        }
+
+        let must_values = vec![
+            serde_json::json!({
+                "key": "file_id",
+                "match": { "value": file_id }
+            }),
+            serde_json::json!({
+                "key": "active_label_ids",
+                "match": { "value": label_id }
+            }),
+            serde_json::json!({
+                "key": "source_type",
+                "match": { "value": "code" }
+            }),
+        ];
+
+        let mut results: Vec<PointResult> = Vec::new();
+        let mut offset: Option<QdrantId> = None;
+        const LIMIT: u32 = 100;
+
+        loop {
+            let endpoint = format!(
+                "{}/collections/{}/points/scroll?limit={}",
+                self.url, self.collection, LIMIT
+            );
+
+            let request_body = ScrollWithLabelFilter {
+                filter: LabelFilterCondition { must: must_values.clone() },
+                with_payload: true,
+                offset: offset.clone(),
+            };
+
+            let response = self.client.post(&endpoint).json(&request_body).send()?;
+
+            if !response.status().is_success() {
+                return Err(anyhow!("Failed to scroll file chunks: HTTP {}", response.status()));
+            }
+
+            let response_text = response.text()?;
+            let scroll_response: ScrollResponse = match serde_json::from_str(&response_text) {
+                Ok(r) => r,
+                Err(e) => {
+                    return Err(anyhow!("Deserialization error: {}", e));
+                }
+            };
+
+            if scroll_response.result.points.is_empty() {
+                break;
+            }
+
+            for point in scroll_response.result.points {
+                results.push(PointResult {
+                    id: point.id,
+                    payload: point.payload,
+                });
+            }
+
+            offset = scroll_response.result.next_page_offset;
+            if offset.is_none() {
+                break;
+            }
+        }
+
+        // Sort by chunk_ordinal
+        results.sort_by_key(|p| p.payload.chunk_ordinal);
 
         Ok(results)
     }

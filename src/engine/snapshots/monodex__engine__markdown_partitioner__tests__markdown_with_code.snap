@@ -6,7 +6,7 @@ expression: format_chunks(&chunks)
 Breadcrumb: monodex:API.md:API Documentation
 Type: section
 Lines: 1-4
-Size: 88 chars
+Size: 84 chars
 Preview:
 # API Documentation
 
@@ -16,7 +16,7 @@ This document describes the core APIs for the monodex project.
 Breadcrumb: monodex:API.md:Installation
 Type: section
 Lines: 5-14
-Size: 157 chars
+Size: 149 chars
 Preview:
 ## Installation
 
@@ -29,7 +29,7 @@ cargo install monodex
 Breadcrumb: monodex:API.md:Configuration
 Type: section
 Lines: 15-33
-Size: 333 chars
+Size: 329 chars
 Preview:
 ## Configuration
 
@@ -63,7 +63,7 @@ Preview:
 Breadcrumb: monodex:API.md:Indexing
 Type: section
 Lines: 43-55
-Size: 177 chars
+Size: 173 chars
 Preview:
 ### Indexing
 
@@ -76,7 +76,7 @@ monodex crawl --catalog node-core-library
 Breadcrumb: monodex:API.md:Querying
 Type: section
 Lines: 56-68
-Size: 175 chars
+Size: 171 chars
 Preview:
 ### Querying
 

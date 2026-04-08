@@ -6,6 +6,7 @@
 //! Repository-specific configuration lives in `../config.rs`
 
 pub mod config;
+pub mod git_ops;
 pub mod parallel_embedder;
 pub mod chunker;
 pub mod partitioner;

@@ -14,7 +14,10 @@ use engine::{
     ParallelEmbedder,
     partitioner::{partition_typescript, PartitionConfig, ChunkQualityReport, PartitionDebug},
     uploader::{QdrantUploader, PointResult, LabelMetadata},
-    git_ops::{enumerate_commit_tree, read_blob_content, build_package_index_for_commit, resolve_commit_oid},
+    git_ops::{
+        enumerate_commit_tree, read_blob_content, build_package_index_for_commit, resolve_commit_oid,
+        enumerate_working_directory, build_package_index_for_working_dir, read_working_file_content,
+    },
     util::compute_label_id,
     SMALL_CHUNK_CHARS,
 };
@@ -85,8 +88,14 @@ enum Commands {
 
         /// Git commit to crawl (defaults to HEAD)
         /// Supports branch names, tags, or commit SHA
+        /// Mutually exclusive with --working-dir
         #[arg(long, default_value = "HEAD")]
         commit: String,
+
+        /// Crawl the working directory instead of a Git commit.
+        /// Indexes uncommitted changes. Mutually exclusive with --commit.
+        #[arg(long, default_value_t = false)]
+        working_dir: bool,
 
         /// Allow files with chunking warnings to participate in incremental skipping
         #[arg(long, default_value_t = false)]
@@ -322,8 +331,12 @@ fn main() -> anyhow::Result<()> {
         Commands::Use { catalog, label } => {
             run_use(catalog.as_deref(), label)?;
         }
-        Commands::Crawl { catalog, label, commit, incremental_warnings } => {
-            run_crawl_label(&config, &catalog, &label, &commit, incremental_warnings)?;
+        Commands::Crawl { catalog, label, commit, working_dir, incremental_warnings } => {
+            if working_dir {
+                run_crawl_working_dir(&config, &catalog, &label, incremental_warnings)?;
+            } else {
+                run_crawl_label(&config, &catalog, &label, &commit, incremental_warnings)?;
+            }
         }
         Commands::Purge { catalog, all } => {
             run_purge(&config, catalog.as_deref(), all)?;
@@ -867,6 +880,386 @@ fn run_crawl_label(
     if error_count > 0 {
         println!("  ⚠️  Files with errors: {} (see logs above)", error_count);
     }
+
+    Ok(())
+}
+
+/// Run crawl for working directory (indexes uncommitted changes)
+fn run_crawl_working_dir(
+    config: &Config,
+    catalog_name: &str,
+    label_name: &str,
+    _incremental_warnings: bool,
+) -> anyhow::Result<()> {
+    use engine::util::{EMBEDDER_ID, CHUNKER_ID, compute_file_id};
+    use std::sync::atomic::{AtomicUsize, AtomicBool, Ordering};
+    use std::sync::{Arc, Mutex};
+    use crossbeam_channel::{unbounded, Sender, Receiver};
+    use rayon::prelude::*;
+
+    let total_start = std::time::Instant::now();
+    println!("🔍 Starting working directory crawl...");
+    println!("Catalog: {}", catalog_name);
+    println!("Label: {}", label_name);
+
+    // Get catalog config
+    let catalog_config = config.catalogs.get(catalog_name)
+        .ok_or_else(|| anyhow::anyhow!("Catalog '{}' not found in config", catalog_name))?;
+
+    let repo_path = std::path::Path::new(&catalog_config.path);
+    println!("Repository: {}", repo_path.display());
+    println!("Type: {}", catalog_config.r#type);
+    println!("Collection: {}", config.qdrant.collection);
+    println!("Source: working directory (uncommitted changes)");
+    println!();
+
+    // Compute label_id
+    let label_id = compute_label_id(catalog_name, label_name);
+    println!("Label ID: {}", label_id);
+    println!();
+
+    // Initialize uploader
+    let uploader = QdrantUploader::new(&config.qdrant.collection, config.qdrant.url.as_deref())?;
+
+    // Write in-progress metadata
+    let in_progress_metadata = LabelMetadata {
+        source_type: "label-metadata".to_string(),
+        catalog: catalog_name.to_string(),
+        label_id: label_id.clone(),
+        label_name: label_name.to_string(),
+        commit_oid: "".to_string(), // No commit for working directory
+        source_kind: "working-directory".to_string(),
+        crawl_complete: false,
+        updated_at_unix_secs: std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_secs(),
+    };
+    uploader.upsert_label_metadata(&in_progress_metadata)?;
+
+    // Enumerate working directory files
+    println!("📂 Enumerating working directory...");
+    let files = enumerate_working_directory(repo_path, should_skip_path)?;
+    println!("Found {} files in working directory", files.len());
+    println!();
+
+    // Build package index from working directory
+    println!("📦 Building package index...");
+    let package_index = build_package_index_for_working_dir(repo_path)?;
+    println!("Package index built successfully");
+    println!();
+
+    // Filter files
+    println!("📂 Filtering files...");
+    let files_to_process: Vec<_> = files.iter()
+        .filter(|f| is_text_file(&f.relative_path))
+        .cloned()
+        .collect();
+    println!("{} files to process after filtering", files_to_process.len());
+    println!();
+
+    // Check for existing chunks and collect new files
+    println!("⚡ Phase 1: Checking existing chunks and collecting new files...");
+    
+    let mut new_files: Vec<(String, String)> = Vec::new(); // (relative_path, content_hash)
+    let mut existing_files: HashSet<String> = HashSet::new();
+    let mut new_count = 0;
+    let mut existing_count = 0;
+
+    for file_entry in &files_to_process {
+        // For working directory, use content_hash as blob_id
+        let file_id = compute_file_id(
+            EMBEDDER_ID,
+            CHUNKER_ID,
+            &file_entry.content_hash,
+            &file_entry.relative_path,
+        );
+
+        match uploader.get_file_sentinel(&file_id) {
+            Ok(Some(_)) => {
+                existing_files.insert(file_id);
+                existing_count += 1;
+            }
+            Ok(None) => {
+                new_files.push((file_entry.relative_path.clone(), file_entry.content_hash.clone()));
+                new_count += 1;
+            }
+            Err(e) => {
+                eprintln!("  ⚠️  Error checking sentinel for {}: {}", file_entry.relative_path, e);
+                new_files.push((file_entry.relative_path.clone(), file_entry.content_hash.clone()));
+                new_count += 1;
+            }
+        }
+    }
+
+    println!("  New files to index: {}", new_count);
+    println!("  Existing files (label update only): {}", existing_count);
+    println!();
+
+    // Add label to existing files
+    if !existing_files.is_empty() {
+        println!("🏷️  Adding label to {} existing files...", existing_files.len());
+        for file_id in &existing_files {
+            if let Err(e) = uploader.add_label_to_file_chunks(file_id, &label_id) {
+                eprintln!("  ⚠️  Failed to add label to file {}: {}", file_id, e);
+            }
+        }
+        println!("  Done.");
+        println!();
+    }
+
+    // Index new files
+    let mut all_chunks: Vec<engine::Chunk> = Vec::new();
+    let mut touched_file_ids: HashSet<String> = HashSet::new();
+
+    if !new_files.is_empty() {
+        println!("⚙️  Loading embedding model...");
+        let embedder = ParallelEmbedder::new()?;
+        println!();
+
+        println!("📦 Phase 2: Chunking and embedding {} new files...", new_count);
+
+        for (idx, (relative_path, content_hash)) in new_files.iter().enumerate() {
+            print!("\r  Processing file {}/{} ({:.0}%)   ",
+                idx + 1, new_count,
+                ((idx + 1) as f64 / new_count as f64) * 100.0);
+            std::io::Write::flush(&mut std::io::stdout())?;
+
+            // Read content from working directory
+            let content = match read_working_file_content(repo_path, relative_path) {
+                Ok(c) => c,
+                Err(e) => {
+                    eprintln!("\n  ⚠️  Failed to read {}: {}", relative_path, e);
+                    continue;
+                }
+            };
+
+            let content_str = match String::from_utf8(content) {
+                Ok(s) => s,
+                Err(_) => continue,
+            };
+
+            // Resolve package name
+            let package_name = package_index.find_package_name(relative_path)
+                .unwrap_or(catalog_name)
+                .to_string();
+
+            // Create chunk context - use content_hash as blob_id
+            let ctx = ChunkContext {
+                catalog: catalog_name.to_string(),
+                label_id: label_id.clone(),
+                package_name,
+                relative_path: relative_path.clone(),
+                blob_id: content_hash.clone(), // Use content hash as blob_id
+                source_uri: format!("{}:{}", repo_path.display(), relative_path),
+            };
+
+            match chunk_content(&content_str, &ctx, 6000) {
+                Ok(chunks) => {
+                    if !chunks.is_empty() {
+                        touched_file_ids.insert(chunks[0].file_id.clone());
+                    }
+                    all_chunks.extend(chunks);
+                }
+                Err(e) => {
+                    eprintln!("\n  ⚠️  Failed to chunk {}: {}", relative_path, e);
+                }
+            }
+        }
+
+        let total_chunks = all_chunks.len();
+        println!("\n  Found {} chunks to embed", total_chunks);
+        println!();
+
+        if !all_chunks.is_empty() {
+            // Embed and upload (same as commit-based crawl)
+            println!("⚡ Phase 3: Embedding {} chunks with {} parallel sessions...",
+                total_chunks, embedder.num_workers());
+            println!("  (Checkpoints every 60s - safe to CTRL+C)");
+            let embed_start = std::time::Instant::now();
+
+            let (embed_tx, embed_rx): (Sender<(engine::Chunk, Vec<f32>)>, Receiver<(engine::Chunk, Vec<f32>)>) = unbounded();
+            let processed = Arc::new(AtomicUsize::new(0));
+            let stop_flag = Arc::new(AtomicBool::new(false));
+            let last_upload_time = Arc::new(Mutex::new(std::time::Instant::now()));
+
+            let processed_clone = Arc::clone(&processed);
+            let stop_clone = Arc::clone(&stop_flag);
+            let total_chunks_for_thread = total_chunks;
+            let embed_start_for_thread = std::time::Instant::now();
+            let last_print_clone = Arc::clone(&last_upload_time);
+
+            let progress_thread = std::thread::spawn(move || {
+                while !stop_clone.load(Ordering::Relaxed) {
+                    std::thread::sleep(std::time::Duration::from_secs(5));
+                    let mut last = last_print_clone.lock().unwrap();
+                    if last.elapsed() >= std::time::Duration::from_secs(30) {
+                        let current = processed_clone.load(Ordering::Relaxed);
+                        let elapsed = embed_start_for_thread.elapsed();
+                        let rate = current as f64 / elapsed.as_secs_f64().max(0.001);
+                        let remaining = (total_chunks_for_thread - current) as f64 / rate;
+                        let eta = format_eta(remaining);
+                        eprintln!("[{}] Embedded {}/{} ({:.0}%) - {:.1} chunks/sec - ETA: {}",
+                            chrono_timestamp(),
+                            current, total_chunks_for_thread,
+                            (current as f64 / total_chunks_for_thread as f64) * 100.0,
+                            rate, eta);
+                        *last = std::time::Instant::now();
+                    }
+                }
+            });
+
+            let uploader = Arc::new(Mutex::new(uploader));
+            let stop_uploader = Arc::clone(&stop_flag);
+            let last_upload_time_clone = Arc::clone(&last_upload_time);
+            let uploader_clone = Arc::clone(&uploader);
+            let label_id_clone = label_id.clone();
+
+            let uploader_thread = std::thread::spawn(move || {
+                let mut accumulated: Vec<(engine::Chunk, Vec<f32>)> = Vec::new();
+                let mut expected_count: HashMap<String, usize> = HashMap::new();
+                let mut uploaded_count: HashMap<String, usize> = HashMap::new();
+
+                loop {
+                    let should_upload = {
+                        let mut last = last_upload_time_clone.lock().unwrap();
+                        if last.elapsed() >= std::time::Duration::from_secs(60) {
+                            *last = std::time::Instant::now();
+                            true
+                        } else {
+                            false
+                        }
+                    };
+
+                    while let Ok(embedded) = embed_rx.try_recv() {
+                        let file_id = embedded.0.file_id.clone();
+                        if let std::collections::hash_map::Entry::Vacant(e) = expected_count.entry(file_id.clone()) {
+                            e.insert(embedded.0.chunk_count);
+                        }
+                        accumulated.push(embedded);
+                    }
+
+                    if should_upload && !accumulated.is_empty() {
+                        let count = accumulated.len();
+                        eprintln!("[{}] Uploading checkpoint ({} chunks)...", chrono_timestamp(), count);
+
+                        let uploader_guard = uploader_clone.lock().unwrap();
+                        if let Err(e) = uploader_guard.upload_batch(&accumulated) {
+                            eprintln!("[{}] ❌ Upload failed: {}", chrono_timestamp(), e);
+                        } else {
+                            let mut files_in_batch: HashMap<String, usize> = HashMap::new();
+                            for (chunk, _) in &accumulated {
+                                *files_in_batch.entry(chunk.file_id.clone()).or_insert(0) += 1;
+                            }
+                            for (file_id, batch_count) in &files_in_batch {
+                                *uploaded_count.entry(file_id.clone()).or_insert(0) += batch_count;
+                            }
+
+                            let mut completed_files: Vec<String> = Vec::new();
+                            for file_id in files_in_batch.keys() {
+                                let uploaded = uploaded_count.get(file_id).copied().unwrap_or(0);
+                                let expected = expected_count.get(file_id).copied().unwrap_or(0);
+                                if uploaded == expected && expected > 0 {
+                                    completed_files.push(file_id.clone());
+                                }
+                            }
+
+                            for file_id in &completed_files {
+                                if let Err(e) = uploader_guard.mark_file_complete(file_id) {
+                                    eprintln!("[{}] ❌ Failed to mark file complete: {}", chrono_timestamp(), e);
+                                }
+                                if let Err(e) = uploader_guard.add_label_to_file_chunks(file_id, &label_id_clone) {
+                                    eprintln!("[{}] ❌ Failed to add label: {}", chrono_timestamp(), e);
+                                }
+                            }
+                        }
+                        accumulated.clear();
+                    }
+
+                    if stop_uploader.load(Ordering::Relaxed) && embed_rx.is_empty() {
+                        if !accumulated.is_empty() {
+                            let count = accumulated.len();
+                            eprintln!("[{}] Final upload ({} chunks)...", chrono_timestamp(), count);
+
+                            let uploader_guard = uploader_clone.lock().unwrap();
+                            if let Err(e) = uploader_guard.upload_batch(&accumulated) {
+                                eprintln!("[{}] ❌ Final upload failed: {}", chrono_timestamp(), e);
+                            } else {
+                                for file_id in accumulated.iter().map(|(c, _)| c.file_id.clone()).collect::<std::collections::HashSet<_>>() {
+                                    if let Err(e) = uploader_guard.mark_file_complete(&file_id) {
+                                        eprintln!("[{}] ❌ Failed to mark file complete: {}", chrono_timestamp(), e);
+                                    }
+                                    if let Err(e) = uploader_guard.add_label_to_file_chunks(&file_id, &label_id_clone) {
+                                        eprintln!("[{}] ❌ Failed to add label: {}", chrono_timestamp(), e);
+                                    }
+                                }
+                            }
+                        }
+                        break;
+                    }
+
+                    std::thread::sleep(std::time::Duration::from_millis(100));
+                }
+            });
+
+            let processed_clone = Arc::clone(&processed);
+            all_chunks.into_par_iter()
+                .for_each(|chunk| {
+                    if let Ok(embedding) = embedder.encode(&chunk.text, 0) {
+                        let _ = embed_tx.send((chunk, embedding));
+                        processed_clone.fetch_add(1, Ordering::Relaxed);
+                    }
+                });
+
+            stop_flag.store(true, Ordering::Relaxed);
+            progress_thread.join().ok();
+            uploader_thread.join().ok();
+
+            let embed_elapsed = embed_start.elapsed();
+            let rate = total_chunks as f64 / embed_elapsed.as_secs_f64().max(0.001);
+            println!("\n  Embedding complete: {} chunks in {} ({:.1} chunks/sec)",
+                total_chunks, format_duration(embed_elapsed.as_secs_f64()), rate);
+            println!();
+        }
+    }
+
+    // Label reassignment cleanup
+    println!("🧹 Phase 4: Label reassignment cleanup...");
+    let all_touched: HashSet<String> = existing_files.union(&touched_file_ids).cloned().collect();
+    
+    let cleanup_uploader = QdrantUploader::new(&config.qdrant.collection, config.qdrant.url.as_deref())?;
+    match cleanup_uploader.remove_label_from_chunks(&label_id, &all_touched) {
+        Ok(processed) => println!("  Processed {} chunks for label cleanup", processed),
+        Err(e) => eprintln!("  ⚠️ Label cleanup failed: {}", e),
+    }
+    println!();
+
+    // Update label metadata
+    println!("📝 Updating label metadata...");
+    let metadata = LabelMetadata {
+        source_type: "label-metadata".to_string(),
+        catalog: catalog_name.to_string(),
+        label_id: label_id.clone(),
+        label_name: label_name.to_string(),
+        commit_oid: "".to_string(),
+        source_kind: "working-directory".to_string(),
+        crawl_complete: true,
+        updated_at_unix_secs: std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_secs(),
+    };
+
+    let uploader = QdrantUploader::new(&config.qdrant.collection, config.qdrant.url.as_deref())?;
+    uploader.upsert_label_metadata(&metadata)?;
+    println!("  Label metadata saved.");
+    println!();
+
+    let total_elapsed = total_start.elapsed();
+    println!("✅ Working directory crawl complete!");
+    println!("  Total time: {}", format_duration(total_elapsed.as_secs_f64()));
+    println!("  New files indexed: {}", new_count);
+    println!("  Existing files updated: {}", existing_count);
 
     Ok(())
 }

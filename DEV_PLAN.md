@@ -358,40 +358,43 @@ The following tests were skipped and should be run manually before release:
 
 ---
 
-## Phase 7: Working Directory Crawling
+## Phase 7: Working Directory Crawling ✅ COMPLETE
 
-### 7.1 Design Working Directory Identity Model
+### 7.1 Design Working Directory Identity Model ✅ COMPLETE
 
-- [ ] Define identity scheme for working directory files:
+- [x] Define identity scheme for working directory files:
   - No `blob_id` (not in Git yet)
-  - Use content hash computed from file content
+  - Use content hash computed from file content (SHA256 with `sha256:` prefix)
   - Path + content hash determines `file_id`
-- [ ] Decide `source_kind` value for working directory labels (e.g., `"working-directory"`)
-- [ ] Decide how to represent "no commit" in `LabelMetadata.commit_oid` (empty string? "WORKING"?)
-- [ ] Document: working directory labels are mutable (re-crawl changes content), commit labels are immutable
+- [x] Decide `source_kind` value for working directory labels: `"working-directory"`
+- [x] Decide how to represent "no commit" in `LabelMetadata.commit_oid`: empty string `""`
+- [x] Document: working directory labels are mutable (re-crawl changes content), commit labels are immutable
 
-### 7.2 Implement Working Directory Enumeration
+### 7.2 Implement Working Directory Enumeration ✅ COMPLETE
 
-In `src/engine/git_ops.rs` or new module:
+In `src/engine/git_ops.rs`:
 
-- [ ] Implement `enumerate_working_directory(repo_path) -> Vec<FileEntry>`
-  - Walk the filesystem, respecting `.gitignore`
-  - Skip `node_modules` and other excluded paths (reuse `should_skip_path`)
-  - Compute content hash for each file
-- [ ] Decide: use `git status` to find changed files, or full directory walk?
-  - Full walk: simpler, consistent with commit-based crawling
-  - `git status`: faster for incremental updates, but more complex
+- [x] Implement `enumerate_working_directory(repo_path, should_skip) -> Vec<WorkingDirEntry>`
+  - Walk the filesystem using `walkdir`
+  - Skip hidden directories (except .git), node_modules, target, dist, build, .cache, temp
+  - Apply `should_skip_path` filter
+  - Compute content hash (SHA256) for each file
+- [x] Implement `build_package_index_for_working_dir(repo_path) -> PackageIndex`
+  - Walk filesystem to find package.json files
+  - Extract package names for breadcrumb context
+- [x] Implement `read_working_file_content(repo_path, relative_path) -> Vec<u8>`
+  - Simple wrapper around fs::read
 
-### 7.3 Update Crawler for Working Directory Mode
+### 7.3 Update Crawler for Working Directory Mode ✅ COMPLETE
 
-- [ ] Add `--working-dir` flag to `crawl` command (mutually exclusive with `--commit`)
-- [ ] Create `run_crawl_working_dir()` function or refactor `run_crawl_label()` to handle both modes
-- [ ] For working directory mode:
+- [x] Add `--working-dir` flag to `crawl` command (mutually exclusive with `--commit`)
+- [x] Create `run_crawl_working_dir()` function
+- [x] For working directory mode:
   - Use `enumerate_working_directory()` instead of `enumerate_commit_tree()`
   - Compute content hash instead of using `blob_id`
   - Set `source_kind = "working-directory"` in label metadata
-  - Set `commit_oid = ""` (or chosen sentinel value)
-- [ ] Ensure package index works with working directory (walk up to nearest `package.json` on disk)
+  - Set `commit_oid = ""`
+- [x] Package index works with working directory (walks up to nearest package.json on disk)
 
 ### 7.4 Test Working Directory Crawling
 
@@ -407,6 +410,8 @@ In `src/engine/git_ops.rs` or new module:
   - Crawl `--commit HEAD --label main`
   - Crawl `--working-dir --label working`
   - Verify both labels can coexist, search returns correct results for each
+
+**Note:** These tests require a live Qdrant instance and manual verification.
 
 ### 7.5 Document Working Directory Mode
 

@@ -260,7 +260,7 @@ fn chunk_by_lines(
         let mut size = 0;
 
         // Build chunk up to max_chars
-        while end < lines.len() && size + lines[end].len() + 1 <= max_chars {
+        while end < lines.len() && size + lines[end].len() < max_chars {
             size += lines[end].len() + 1;
             end += 1;
         }

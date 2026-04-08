@@ -48,7 +48,7 @@
 //! 3. Done - all chunks fit budget
 
 use super::util::compute_hash;
-use tree_sitter::{Node, Parser};
+use tree_sitter::{Language, Node, Parser};
 
 /// Target chunk size in characters (same as runtime chunker's target_size)
 pub const TARGET_CHARS: usize = 6000;
@@ -892,11 +892,11 @@ pub fn partition_typescript(
     let is_tsx = file_path.ends_with(".tsx");
     if is_tsx {
         parser
-            .set_language(&tree_sitter_typescript::language_tsx())
+            .set_language(&Language::from(tree_sitter_typescript::LANGUAGE_TSX))
             .expect("Failed to set TSX language");
     } else {
         parser
-            .set_language(&tree_sitter_typescript::language_typescript())
+            .set_language(&Language::from(tree_sitter_typescript::LANGUAGE_TYPESCRIPT))
             .expect("Failed to set TypeScript language");
     }
 
@@ -1242,7 +1242,7 @@ fn pair_has_complex_value(pair_node: Node) -> bool {
     // A pair has the structure: key : value
     // We want to check if the value part contains complex structure
     for i in 0..pair_node.child_count() {
-        if let Some(child) = pair_node.child(i) {
+        if let Some(child) = pair_node.child(i as u32) {
             match child.kind() {
                 // Direct complex value types
                 "arrow_function"
@@ -1271,7 +1271,7 @@ fn pair_has_complex_value(pair_node: Node) -> bool {
 /// Check if a node recursively contains complex structure
 fn node_contains_complex_structure(node: Node) -> bool {
     for i in 0..node.child_count() {
-        if let Some(child) = node.child(i) {
+        if let Some(child) = node.child(i as u32) {
             match child.kind() {
                 "arrow_function"
                 | "function_expression"
@@ -1847,7 +1847,7 @@ function* generator() {
 
         let mut parser = Parser::new();
         parser
-            .set_language(&tree_sitter_typescript::language_typescript())
+            .set_language(&Language::from(tree_sitter_typescript::LANGUAGE_TYPESCRIPT))
             .unwrap();
         let tree = parser.parse(source, None).unwrap();
 
@@ -1864,7 +1864,7 @@ function* generator() {
                 indent = indent
             );
             for i in 0..node.child_count() {
-                print_tree(node.child(i).unwrap(), indent + 2);
+                print_tree(node.child(i as u32).unwrap(), indent + 2);
             }
         }
 
@@ -1887,7 +1887,7 @@ export function* parseGitStatus() {
 
         let mut parser = Parser::new();
         parser
-            .set_language(&tree_sitter_typescript::language_typescript())
+            .set_language(&Language::from(tree_sitter_typescript::LANGUAGE_TYPESCRIPT))
             .unwrap();
         let tree = parser.parse(source, None).unwrap();
 
@@ -1904,7 +1904,7 @@ export function* parseGitStatus() {
                 indent = indent
             );
             for i in 0..node.child_count() {
-                print_tree(node.child(i).unwrap(), indent + 2);
+                print_tree(node.child(i as u32).unwrap(), indent + 2);
             }
         }
 

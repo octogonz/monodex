@@ -9,6 +9,31 @@ use serde::{Deserialize, Serialize};
 
 const DEFAULT_QDRANT_URL: &str = "http://localhost:6333";
 
+/// Custom deserializer for active_label_ids that handles both formats:
+/// - Normal array: `["label1", "label2"]`
+/// - Qdrant values wrapper: `{"values": ["label1", "label2"]}`
+fn deserialize_label_ids<'de, D>(deserializer: D) -> Result<Vec<String>, D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    #[derive(Deserialize)]
+    #[serde(untagged)]
+    enum LabelIdsFormat {
+        Array(Vec<String>),
+        Values { values: Vec<String> },
+    }
+    
+    match LabelIdsFormat::deserialize(deserializer) {
+        Ok(LabelIdsFormat::Array(arr)) => Ok(arr),
+        Ok(LabelIdsFormat::Values { values }) => Ok(values),
+        Err(_) => {
+            // If deserialization fails, return empty vec (field may be missing)
+            // This matches the #[serde(default)] behavior
+            Ok(Vec::new())
+        }
+    }
+}
+
 /// Qdrant filter for queries
 #[derive(Debug, Serialize)]
 struct Filter {
@@ -62,7 +87,7 @@ pub struct PointPayload {
     // Label membership
     pub catalog: String,
     pub label_id: String,             // Transitional: the initiating label. Prefer active_label_ids.
-    #[serde(default)]
+    #[serde(default, deserialize_with = "deserialize_label_ids")]
     pub active_label_ids: Vec<String>, // All labels this chunk belongs to (authoritative)
 
     // Implementation identity
@@ -909,22 +934,23 @@ impl QdrantUploader {
     /// 
     /// This is more efficient than calling add_label_to_chunk for each chunk.
     pub fn add_label_to_file_chunks(&self, file_id: &str, label_id: &str) -> Result<()> {
-        // First, get all chunk point IDs for this file
-        let mut point_ids: Vec<String> = Vec::new();
+        // Get all chunks for this file with their current labels
+        // We need to read-modify-write to properly append the label
+        let mut chunks_to_update: Vec<(String, Vec<String>)> = Vec::new();
         let mut offset: Option<QdrantId> = None;
         const LIMIT: u32 = 100;
 
         loop {
             #[derive(Debug, Serialize)]
-            struct ScrollForIds {
-                filter: FilterForIds,
+            struct ScrollForLabels {
+                filter: FilterForLabels,
                 with_payload: bool,
                 #[serde(skip_serializing_if = "Option::is_none")]
                 offset: Option<QdrantId>,
             }
 
             #[derive(Debug, Serialize)]
-            struct FilterForIds {
+            struct FilterForLabels {
                 must: Vec<serde_json::Value>,
             }
 
@@ -944,9 +970,9 @@ impl QdrantUploader {
                 self.url, self.collection, LIMIT
             );
 
-            let request_body = ScrollForIds {
-                filter: FilterForIds { must: must_values },
-                with_payload: false,
+            let request_body = ScrollForLabels {
+                filter: FilterForLabels { must: must_values },
+                with_payload: true,  // Need payload to get current labels
                 offset: offset.clone(),
             };
 
@@ -957,86 +983,55 @@ impl QdrantUploader {
             }
 
             #[derive(Debug, Deserialize)]
-            struct IdsResponse {
-                result: IdsResult,
+            struct LabelsResponse {
+                result: LabelsResult,
             }
 
             #[derive(Debug, Deserialize)]
-            struct IdsResult {
-                points: Vec<IdPoint>,
+            struct LabelsResult {
+                points: Vec<LabelPoint>,
                 #[serde(default)]
                 next_page_offset: Option<QdrantId>,
             }
 
             #[derive(Debug, Deserialize)]
-            struct IdPoint {
+            struct LabelPoint {
                 id: QdrantId,
+                payload: LabelPayload,
             }
 
-            let ids_response: IdsResponse = response.json()?;
+            #[derive(Debug, Deserialize)]
+            struct LabelPayload {
+                #[serde(default, deserialize_with = "deserialize_label_ids")]
+                active_label_ids: Vec<String>,
+            }
 
-            if ids_response.result.points.is_empty() {
+            let labels_response: LabelsResponse = response.json()?;
+
+            if labels_response.result.points.is_empty() {
                 break;
             }
 
-            for point in ids_response.result.points {
+            for point in labels_response.result.points {
                 let id_str = match point.id {
                     QdrantId::String(s) => s,
                     QdrantId::Integer(n) => n.to_string(),
                 };
-                point_ids.push(id_str);
+                chunks_to_update.push((id_str, point.payload.active_label_ids));
             }
 
-            offset = ids_response.result.next_page_offset;
+            offset = labels_response.result.next_page_offset;
             if offset.is_none() {
                 break;
             }
         }
 
-        // Now add the label to all chunks using set_payload with filter
-        // This is more efficient than individual updates
-        #[derive(Debug, Serialize)]
-        struct BulkPayloadUpdate {
-            payload: serde_json::Value,
-            filter: BulkFilter,
-        }
-
-        #[derive(Debug, Serialize)]
-        struct BulkFilter {
-            must: Vec<serde_json::Value>,
-        }
-
-        let endpoint = format!(
-            "{}/collections/{}/points/payload",
-            self.url, self.collection
-        );
-
-        let payload = serde_json::json!({
-            "active_label_ids": {
-                "values": [label_id]
+        // Now update each chunk, appending the new label if not already present
+        for (point_id, mut current_labels) in chunks_to_update {
+            if !current_labels.contains(&label_id.to_string()) {
+                current_labels.push(label_id.to_string());
             }
-        });
-
-        let filter_must = vec![
-            serde_json::json!({
-                "key": "file_id",
-                "match": { "value": file_id }
-            }),
-            serde_json::json!({
-                "key": "source_type",
-                "match": { "value": "code" }
-            }),
-        ];
-
-        let request_body = BulkPayloadUpdate {
-            payload,
-            filter: BulkFilter { must: filter_must },
-        };
-
-        let response = self.client.post(&endpoint).json(&request_body).send()?;
-
-        if !response.status().is_success() {
-            return Err(anyhow!("Failed to add label to file chunks: HTTP {}", response.status()));
+            self.set_active_labels(&point_id, &current_labels)?;
         }
 
         Ok(())

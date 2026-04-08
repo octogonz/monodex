@@ -9,9 +9,14 @@
 #![allow(dead_code)]
 
 /// Partition a Markdown file into chunks
-pub fn partition_markdown(source: &str, config: &super::partitioner::PartitionConfig, file_path: &str, catalog: &str) -> Vec<super::partitioner::PartitionedChunk> {
+pub fn partition_markdown(
+    source: &str,
+    config: &super::partitioner::PartitionConfig,
+    file_path: &str,
+    catalog: &str,
+) -> Vec<super::partitioner::PartitionedChunk> {
     use super::partitioner::PartitionedChunk;
-    use sha2::{Sha256, Digest};
+    use sha2::{Digest, Sha256};
 
     let lines: Vec<&str> = source.lines().collect();
     let mut chunks = Vec::new();
@@ -103,7 +108,7 @@ pub fn partition_markdown(source: &str, config: &super::partitioner::PartitionCo
         if section_text.len() > config.target_size {
             split_oversized_section(
                 section_lines,
-                start_idx + 1,  // 1-indexed
+                start_idx + 1, // 1-indexed
                 config,
                 &breadcrumb,
                 file_path,
@@ -118,7 +123,7 @@ pub fn partition_markdown(source: &str, config: &super::partitioner::PartitionCo
                 content_hash: content_hash.clone(),
                 breadcrumb,
                 text: section_text,
-                start_line: start_idx + 1,  // 1-indexed
+                start_line: start_idx + 1, // 1-indexed
                 end_line: end_idx,
                 chunk_type: "section".to_string(),
                 chunk_kind: "content".to_string(),
@@ -173,7 +178,7 @@ fn split_oversized_section(
             in_code_block = !in_code_block;
         }
 
-        let line_size = line.len() + 1;  // +1 for newline
+        let line_size = line.len() + 1; // +1 for newline
 
         // Check if we should split here
         let should_split = current_size + line_size > config.target_size
@@ -201,7 +206,16 @@ fn split_oversized_section(
 
     // If we only have one chunk and it's still oversized, split by lines
     if split_points.len() == 1 && lines.join("\n").len() > config.target_size {
-        split_by_lines_fallback(lines, start_line, config, breadcrumb, file_path, catalog, content_hash, chunks);
+        split_by_lines_fallback(
+            lines,
+            start_line,
+            config,
+            breadcrumb,
+            file_path,
+            catalog,
+            content_hash,
+            chunks,
+        );
         return;
     }
 
@@ -292,8 +306,8 @@ fn split_by_lines_fallback(
 
 #[cfg(test)]
 mod tests {
-    use crate::engine::partitioner::{PartitionConfig, PartitionedChunk};
     use super::partition_markdown;
+    use crate::engine::partitioner::{PartitionConfig, PartitionedChunk};
     use insta::assert_snapshot;
 
     fn format_chunks(chunks: &[PartitionedChunk]) -> String {

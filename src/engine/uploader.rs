@@ -1,9 +1,9 @@
 //! Qdrant client for batch uploading embeddings
-//! 
+//!
 //! This module handles HTTP communication with Qdrant to upload
 //! chunks with their embeddings for semantic search.
 
-use anyhow::{anyhow, Result};
+use anyhow::{Result, anyhow};
 use reqwest::blocking::Client;
 use serde::{Deserialize, Serialize};
 
@@ -22,7 +22,7 @@ where
         Array(Vec<String>),
         Values { values: Vec<String> },
     }
-    
+
     match LabelIdsFormat::deserialize(deserializer) {
         Ok(LabelIdsFormat::Array(arr)) => Ok(arr),
         Ok(LabelIdsFormat::Values { values }) => Ok(values),
@@ -73,7 +73,7 @@ struct UpsertRequest {
 /// A single point in Qdrant
 #[derive(Debug, Serialize)]
 struct Point {
-    id: String,  // Random UUID
+    id: String, // Random UUID
     vector: Vec<f32>,
     payload: PointPayload,
 }
@@ -82,32 +82,32 @@ struct Point {
 #[derive(Debug, Serialize, Deserialize)]
 pub struct PointPayload {
     pub text: String,
-    pub source_type: String,          // "code"
+    pub source_type: String, // "code"
 
     // Label membership
     pub catalog: String,
-    pub label_id: String,             // Transitional: the initiating label. Prefer active_label_ids.
+    pub label_id: String, // Transitional: the initiating label. Prefer active_label_ids.
     #[serde(default, deserialize_with = "deserialize_label_ids")]
     pub active_label_ids: Vec<String>, // All labels this chunk belongs to (authoritative)
 
     // Implementation identity
-    pub embedder_id: String,          // e.g., "jina-embeddings-v2-base-code:v1"
-    pub chunker_id: String,           // e.g., "typescript-partitioner:v1"
+    pub embedder_id: String, // e.g., "jina-embeddings-v2-base-code:v1"
+    pub chunker_id: String,  // e.g., "typescript-partitioner:v1"
 
     // Provenance
-    pub blob_id: String,              // Git blob SHA
-    pub content_hash: String,         // Hash of chunk text
+    pub blob_id: String,      // Git blob SHA
+    pub content_hash: String, // Hash of chunk text
 
     // File identity
-    pub file_id: String,              // Semantic file identity (for grouping chunks)
+    pub file_id: String, // Semantic file identity (for grouping chunks)
 
     // Path context (for retrieval without Git)
     pub relative_path: String,
     pub package_name: String,
-    pub source_uri: String,           // Useful for locating in Git/GitHub, but NOT a key
+    pub source_uri: String, // Useful for locating in Git/GitHub, but NOT a key
 
     // Chunk metadata
-    pub chunk_ordinal: usize,         // 1-indexed position in file
+    pub chunk_ordinal: usize, // 1-indexed position in file
     pub chunk_count: usize,
     pub start_line: usize,
     pub end_line: usize,
@@ -115,25 +115,25 @@ pub struct PointPayload {
     // Semantic context
     #[serde(skip_serializing_if = "Option::is_none")]
     pub symbol_name: Option<String>,
-    pub chunk_type: String,           // AST node type: function, class, method, etc.
-    pub chunk_kind: String,           // content, imports, changelog, config
+    pub chunk_type: String, // AST node type: function, class, method, etc.
+    pub chunk_kind: String, // content, imports, changelog, config
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub breadcrumb: Option<String>,   // Human-readable: package:File.ts:Symbol
+    pub breadcrumb: Option<String>, // Human-readable: package:File.ts:Symbol
 
     // Sentinel for incremental crawl
     #[serde(default)]
-    pub file_complete: bool,          // Only true on chunk_ordinal=1
+    pub file_complete: bool, // Only true on chunk_ordinal=1
 }
 
 /// Metadata for a label, stored as a special point in the collection
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct LabelMetadata {
-    pub source_type: String,          // "label-metadata"
+    pub source_type: String, // "label-metadata"
     pub catalog: String,
-    pub label_id: String,             // e.g., "rushstack:main"
-    pub label_name: String,           // e.g., "main"
-    pub commit_oid: String,           // Resolved commit SHA
-    pub source_kind: String,          // "git-commit"
+    pub label_id: String,    // e.g., "rushstack:main"
+    pub label_name: String,  // e.g., "main"
+    pub commit_oid: String,  // Resolved commit SHA
+    pub source_kind: String, // "git-commit"
     #[serde(default)]
     pub crawl_complete: bool,
     pub updated_at_unix_secs: u64,
@@ -191,7 +191,7 @@ pub enum QdrantId {
 
 impl std::ops::Shr<i32> for QdrantId {
     type Output = u64;
-    
+
     fn shr(self, rhs: i32) -> Self::Output {
         match self {
             QdrantId::Integer(n) => n >> rhs,
@@ -202,7 +202,7 @@ impl std::ops::Shr<i32> for QdrantId {
 
 impl std::ops::Shr<i32> for &QdrantId {
     type Output = u64;
-    
+
     fn shr(self, rhs: i32) -> Self::Output {
         match self {
             QdrantId::Integer(n) => *n >> rhs,
@@ -245,7 +245,7 @@ impl QdrantUploader {
     /// Creates a new Qdrant uploader
     pub fn new(collection: &str, qdrant_url: Option<&str>) -> Result<Self> {
         let url = qdrant_url.unwrap_or(DEFAULT_QDRANT_URL).to_string();
-        
+
         let client = Client::builder()
             .timeout(std::time::Duration::from_secs(60))
             .build()?;
@@ -264,19 +264,22 @@ impl QdrantUploader {
 
         let request_body = FilterRequest {
             filter: Filter {
-                must: vec![
-                    Condition {
-                        key: "catalog".to_string(),
-                        r#match: MatchValue { value: catalog.to_string() },
-                    }
-                ],
+                must: vec![Condition {
+                    key: "catalog".to_string(),
+                    r#match: MatchValue {
+                        value: catalog.to_string(),
+                    },
+                }],
             },
         };
 
         let response = self.client.post(&endpoint).json(&request_body).send()?;
 
         if !response.status().is_success() {
-            return Err(anyhow!("Failed to delete catalog: HTTP {}", response.status()));
+            return Err(anyhow!(
+                "Failed to delete catalog: HTTP {}",
+                response.status()
+            ));
         }
 
         let delete_response: DeleteResponse = response.json()?;
@@ -292,11 +295,15 @@ impl QdrantUploader {
                 must: vec![
                     Condition {
                         key: "catalog".to_string(),
-                        r#match: MatchValue { value: catalog.to_string() },
+                        r#match: MatchValue {
+                            value: catalog.to_string(),
+                        },
                     },
                     Condition {
                         key: "source_uri".to_string(),
-                        r#match: MatchValue { value: file_path.to_string() },
+                        r#match: MatchValue {
+                            value: file_path.to_string(),
+                        },
                     },
                 ],
             },
@@ -315,7 +322,10 @@ impl QdrantUploader {
     /// Get all points for a specific catalog
     /// Returns a map of file path → FileSyncInfo (content_hash and file_complete)
     /// Only queries chunk #1 per file for efficiency
-    pub fn get_catalog_files(&self, catalog: &str) -> Result<std::collections::HashMap<String, FileSyncInfo>> {
+    pub fn get_catalog_files(
+        &self,
+        catalog: &str,
+    ) -> Result<std::collections::HashMap<String, FileSyncInfo>> {
         let mut files = std::collections::HashMap::new();
         let mut offset: Option<QdrantId> = None;
         const LIMIT: u32 = 1000;
@@ -364,7 +374,10 @@ impl QdrantUploader {
             let response = self.client.post(&endpoint).json(&request_body).send()?;
 
             if !response.status().is_success() {
-                return Err(anyhow!("Failed to scroll catalog: HTTP {}", response.status()));
+                return Err(anyhow!(
+                    "Failed to scroll catalog: HTTP {}",
+                    response.status()
+                ));
             }
 
             let response_text = response.text()?;
@@ -372,7 +385,10 @@ impl QdrantUploader {
                 Ok(r) => r,
                 Err(e) => {
                     eprintln!("Failed to deserialize Qdrant response: {}", e);
-                    eprintln!("Raw response (first 2000 chars): {}", &response_text.chars().take(2000).collect::<String>());
+                    eprintln!(
+                        "Raw response (first 2000 chars): {}",
+                        &response_text.chars().take(2000).collect::<String>()
+                    );
                     return Err(anyhow!("Deserialization error: {}", e));
                 }
             };
@@ -402,7 +418,7 @@ impl QdrantUploader {
 
     /// Uploads a batch of chunks with their embeddings
     /// Uploads a batch of chunks with their embeddings
-    /// 
+    ///
     /// Uses the chunk's point_id() for deterministic IDs, enabling
     /// upsert-by-ID semantics for label membership updates.
     pub fn upload_batch(&self, chunks: &[(crate::engine::Chunk, Vec<f32>)]) -> Result<u64> {
@@ -414,7 +430,7 @@ impl QdrantUploader {
             .iter()
             .map(|(chunk, embedding)| {
                 Point {
-                    id: chunk.point_id(),  // Deterministic ID based on file_id + chunk_ordinal
+                    id: chunk.point_id(), // Deterministic ID based on file_id + chunk_ordinal
                     vector: embedding.clone(),
                     payload: PointPayload {
                         text: chunk.text.clone(),
@@ -463,7 +479,7 @@ impl QdrantUploader {
         let request_body = UpsertRequest { points };
 
         let endpoint = format!("{}/collections/{}/points", self.url, self.collection);
-        
+
         let response = self
             .client
             .put(&endpoint)
@@ -472,14 +488,17 @@ impl QdrantUploader {
             .json::<UpsertResponse>()?;
 
         if response.status != "ok" {
-            return Err(anyhow!("Qdrant upsert failed with status: {}", response.status));
+            return Err(anyhow!(
+                "Qdrant upsert failed with status: {}",
+                response.status
+            ));
         }
 
         Ok(response.result.operation_id)
     }
 
     /// Mark a file as complete by setting file_complete=true on chunk #1
-    /// 
+    ///
     /// This is called after all chunks for a file have been uploaded.
     /// Uses Qdrant's payload update API to set the field without rewriting the point.
     pub fn mark_file_complete(&self, file_id: &str) -> Result<()> {
@@ -525,7 +544,11 @@ impl QdrantUploader {
         let response = self.client.post(&endpoint).json(&request_body).send()?;
 
         if !response.status().is_success() {
-            return Err(anyhow!("Failed to find chunk #1 for file {}: HTTP {}", file_id, response.status()));
+            return Err(anyhow!(
+                "Failed to find chunk #1 for file {}: HTTP {}",
+                file_id,
+                response.status()
+            ));
         }
 
         #[derive(Debug, Deserialize)]
@@ -580,14 +603,23 @@ impl QdrantUploader {
         let response = self.client.post(&endpoint).json(&request_body).send()?;
 
         if !response.status().is_success() {
-            return Err(anyhow!("Failed to set file_complete for {}: HTTP {}", file_id, response.status()));
+            return Err(anyhow!(
+                "Failed to set file_complete for {}: HTTP {}",
+                file_id,
+                response.status()
+            ));
         }
 
         Ok(())
     }
 
     /// Queries the collection with an embedding
-    pub fn query(&self, embedding: &[f32], limit: usize, catalog: Option<&str>) -> Result<Vec<SearchResult>> {
+    pub fn query(
+        &self,
+        embedding: &[f32],
+        limit: usize,
+        catalog: Option<&str>,
+    ) -> Result<Vec<SearchResult>> {
         #[derive(Debug, Serialize)]
         struct SearchRequest {
             vector: Vec<f32>,
@@ -599,7 +631,9 @@ impl QdrantUploader {
         let filter = catalog.map(|cat| Filter {
             must: vec![Condition {
                 key: "catalog".to_string(),
-                r#match: MatchValue { value: cat.to_string() },
+                r#match: MatchValue {
+                    value: cat.to_string(),
+                },
             }],
         });
 
@@ -611,7 +645,7 @@ impl QdrantUploader {
         };
 
         let endpoint = format!("{}/collections/{}/points/search", self.url, self.collection);
-        
+
         let response = self
             .client
             .post(&endpoint)
@@ -637,13 +671,9 @@ impl QdrantUploader {
         };
 
         let endpoint = format!("{}/collections/{}/points", self.url, self.collection);
-        
-        let response = self
-            .client
-            .post(&endpoint)
-            .json(&request_body)
-            .send()?;
-        
+
+        let response = self.client.post(&endpoint).json(&request_body).send()?;
+
         if !response.status().is_success() {
             return Ok(None);
         }
@@ -658,11 +688,11 @@ impl QdrantUploader {
     }
 
     /// Get chunks by file_id with optional selector (Phase 7+)
-    /// 
+    ///
     /// # Arguments
     /// * `file_id` - 16-char hex file ID
     /// * `selector` - Which chunks to retrieve
-    /// 
+    ///
     /// # Returns
     /// Vector of points sorted by chunk_ordinal, or error
     pub fn get_chunks_by_file_id(&self, file_id: &str) -> Result<Vec<PointResult>> {
@@ -681,12 +711,10 @@ impl QdrantUploader {
         }
 
         // Build file_id condition
-        let must_values = vec![
-            serde_json::json!({
-                "key": "file_id",
-                "match": { "value": file_id }
-            })
-        ];
+        let must_values = vec![serde_json::json!({
+            "key": "file_id",
+            "match": { "value": file_id }
+        })];
 
         let mut results: Vec<PointResult> = Vec::new();
         let mut offset: Option<QdrantId> = None;
@@ -699,7 +727,9 @@ impl QdrantUploader {
             );
 
             let request_body = ScrollRequestWithRange {
-                filter: FilterWithRange { must: must_values.clone() },
+                filter: FilterWithRange {
+                    must: must_values.clone(),
+                },
                 with_payload: true,
                 offset: offset.clone(),
             };
@@ -707,7 +737,10 @@ impl QdrantUploader {
             let response = self.client.post(&endpoint).json(&request_body).send()?;
 
             if !response.status().is_success() {
-                return Err(anyhow!("Failed to scroll file chunks: HTTP {}", response.status()));
+                return Err(anyhow!(
+                    "Failed to scroll file chunks: HTTP {}",
+                    response.status()
+                ));
             }
 
             let response_text = response.text()?;
@@ -746,7 +779,7 @@ impl QdrantUploader {
     // ========================================
 
     /// Upsert label metadata point
-    /// 
+    ///
     /// Creates or updates a metadata point for a label. The label_id is used
     /// directly as the point ID for easy lookup.
     pub fn upsert_label_metadata(&self, metadata: &LabelMetadata) -> Result<()> {
@@ -776,12 +809,17 @@ impl QdrantUploader {
             points: Vec<LabelPoint>,
         }
 
-        let request_body = UpsertLabelRequest { points: vec![point] };
+        let request_body = UpsertLabelRequest {
+            points: vec![point],
+        };
 
         let response = self.client.put(&endpoint).json(&request_body).send()?;
 
         if !response.status().is_success() {
-            return Err(anyhow!("Failed to upsert label metadata: HTTP {}", response.status()));
+            return Err(anyhow!(
+                "Failed to upsert label metadata: HTTP {}",
+                response.status()
+            ));
         }
 
         Ok(())
@@ -816,7 +854,7 @@ impl QdrantUploader {
     }
 
     /// Get sentinel (chunk 1) for a file to check if already indexed
-    /// 
+    ///
     /// Returns FileSyncInfo if the sentinel exists and is complete.
     pub fn get_file_sentinel(&self, file_id: &str) -> Result<Option<FileSyncInfo>> {
         // Query for chunk_ordinal=1 with the given file_id
@@ -861,7 +899,10 @@ impl QdrantUploader {
         let response = self.client.post(&endpoint).json(&request_body).send()?;
 
         if !response.status().is_success() {
-            return Err(anyhow!("Failed to query sentinel: HTTP {}", response.status()));
+            return Err(anyhow!(
+                "Failed to query sentinel: HTTP {}",
+                response.status()
+            ));
         }
 
         #[derive(Debug, Deserialize)]
@@ -934,14 +975,17 @@ impl QdrantUploader {
 
             let request_body = ScrollForLabels {
                 filter: FilterForLabels { must: must_values },
-                with_payload: true,  // Need payload to get current labels
+                with_payload: true, // Need payload to get current labels
                 offset: offset.clone(),
             };
 
             let response = self.client.post(&endpoint).json(&request_body).send()?;
 
             if !response.status().is_success() {
-                return Err(anyhow!("Failed to scroll file chunks: HTTP {}", response.status()));
+                return Err(anyhow!(
+                    "Failed to scroll file chunks: HTTP {}",
+                    response.status()
+                ));
             }
 
             #[derive(Debug, Deserialize)]
@@ -1000,14 +1044,14 @@ impl QdrantUploader {
     }
 
     /// Remove a label from chunks where it's in active_label_ids
-    /// 
+    ///
     /// This scans all chunks with the label and removes the label from active_label_ids.
     /// If active_label_ids becomes empty, the chunk is deleted.
-    /// 
+    ///
     /// # Arguments
     /// * `label_id` - The label to remove
     /// * `exclude_file_ids` - File IDs to skip (files that were touched in the current crawl)
-    /// 
+    ///
     /// # Returns
     /// Number of chunks processed
     pub fn remove_label_from_chunks(
@@ -1059,7 +1103,10 @@ impl QdrantUploader {
             let response = self.client.post(&endpoint).json(&request_body).send()?;
 
             if !response.status().is_success() {
-                return Err(anyhow!("Failed to scroll chunks with label: HTTP {}", response.status()));
+                return Err(anyhow!(
+                    "Failed to scroll chunks with label: HTTP {}",
+                    response.status()
+                ));
             }
 
             let response_text = response.text()?;
@@ -1113,10 +1160,7 @@ impl QdrantUploader {
 
     /// Delete a single point by ID
     fn delete_point(&self, point_id: &str) -> Result<()> {
-        let endpoint = format!(
-            "{}/collections/{}/points/delete",
-            self.url, self.collection
-        );
+        let endpoint = format!("{}/collections/{}/points/delete", self.url, self.collection);
 
         #[derive(Debug, Serialize)]
         struct DeletePointRequest {
@@ -1130,7 +1174,10 @@ impl QdrantUploader {
         let response = self.client.post(&endpoint).json(&request_body).send()?;
 
         if !response.status().is_success() {
-            return Err(anyhow!("Failed to delete point: HTTP {}", response.status()));
+            return Err(anyhow!(
+                "Failed to delete point: HTTP {}",
+                response.status()
+            ));
         }
 
         Ok(())
@@ -1161,14 +1208,17 @@ impl QdrantUploader {
         let response = self.client.post(&endpoint).json(&request_body).send()?;
 
         if !response.status().is_success() {
-            return Err(anyhow!("Failed to set active labels: HTTP {}", response.status()));
+            return Err(anyhow!(
+                "Failed to set active labels: HTTP {}",
+                response.status()
+            ));
         }
 
         Ok(())
     }
 
     /// Search with label filtering
-    /// 
+    ///
     /// Filters by catalog, label (via active_label_ids), and source_type.
     pub fn search_with_label(
         &self,
@@ -1212,15 +1262,15 @@ impl QdrantUploader {
             filter: LabelSearchFilter { must: must_values },
         };
 
-        let endpoint = format!(
-            "{}/collections/{}/points/search",
-            self.url, self.collection
-        );
+        let endpoint = format!("{}/collections/{}/points/search", self.url, self.collection);
 
         let response = self.client.post(&endpoint).json(&request_body).send()?;
 
         if !response.status().is_success() {
-            return Err(anyhow!("Failed to search with label: HTTP {}", response.status()));
+            return Err(anyhow!(
+                "Failed to search with label: HTTP {}",
+                response.status()
+            ));
         }
 
         let search_response: SearchResponse = response.json()?;
@@ -1228,7 +1278,7 @@ impl QdrantUploader {
     }
 
     /// Get chunks by file_id filtered by active_label_ids
-    /// 
+    ///
     /// Returns chunks that belong to the specified label, sorted by chunk_ordinal.
     pub fn get_chunks_by_file_id_with_label(
         &self,
@@ -1274,7 +1324,9 @@ impl QdrantUploader {
             );
 
             let request_body = ScrollWithLabelFilter {
-                filter: LabelFilterCondition { must: must_values.clone() },
+                filter: LabelFilterCondition {
+                    must: must_values.clone(),
+                },
                 with_payload: true,
                 offset: offset.clone(),
             };
@@ -1282,7 +1334,10 @@ impl QdrantUploader {
             let response = self.client.post(&endpoint).json(&request_body).send()?;
 
             if !response.status().is_success() {
-                return Err(anyhow!("Failed to scroll file chunks: HTTP {}", response.status()));
+                return Err(anyhow!(
+                    "Failed to scroll file chunks: HTTP {}",
+                    response.status()
+                ));
             }
 
             let response_text = response.text()?;

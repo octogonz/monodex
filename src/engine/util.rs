@@ -1,6 +1,6 @@
 //! Shared utility functions
 
-use sha2::{Sha256, Digest};
+use sha2::{Digest, Sha256};
 use std::hash::{Hash, Hasher};
 use twox_hash::XxHash64;
 
@@ -57,14 +57,15 @@ pub fn string_to_uuid(input: &str) -> String {
     let mut hasher = XxHash64::with_seed(0);
     input.hash(&mut hasher);
     let hash1 = hasher.finish();
-    
+
     // Hash again with different seed for second half
     let mut hasher2 = XxHash64::with_seed(1);
     input.hash(&mut hasher2);
     let hash2 = hasher2.finish();
-    
+
     // Format as UUID: 8-4-4-4-12 (32 hex chars total)
-    format!("{:08x}-{:04x}-{:04x}-{:04x}-{:012x}",
+    format!(
+        "{:08x}-{:04x}-{:04x}-{:04x}-{:012x}",
         (hash1 >> 32) as u32,
         (hash1 >> 16) as u16 & 0xFFFF,
         hash1 as u16,
@@ -108,13 +109,13 @@ mod tests {
             EMBEDDER_ID,
             CHUNKER_ID,
             "abc123",
-            "libraries/foo/src/index.ts"
+            "libraries/foo/src/index.ts",
         );
         let id2 = compute_file_id(
             EMBEDDER_ID,
             CHUNKER_ID,
             "abc123",
-            "libraries/foo/src/index.ts"
+            "libraries/foo/src/index.ts",
         );
         assert_eq!(id1, id2);
     }
@@ -125,13 +126,13 @@ mod tests {
             EMBEDDER_ID,
             CHUNKER_ID,
             "abc123",
-            "libraries/foo/src/index.ts"
+            "libraries/foo/src/index.ts",
         );
         let id2 = compute_file_id(
             EMBEDDER_ID,
             CHUNKER_ID,
             "abc123",
-            "libraries/bar/src/index.ts"
+            "libraries/bar/src/index.ts",
         );
         assert_ne!(id1, id2);
     }
@@ -142,31 +143,26 @@ mod tests {
             EMBEDDER_ID,
             CHUNKER_ID,
             "abc123",
-            "libraries/foo/src/index.ts"
+            "libraries/foo/src/index.ts",
         );
         let id2 = compute_file_id(
             EMBEDDER_ID,
             CHUNKER_ID,
             "def456",
-            "libraries/foo/src/index.ts"
+            "libraries/foo/src/index.ts",
         );
         assert_ne!(id1, id2);
     }
 
     #[test]
     fn test_point_id_deterministic() {
-        let file_id = compute_file_id(
-            EMBEDDER_ID,
-            CHUNKER_ID,
-            "abc123",
-            "test.ts"
-        );
+        let file_id = compute_file_id(EMBEDDER_ID, CHUNKER_ID, "abc123", "test.ts");
         let point_id_1 = compute_point_id(&file_id, 1);
         let point_id_2 = compute_point_id(&file_id, 2);
-        
+
         // Different ordinals should produce different IDs
         assert_ne!(point_id_1, point_id_2);
-        
+
         // Same inputs should produce same output
         assert_eq!(point_id_1, compute_point_id(&file_id, 1));
     }

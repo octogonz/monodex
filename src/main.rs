@@ -61,10 +61,12 @@ struct Cli {
 enum Commands {
     /// Set default catalog and label for subsequent commands
     Use {
-        /// Catalog name
-        catalog: String,
+        /// Catalog name (optional - shows current context if omitted)
+        #[arg(long)]
+        catalog: Option<String>,
 
-        /// Label name (optional - will prompt if not provided)
+        /// Label name (optional - shows current context if omitted)
+        #[arg(long)]
         label: Option<String>,
     },
 
@@ -318,7 +320,7 @@ fn main() -> anyhow::Result<()> {
 
     match cli.command {
         Commands::Use { catalog, label } => {
-            run_use(&catalog, label)?;
+            run_use(catalog.as_deref(), label)?;
         }
         Commands::Crawl { catalog, label, commit, incremental_warnings } => {
             run_crawl_label(&config, &catalog, &label, &commit, incremental_warnings)?;
@@ -355,24 +357,42 @@ fn load_config(path: &PathBuf) -> anyhow::Result<Config> {
 }
 
 /// Run the `use` command to set default context
-fn run_use(catalog: &str, label: Option<String>) -> anyhow::Result<()> {
-    let label_name = match label {
-        Some(l) => l,
-        None => {
-            // In interactive mode, we'd prompt, but for now require the argument
+fn run_use(catalog: Option<&str>, label: Option<String>) -> anyhow::Result<()> {
+    match (catalog, label) {
+        (None, None) => {
+            // Show current context
+            match load_default_context() {
+                Some(ctx) => {
+                    println!("Current context:");
+                    println!("  Catalog: {}", ctx.catalog);
+                    println!("  Label: {}", ctx.label);
+                    println!("  Label ID: {}:{}", ctx.catalog, ctx.label);
+                }
+                None => {
+                    println!("No default context set.");
+                    println!();
+                    println!("Usage:");
+                    println!("  monodex use --catalog <name> --label <name>");
+                }
+            }
+        }
+        (Some(catalog_name), Some(label_name)) => {
+            // Set new context
+            save_default_context(catalog_name, &label_name)?;
+            
+            let label_id = compute_label_id(catalog_name, &label_name);
+            println!("✓ Default context set to {}:{}", catalog_name, label_name);
+            println!("  Label ID: {}", label_id);
+            println!();
+            println!("Commands will now use this context when --label is not specified.");
+        }
+        (Some(_), None) | (None, Some(_)) => {
+            // Partial specification - error
             return Err(anyhow::anyhow!(
-                "Label name required. Usage: monodex use <catalog> <label>"
+                "Both --catalog and --label are required to set context.\n\n                Usage:\n  monodex use --catalog <name> --label <name>\n\n                Or run 'monodex use' without arguments to see current context."
             ));
         }
-    };
-    
-    save_default_context(catalog, &label_name)?;
-    
-    let label_id = compute_label_id(catalog, &label_name);
-    println!("✓ Default context set to {}:{}", catalog, label_name);
-    println!("  Label ID: {}", label_id);
-    println!();
-    println!("Commands will now use this context when --label is not specified.");
+    }
     
     Ok(())
 }

@@ -136,14 +136,16 @@ A **label** is a named, queryable fileset within a catalog. Labels typically rep
 
 ### Set Default Context
 
+The `use` command manages the default catalog and label for subsequent commands:
+
 ```bash
-# Set default catalog and label for subsequent commands
-monodex use rushstack main
+# Show current context
+monodex use
 
-# Set catalog only (will prompt for label)
-monodex use rushstack
+# Set default catalog and label
+monodex use --catalog sparo --label main
 
-# Now you can omit --catalog and --label flags
+# Now you can omit --label in subsequent commands
 monodex search --text "how to read JSON files"
 ```
 

@@ -8,6 +8,9 @@
 
 # Rush Monodex
 
+[![crates.io](https://img.shields.io/crates/v/monodex.svg)](https://crates.io/crates/monodex)
+[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
+
 **Semantic search indexer for Rush monorepos using Qdrant vector database**
 
 ## Overview
@@ -63,7 +66,12 @@ This tool is designed for AI assistants. The indexed database provides a complet
 ## Installation
 
 ```bash
+# From crates.io
+cargo install monodex
+
 # Build from source
+git clone https://github.com/microsoft/monodex.git
+cd monodex
 cargo build --release
 
 # Binary will be at ./target/release/monodex
@@ -162,11 +170,16 @@ monodex crawl --catalog rushstack --label feature-x --commit feature-branch
 
 # Index a specific commit SHA
 monodex crawl --catalog rushstack --label v1.0.0 --commit a1b2c3d4e5f6
+
+# Index uncommitted changes from the working directory
+monodex crawl --catalog rushstack --label working --working-dir
 ```
 
 **Incremental sync:** The crawl is incremental — unchanged files are skipped. You can safely CTRL+C and resume later.
 
 **Commit-based:** Crawling reads from Git objects, not the working tree. Uncommitted changes are ignored. This ensures deterministic, reproducible indexing.
+
+**Working directory mode:** Use `--working-dir` to index uncommitted changes. This reads directly from the filesystem instead of Git objects. The label metadata will show `source_kind = "working-directory"` and `commit_oid = ""`. Working directory labels are mutable — re-crawling updates the indexed content.
 
 **Label reassignment:** When you re-crawl a label with a new commit, chunks from the old commit that no longer exist are removed from that label's membership.
 
@@ -339,6 +352,10 @@ cargo test
 # Run with logging (use sparo for testing, not rushstack)
 RUST_LOG=debug ./target/release/monodex crawl --catalog sparo --label main
 ```
+
+## Status
+
+This project is under active development. The crate is published to reserve the name. Expect breaking changes between versions.
 
 ## License
 

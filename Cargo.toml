@@ -1,7 +1,21 @@
 [package]
 name = "monodex"
-version = "0.1.0"
+version = "0.0.1"
 edition = "2024"
+description = "Semantic search indexer for Rush monorepos using Qdrant vector database"
+license = "MIT"
+repository = "https://github.com/microsoft/monodex"
+keywords = ["semantic-search", "qdrant", "monorepo", "embeddings", "code-search"]
+categories = ["command-line-utilities", "development-tools"]
+readme = "README.md"
+exclude = [
+    "test_artifacts/*",
+    "scripts/*",
+    "*.log",
+    "crawl.log",
+    "monodex.log",
+    "temp.log",
+]
 
 [dependencies]
 # ML/Embeddings

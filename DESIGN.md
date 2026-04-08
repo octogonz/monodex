@@ -616,6 +616,72 @@ monodex gc --catalog rushstack
 
 ---
 
+## Working Directory Crawling
+
+### Overview
+
+Working directory crawling indexes uncommitted changes from the filesystem rather than Git objects. This is useful for:
+
+- Indexing work-in-progress before committing
+- Comparing uncommitted changes with committed code
+- AI assistants that need to understand the current state of the codebase
+
+### Identity Model
+
+Working directory files use a different identity model than commit-based files:
+
+| Property | Commit-Based | Working Directory |
+|----------|-------------|-------------------|
+| `blob_id` | Git blob SHA | `sha256:<hash>` (content hash) |
+| `commit_oid` | Resolved commit SHA | `""` (empty string) |
+| `source_kind` | `"git-commit"` | `"working-directory"` |
+
+**Key insight:** The `file_id` is computed from `(embedder_id, chunker_id, blob_id, relative_path)`. For working directory files, the "blob_id" is actually a content hash. This means:
+
+- Same content at same path → same `file_id` (can share chunks)
+- Different content at same path → different `file_id` (new chunks)
+- Same content at different path → different `file_id` (breadcrumb context matters)
+
+### Label Metadata
+
+```rust
+LabelMetadata {
+    source_kind: "working-directory".to_string(),
+    commit_oid: "".to_string(),  // No commit
+    crawl_complete: true,
+    // ... other fields
+}
+```
+
+### Mutability
+
+Working directory labels are **mutable**:
+
+- Re-crawling updates indexed content based on current filesystem state
+- Content hash changes trigger new chunks
+- Label reassignment removes stale chunks
+
+Commit-based labels are **immutable** (for a given commit):
+
+- Re-crawling the same commit is idempotent
+- Same commit always produces same chunks
+
+### Usage
+
+```bash
+# Index working directory
+monodex crawl --catalog rushstack --label working --working-dir
+
+# Search working directory content
+monodex search --text "uncommitted feature" --label rushstack:working
+
+# Compare with committed code
+monodex search --text "same query" --label rushstack:main
+monodex search --text "same query" --label rushstack:working
+```
+
+---
+
 ## Future Work
 
 ### Non-Git Catalog Types
@@ -623,22 +689,6 @@ monodex gc --catalog rushstack
 - GitHub Issues
 - Zulip Discussions
 - Meeting Notes
-
-### Working Directory Labels
-
-A label can point at live filesystem state instead of a commit:
-
-```bash
-monodex crawl --catalog rushstack --label working --working-dir
-```
-
-**Semantics:**
-- Reads from working tree, not Git objects
-- Useful for indexing uncommitted changes
-- Not deterministic (depends on local state)
-- Different identity model (no `blob_id`, no `commit_oid`)
-
-This is a separate crawl mode from commit-based indexing, deferred to a later phase.
 
 ### SQLite for Operational State
 

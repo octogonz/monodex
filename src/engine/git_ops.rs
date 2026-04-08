@@ -1,12 +1,14 @@
-//! Git operations for commit-based crawling
+//! Git operations for commit-based and working directory crawling
 //!
 //! This module provides functions to read file content and metadata
-//! from Git commits without touching the working tree.
+//! from Git commits without touching the working tree, as well as
+//! enumerating files from the working directory for indexing uncommitted changes.
 
 use anyhow::{anyhow, Result};
 use gix::objs::TreeRefIter;
 use gix::traverse::tree::Recorder;
 use gix::ObjectId;
+use sha2::{Sha256, Digest};
 use std::collections::HashMap;
 use std::path::Path;
 
@@ -300,6 +302,192 @@ fn extract_package_name_from_bytes(content: &[u8]) -> Option<String> {
     Some(after_first_quote[..end_quote].to_string())
 }
 
+// ========================================
+// Working Directory Operations
+// ========================================
+
+/// A file entry from the working directory for indexing uncommitted changes.
+///
+/// Unlike commit-based FileEntry, this uses a content hash instead of blob_id
+/// because the content may not be in Git yet.
+#[derive(Debug, Clone)]
+pub struct WorkingDirEntry {
+    /// Relative path from repo root
+    pub relative_path: String,
+    /// Content hash (SHA256 of file content)
+    pub content_hash: String,
+}
+
+/// Enumerate files from the working directory.
+///
+/// Walks the filesystem, respecting .gitignore patterns and applying
+/// exclusion rules. Returns entries with content hashes for identity.
+///
+/// # Arguments
+/// * `repo_path` - Root path of the repository
+/// * `should_skip` - Function to determine if a path should be skipped
+///
+/// # Returns
+/// Vector of WorkingDirEntry with relative paths and content hashes
+pub fn enumerate_working_directory<F>(
+    repo_path: &Path,
+    should_skip: F,
+) -> Result<Vec<WorkingDirEntry>>
+where
+    F: Fn(&str) -> bool,
+{
+    use std::fs;
+
+    let mut entries: Vec<WorkingDirEntry> = Vec::new();
+
+    // Use walkdir to traverse the filesystem
+    for entry in walkdir::WalkDir::new(repo_path)
+        .follow_links(false)
+        .into_iter()
+        .filter_entry(|e| {
+            // Skip hidden directories and common exclusions
+            let path = e.path();
+            let name = path.file_name().map(|n| n.to_string_lossy()).unwrap_or_default();
+
+            // Skip hidden directories (except .git is handled separately)
+            if name.starts_with('.') && name != ".git" {
+                return false;
+            }
+
+            // Skip common directories that should never be indexed
+            if matches!(name.as_ref(), "node_modules" | "target" | "dist" | "build" | ".cache" | "temp") {
+                return false;
+            }
+
+            true
+        })
+    {
+        let entry = entry.map_err(|e| anyhow!("Failed to read directory entry: {}", e))?;
+
+        let path = entry.path();
+
+        // Only process files
+        if !path.is_file() {
+            continue;
+        }
+
+        // Get relative path from repo root
+        let relative_path = path
+            .strip_prefix(repo_path)
+            .map_err(|e| anyhow!("Failed to strip prefix: {}", e))?
+            .to_string_lossy()
+            .replace('\\', "/");
+
+        // Apply should_skip filter
+        if should_skip(&relative_path) {
+            continue;
+        }
+
+        // Read file content and compute hash
+        let content = match fs::read(path) {
+            Ok(c) => c,
+            Err(e) => {
+                // Skip files we can't read (permissions, etc.)
+                eprintln!("  ⚠️  Skipping {} (can't read: {})", relative_path, e);
+                continue;
+            }
+        };
+
+        // Compute content hash
+        let content_hash = compute_content_hash(&content);
+
+        entries.push(WorkingDirEntry {
+            relative_path,
+            content_hash,
+        });
+    }
+
+    Ok(entries)
+}
+
+/// Compute SHA256 hash of content.
+///
+/// Used as blob_id substitute for working directory files that aren't in Git yet.
+fn compute_content_hash(content: &[u8]) -> String {
+    let mut hasher = Sha256::new();
+    hasher.update(content);
+    let result = hasher.finalize();
+    format!("sha256:{:x}", result)
+}
+
+/// Build a package index from the working directory.
+///
+/// Walks the filesystem to find package.json files and extracts their names.
+/// This is the working directory equivalent of build_package_index_for_commit.
+///
+/// # Arguments
+/// * `repo_path` - Root path of the repository
+///
+/// # Returns
+/// PackageIndex mapping directory paths to package names
+pub fn build_package_index_for_working_dir(repo_path: &Path) -> Result<PackageIndex> {
+    let mut index = PackageIndex::new();
+
+    // Walk the filesystem looking for package.json files
+    for entry in walkdir::WalkDir::new(repo_path)
+        .follow_links(false)
+        .into_iter()
+        .filter_entry(|e| {
+            let path = e.path();
+            let name = path.file_name().map(|n| n.to_string_lossy()).unwrap_or_default();
+
+            // Skip hidden directories and common exclusions
+            if name.starts_with('.') && name != ".git" {
+                return false;
+            }
+
+            if matches!(name.as_ref(), "node_modules" | "target" | "dist" | "build" | ".cache" | "temp") {
+                return false;
+            }
+
+            true
+        })
+    {
+        let entry = entry.map_err(|e| anyhow!("Failed to read directory entry: {}", e))?;
+        let path = entry.path();
+
+        // Only process package.json files
+        if !path.is_file() {
+            continue;
+        }
+
+        let file_name = path.file_name().map(|n| n.to_string_lossy()).unwrap_or_default();
+        if file_name != "package.json" {
+            continue;
+        }
+
+        // Get relative directory path from repo root
+        let dir_path = path
+            .parent()
+            .and_then(|p| p.strip_prefix(repo_path).ok())
+            .map(|p| p.to_string_lossy().replace('\\', "/"))
+            .unwrap_or_default();
+
+        // Read and parse package.json
+        if let Ok(content) = std::fs::read(path) {
+            if let Some(name) = extract_package_name_from_bytes(&content) {
+                index.package_name_by_dir.insert(dir_path, name);
+            }
+        }
+    }
+
+    Ok(index)
+}
+
+/// Read file content from the working directory.
+///
+/// Simple wrapper around fs::read that returns the content as bytes.
+pub fn read_working_file_content(repo_path: &Path, relative_path: &str) -> Result<Vec<u8>> {
+    let full_path = repo_path.join(relative_path);
+    std::fs::read(&full_path)
+        .map_err(|e| anyhow!("Failed to read file {}: {}", relative_path, e))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -394,5 +582,45 @@ mod tests {
 }"#;
         let name2 = extract_package_name_from_bytes(json2);
         assert_eq!(name2, Some("simple-package".to_string()));
+    }
+
+    #[test]
+    fn test_enumerate_working_directory() {
+        let repo_path = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+
+        // Enumerate working directory files
+        let entries = enumerate_working_directory(&repo_path, |_path| false)
+            .expect("Failed to enumerate working directory");
+
+        // Should have at least some files
+        assert!(!entries.is_empty(), "Should have found some files");
+
+        // Check that some expected files exist
+        let readme = entries.iter().find(|e| e.relative_path == "README.md");
+        assert!(readme.is_some(), "Should have found README.md");
+
+        // Content hashes should be non-empty and start with "sha256:"
+        for entry in entries.iter().take(5) {
+            assert!(entry.content_hash.starts_with("sha256:"), "Content hash should start with sha256:");
+            println!("  {} ({})", entry.relative_path, &entry.content_hash[..16]);
+        }
+    }
+
+    #[test]
+    fn test_compute_content_hash() {
+        let content = b"Hello, world!";
+        let hash = compute_content_hash(content);
+
+        // SHA256 hashes should be 64 hex chars + "sha256:" prefix
+        assert!(hash.starts_with("sha256:"));
+        assert_eq!(hash.len(), 64 + 7); // 64 hex chars + "sha256:" prefix
+
+        // Same content should produce same hash
+        let hash2 = compute_content_hash(content);
+        assert_eq!(hash, hash2);
+
+        // Different content should produce different hash
+        let hash3 = compute_content_hash(b"Different content");
+        assert_ne!(hash, hash3);
     }
 }

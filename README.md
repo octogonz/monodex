@@ -65,17 +65,27 @@ This tool is designed for AI assistants. The indexed database provides a complet
 
 ## Installation
 
-```bash
-# From crates.io
-cargo install monodex
+### From crates.io
 
-# Build from source
+```bash
+cargo install monodex
+```
+
+### Build from Source
+
+```bash
 git clone https://github.com/microsoft/monodex.git
 cd monodex
 cargo build --release
 
 # Binary will be at ./target/release/monodex
 ```
+
+### Prerequisites
+
+- **Rust**: 1.91+ (for edition 2024)
+- **Qdrant**: Vector database running on localhost:6333 (only needed for crawling/searching)
+- **Model**: jina-embeddings-v2-base-code (auto-downloaded from HuggingFace to `models/` on first use)
 
 ## Usage
 
@@ -259,6 +269,42 @@ monodex purge --all
 
 **Note:** Purge operates at catalog level. To remove a specific label's chunks, re-crawl that label with a different commit or manually update the `active_label_ids` field.
 
+## Development
+
+Run CI checks using [Just](https://github.com/casey/just) (recommended):
+
+```bash
+# Install just
+cargo install just
+
+# Run all CI checks (format, clippy, check, test)
+just ci
+
+# Individual commands
+just fmt          # Auto-format code
+just fmt-check    # Check formatting
+just clippy       # Run lints
+just check        # Type check
+just test         # Run tests
+just build        # Build release binary
+```
+
+Or run directly with cargo:
+
+```bash
+# Run all CI checks
+cargo fmt --all -- --check
+cargo clippy --workspace --all-targets --locked
+cargo check --workspace --all-targets --locked
+cargo test --workspace --all-targets --locked
+
+# Build
+cargo build --release
+
+# Run with logging (use sparo for testing, not rushstack)
+RUST_LOG=debug ./target/release/monodex crawl --catalog sparo --label main
+```
+
 ## Architecture
 
 ```
@@ -308,12 +354,6 @@ monodex/
 - **Fits**: 8192-token embedding model limit (jina-embeddings-v2-base-code)
 - **Breadcrumb**: Extra overhead for navigation context
 
-## Prerequisites
-
-- **Qdrant**: Vector database running on localhost:6333
-- **Rust**: 1.91+ (for edition 2024)
-- **Model**: jina-embeddings-v2-base-code (auto-downloaded from HuggingFace to `models/`)
-
 ## Qdrant Setup
 
 Create the collection before first use:
@@ -339,19 +379,6 @@ The collection uses:
 
 - **768 dimensions** (jina-embeddings-v2-base-code output size)
 - **Cosine distance** (best for semantic similarity)
-
-## Development
-
-```bash
-# Build
-cargo build --release
-
-# Test
-cargo test
-
-# Run with logging (use sparo for testing, not rushstack)
-RUST_LOG=debug ./target/release/monodex crawl --catalog sparo --label main
-```
 
 ## Status
 

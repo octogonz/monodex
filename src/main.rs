@@ -617,11 +617,19 @@ fn run_crawl_label(
             // Wrap uploader in Arc<Mutex>
             let uploader = Arc::new(Mutex::new(uploader));
 
+            // Failure tracking for the uploader thread
+            let upload_failures: Arc<Mutex<Vec<String>>> = Arc::new(Mutex::new(Vec::new()));
+            let file_complete_failures: Arc<Mutex<Vec<String>>> = Arc::new(Mutex::new(Vec::new()));
+            let label_add_failures: Arc<Mutex<Vec<String>>> = Arc::new(Mutex::new(Vec::new()));
+
             // Uploader thread
             let stop_uploader = Arc::clone(&stop_flag);
             let last_upload_time_clone = Arc::clone(&last_upload_time);
             let uploader_clone = Arc::clone(&uploader);
             let label_id_clone = label_id.clone();
+            let upload_failures_clone = Arc::clone(&upload_failures);
+            let file_complete_failures_clone = Arc::clone(&file_complete_failures);
+            let label_add_failures_clone = Arc::clone(&label_add_failures);
 
             let uploader_thread = std::thread::spawn(move || {
                 let mut accumulated: Vec<(engine::Chunk, Vec<f32>)> = Vec::new();
@@ -654,7 +662,15 @@ fn run_crawl_label(
                         let uploader_guard = uploader_clone.lock().unwrap();
                         match uploader_guard.upload_batch(&accumulated) {
                             Err(e) => {
-                                eprintln!("[{}] ⚠️ Upload failed: {}", chrono_timestamp(), e);
+                                eprintln!("[{}] ❌ Upload failed: {}", chrono_timestamp(), e);
+                                // Track which files failed
+                                let mut failures = upload_failures_clone.lock().unwrap();
+                                for (chunk, _) in &accumulated {
+                                    let file_id = &chunk.file_id;
+                                    if !failures.contains(file_id) {
+                                        failures.push(format!("{}: {}", file_id, e));
+                                    }
+                                }
                             }
                             Ok(_) => {
                                 let mut files_in_batch: HashMap<String, usize> = HashMap::new();
@@ -676,11 +692,13 @@ fn run_crawl_label(
 
                                 for file_id in &completed_files {
                                     if let Err(e) = uploader_guard.mark_file_complete(file_id) {
-                                        eprintln!("[{}] ⚠️ Failed to mark file complete: {}", chrono_timestamp(), e);
+                                        eprintln!("[{}] ❌ Failed to mark file complete: {}", chrono_timestamp(), e);
+                                        file_complete_failures_clone.lock().unwrap().push(format!("{}: {}", file_id, e));
                                     }
                                     // Add label to the file
                                     if let Err(e) = uploader_guard.add_label_to_file_chunks(file_id, &label_id_clone) {
-                                        eprintln!("[{}] ⚠️ Failed to add label: {}", chrono_timestamp(), e);
+                                        eprintln!("[{}] ❌ Failed to add label: {}", chrono_timestamp(), e);
+                                        label_add_failures_clone.lock().unwrap().push(format!("{}: {}", file_id, e));
                                     }
                                 }
                             }
@@ -702,12 +720,25 @@ fn run_crawl_label(
                                         *files_in_batch.entry(chunk.file_id.clone()).or_insert(0) += 1;
                                     }
                                     for file_id in files_in_batch.keys() {
-                                        let _ = uploader_guard.mark_file_complete(file_id);
-                                        let _ = uploader_guard.add_label_to_file_chunks(file_id, &label_id_clone);
+                                        if let Err(e) = uploader_guard.mark_file_complete(file_id) {
+                                            eprintln!("[{}] ❌ Failed to mark file complete: {}", chrono_timestamp(), e);
+                                            file_complete_failures_clone.lock().unwrap().push(format!("{}: {}", file_id, e));
+                                        }
+                                        if let Err(e) = uploader_guard.add_label_to_file_chunks(file_id, &label_id_clone) {
+                                            eprintln!("[{}] ❌ Failed to add label: {}", chrono_timestamp(), e);
+                                            label_add_failures_clone.lock().unwrap().push(format!("{}: {}", file_id, e));
+                                        }
                                     }
                                 }
                                 Err(e) => {
-                                    eprintln!("[{}] ⚠️ Final upload failed: {}", chrono_timestamp(), e);
+                                    eprintln!("[{}] ❌ Final upload failed: {}", chrono_timestamp(), e);
+                                    let mut failures = upload_failures_clone.lock().unwrap();
+                                    for (chunk, _) in &accumulated {
+                                        let file_id = &chunk.file_id;
+                                        if !failures.iter().any(|f| f.starts_with(file_id)) {
+                                            failures.push(format!("{}: {}", file_id, e));
+                                        }
+                                    }
                                 }
                             }
                         }
@@ -739,6 +770,18 @@ fn run_crawl_label(
             let rate = total_chunks as f64 / embed_elapsed.as_secs_f64().max(0.001);
             println!("\n  Embedding complete: {} chunks in {} ({:.1} chunks/sec)",
                 total_chunks, format_duration(embed_elapsed.as_secs_f64()), rate);
+            
+            // Report any failures from the uploader thread
+            let upload_failures_count = upload_failures.lock().unwrap().len();
+            let file_complete_failures_count = file_complete_failures.lock().unwrap().len();
+            let label_add_failures_count = label_add_failures.lock().unwrap().len();
+            
+            if upload_failures_count > 0 || file_complete_failures_count > 0 || label_add_failures_count > 0 {
+                println!();
+                println!("  ⚠️  Encountered {} upload failures, {} file-complete failures, {} label-add failures",
+                    upload_failures_count, file_complete_failures_count, label_add_failures_count);
+                println!("      These files may not be searchable. Check logs above for details.");
+            }
             println!();
         }
     }
@@ -790,6 +833,20 @@ fn run_crawl_label(
     println!("  Total time: {}", format_duration(total_elapsed.as_secs_f64()));
     println!("  New files indexed: {}", new_count);
     println!("  Existing files updated: {}", existing_count);
+    
+    // Report any critical failures (these are captured during the embed phase)
+    // Note: upload_failures, file_complete_failures, label_add_failures are only
+    // populated inside the embedder branch, so we need to handle the case where
+    // they don't exist. For now, we track failures inline during processing.
+    
+    // Track if there were any errors during the crawl
+    let mut error_count = 0;
+    // Count blob read failures and chunk failures from earlier phases
+    // (These are tracked via eprintln, not captured in counters yet)
+    
+    if error_count > 0 {
+        println!("  ⚠️  Files with errors: {} (see logs above)", error_count);
+    }
 
     Ok(())
 }

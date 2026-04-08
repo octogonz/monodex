@@ -1,5 +1,11 @@
 # monodex Design Document
 
+## Testing Note
+
+- **Development testing**: Use the `sparo` catalog (small monorepo, fast iteration)
+- **Final verification**: Use the `rushstack` catalog (large monorepo, hours to crawl)
+- **Qdrant collection**: Named `monodex` (not `rushstack`)
+
 ## Overview
 
 monodex is a semantic search indexer for Rush monorepos, using Qdrant vector database with local embeddings. It supports label-based semantic indexing where each label defines a queryable fileset (like a Git commit or branch head) within a catalog.
@@ -588,6 +594,10 @@ monodex gc --catalog rushstack
     "collection": "monodex"
   },
   "catalogs": {
+    "sparo": {
+      "type": "monorepo",
+      "path": "/path/to/sparo"
+    },
     "rushstack": {
       "type": "monorepo",
       "path": "/path/to/rushstack"
@@ -595,6 +605,8 @@ monodex gc --catalog rushstack
   }
 }
 ```
+
+**Note:** Use `sparo` for development testing. `rushstack` is for final verification only.
 
 ### Catalog to Repo Mapping
 

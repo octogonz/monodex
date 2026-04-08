@@ -79,9 +79,13 @@ Create `~/.config/monodex/config.jsonc`:
 {
   "qdrant": {
     "url": "http://localhost:6333",
-    "collection": "rushstack"
+    "collection": "monodex"
   },
   "catalogs": {
+    "sparo": {
+      "type": "monorepo",
+      "path": "/path/to/sparo"
+    },
     "rushstack": {
       "type": "monorepo",
       "path": "/path/to/rushstack"
@@ -89,6 +93,8 @@ Create `~/.config/monodex/config.jsonc`:
   }
 }
 ```
+
+**Note:** Use `sparo` (or another small monorepo) for development testing. `rushstack` is used for final verification and takes hours to crawl.
 
 **Fields:**
 
@@ -277,7 +283,7 @@ monodex/
 Create the collection before first use:
 
 ```bash
-curl -X PUT "http://localhost:6333/collections/rushstack" \
+curl -X PUT "http://localhost:6333/collections/monodex" \
   -H "Content-Type: application/json" \
   -d '{
     "vectors": {
@@ -290,7 +296,7 @@ curl -X PUT "http://localhost:6333/collections/rushstack" \
 Verify the collection exists:
 
 ```bash
-curl http://localhost:6333/collections/rushstack | jq '.result.status'
+curl http://localhost:6333/collections/monodex | jq '.result.status'
 ```
 
 The collection uses:
@@ -307,8 +313,8 @@ cargo build --release
 # Test
 cargo test
 
-# Run with logging
-RUST_LOG=debug ./target/release/monodex crawl --catalog rushstack --label main
+# Run with logging (use sparo for testing, not rushstack)
+RUST_LOG=debug ./target/release/monodex crawl --catalog sparo --label main
 ```
 
 ## License

@@ -243,17 +243,17 @@ In `src/main.rs`:
 
 ```
 src/
-├── main.rs                 # CLI entry point
+├── main.rs                    # CLI entry point
 └── engine/
-    ├── mod.rs              # Module exports
-    ├── config.rs           # Config loading
-    ├── git_ops.rs          # NEW: Git operations
-    ├── package_index.rs    # NEW: Package lookup
-    ├── chunker.rs          # File chunking dispatcher
-    ├── partitioner.rs      # AST-based TypeScript chunking
-    ├── embedder.rs         # Embedding generation
-    ├── uploader.rs         # Qdrant operations
-    └── util.rs             # Hash utilities
+    ├── mod.rs                 # Module exports
+    ├── config.rs              # Config loading and file exclusion rules
+    ├── chunker.rs             # File chunking dispatcher
+    ├── partitioner.rs         # AST-based TypeScript chunking
+    ├── markdown_partitioner.rs # Markdown heading-based chunking
+    ├── parallel_embedder.rs   # Parallel embedding with multiple ONNX sessions
+    ├── package_lookup.rs      # Package name resolution (walk up to package.json)
+    ├── uploader.rs            # Qdrant HTTP client
+    └── util.rs                # Hash utilities for chunk IDs
 ```
 
 ### Testing Strategy

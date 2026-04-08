@@ -8,6 +8,9 @@
 
 # Rush Monodex
 
+[![crates.io](https://img.shields.io/crates/v/monodex.svg)](https://crates.io/crates/monodex)
+[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
+
 **Semantic search indexer for Rush monorepos using Qdrant vector database**
 
 ## Overview
@@ -63,7 +66,12 @@ This tool is designed for AI assistants. The indexed database provides a complet
 ## Installation
 
 ```bash
+# From crates.io
+cargo install monodex
+
 # Build from source
+git clone https://github.com/microsoft/monodex.git
+cd monodex
 cargo build --release
 
 # Binary will be at ./target/release/monodex
@@ -344,6 +352,10 @@ cargo test
 # Run with logging (use sparo for testing, not rushstack)
 RUST_LOG=debug ./target/release/monodex crawl --catalog sparo --label main
 ```
+
+## Status
+
+This project is under active development. The crate is published to reserve the name. Expect breaking changes between versions.
 
 ## License
 

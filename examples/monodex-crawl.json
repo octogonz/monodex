@@ -1,0 +1,50 @@
+{
+  "$schema": "https://raw.githubusercontent.com/nickmillerdev/monodex/main/schemas/crawl.schema.json",
+  "version": 1,
+  "fileTypes": {
+    ".ts": "typescript",
+    ".tsx": "typescript",
+    ".js": "javascript",
+    ".jsx": "javascript",
+    ".cjs": "javascript",
+    ".mjs": "javascript",
+    ".md": "markdown",
+    ".json": "simpleLine",
+    ".yml": "simpleLine",
+    ".yaml": "simpleLine",
+    ".txt": "simpleLine",
+    ".css": "simpleLine",
+    ".scss": "simpleLine"
+  },
+  "patternsToExclude": [
+    "node_modules/",
+    "dist/",
+    "build/",
+    "lib/",
+    "lib-commonjs/",
+    "lib-esm/",
+    "lib-esnext/",
+    "lib-amd/",
+    "lib-dts/",
+    "temp/",
+    ".cache/",
+    ".rush/temp/",
+    "common/temp/",
+    "common/deploy/",
+    ".docusaurus/",
+    "**/*.snap",
+    "**/*.test.ts",
+    "**/*.spec.ts",
+    "**/*.test.tsx",
+    "**/*.spec.tsx",
+    "**/package-lock.json",
+    "**/pnpm-lock.yaml",
+    "**/yarn.lock",
+    "**/*.lock",
+    "**/*.tsbuildinfo"
+  ],
+  "patternsToKeep": [
+    "src/",
+    "test/"
+  ]
+}

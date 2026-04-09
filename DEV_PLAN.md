@@ -493,10 +493,10 @@ In `src/engine/git_ops.rs`:
 - [x] `config.rs` now delegates to `crawl_config.rs` for backward compatibility
 - [x] Directory patterns now match anywhere in path (e.g., `lib/` matches `foo/lib/bar.ts`)
 
-### 8.8 Document and Test
+### 8.8 Document and Test ✅ COMPLETE
 
-- [ ] Update README.md with crawl config documentation
-- [ ] Add example `monodex-crawl.json` files
+- [x] Update README.md with crawl config documentation
+- [x] Add example `monodex-crawl.json` files
 - [ ] Test config discovery precedence
 - [ ] Test validation errors
 - [ ] Test pattern matching edge cases

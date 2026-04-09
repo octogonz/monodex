@@ -6,7 +6,7 @@
 //! When using this tool in other Rush repos, modify these functions
 //! to match your repository's structure.
 //!
-//! Future: This will be replaced with a .jsonc configuration file
+//! Future: This will be replaced with a .json configuration file
 
 use std::path::Path;
 

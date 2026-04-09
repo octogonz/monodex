@@ -126,7 +126,7 @@ The collection uses:
 
 ```bash
 # Use a custom config file location
-monodex --config /path/to/config.jsonc search --text "query"
+monodex --config /path/to/config.json search --text "query"
 
 # Show help for any command
 monodex --help
@@ -138,7 +138,7 @@ monodex --version
 
 ### Configuration
 
-Create `~/.config/monodex/config.jsonc`:
+Create `~/.config/monodex/config.json`:
 
 ```json
 {

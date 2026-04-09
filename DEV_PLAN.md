@@ -420,43 +420,109 @@ In `src/engine/git_ops.rs`:
 
 ---
 
-## Phase 8: User-Configurable Settings
+## Phase 8: User-Configurable Crawl Settings
 
-**Goal:** Move hardcoded constants from `config.rs` into the user's config file for customization.
+**Goal:** Externalize crawl policy from hardcoded Rust into user-configurable JSON files.
 
-### 8.1 Audit Current Config Constants
+**Reference:** See DESIGN.md "Crawl Configuration" section for full spec.
 
-- [ ] Identify all hardcoded values in `src/config.rs`:
-  - Embedding model name
-  - Chunk size limits
-  - File exclusion patterns
-  - Batch sizes
-  - Thread counts
-- [ ] Categorize as "user-configurable" vs "internal-only"
+### 8.1 File Extension Naming Convention
 
-### 8.2 Extend Config Schema
+- [x] Rename `~/.config/monodex/config.jsonc` → `config.json` in docs and code
+- [x] Rename `~/.config/monodex/context.json` - verify it uses `.json` (already correct)
+- [x] Update README.md to use `.json` extension
+- [x] Update DESIGN.md to use `.json` extension
+- [x] Align with Rush Stack JSON conventions
 
-- [ ] Add new optional fields to `MonodexConfig`:
-  - `embedding.model`: string (default: current model)
-  - `embedding.batch_size`: number
-  - `chunking.max_chunk_size`: number
-  - `chunking.overlap`: number
-  - `crawler.exclude_patterns`: array of glob patterns
-  - `crawler.num_threads`: number
-- [ ] Provide sensible defaults for all new fields
-- [ ] Document in DESIGN.md
+### 8.2 Define Crawl Config Schema
 
-### 8.3 Update Runtime to Use Config
+- [x] Create `src/engine/crawl_config.rs` module
+- [x] Define `CrawlConfig` struct with fields:
+  - `version: u32` (must be `1`)
+  - `file_types: HashMap<String, String>` (suffix → strategy)
+  - `patterns_to_exclude: Vec<String>` (glob patterns)
+  - `patterns_to_keep: Vec<String>` (glob patterns)
+- [x] Define `CompiledCrawlConfig` struct with compiled glob sets and directory prefixes
+- [x] Add `globset` dependency for pattern matching
+- [x] Implement `should_crawl()` with evaluation rule
+- [x] Implement `get_strategy()` to lookup chunking strategy
+- [x] Handle directory patterns (ending in `/`) as prefix matches
+- [x] Add unit tests for config validation and matching logic
 
-- [ ] Replace hardcoded values with config lookups
-- [ ] Ensure backward compatibility (existing configs work without new fields)
-- [ ] Add validation for config values (e.g., min/max chunk size)
+### 8.3 Implement Config Discovery
 
-### 8.4 Document Configuration Options
+- [ ] Implement discovery precedence:
+  1. `<repo-root>/monodex-crawl.json` (repo-local)
+  2. `~/.config/monodex/crawl.json` (user-global)
+  3. Embedded default (same JSON format, compiled into binary)
+- [ ] No merging - exactly one config is used
+- [ ] Implement `load_crawl_config(repo_path) -> Result<CrawlConfig>`
 
-- [ ] Update README.md with all configurable options
-- [ ] Add example config showing advanced settings
-- [ ] Document performance tuning tips
+### 8.4 Implement Strict Validation
+
+- [ ] Add `#[serde(deny_unknown_fields)]` to all config structs (crawl config + existing Config, QdrantConfig, DefaultContext)
+- [ ] Implement `validate()` method on `CrawlConfig`:
+  - `version == 1`
+  - Strategy names are valid
+  - Glob patterns compile successfully
+- [ ] Add validation for existing config structs if needed (catalog type values, etc.)
+- [ ] Return descriptive error messages for all validation failures
+
+### 8.5 Implement Evaluation Logic
+
+- [ ] Implement `should_crawl(path, config) -> bool`:
+  ```rust
+  matches_file_type(path, config)
+    && (matches_patterns_to_keep(path, config) || !matches_patterns_to_exclude(path, config))
+  ```
+- [ ] Implement `get_strategy(path, config) -> ChunkingStrategy`
+- [ ] Matching is repo-relative paths, case-sensitive, `/` separator
+
+### 8.6 Create Built-in Default Config
+
+- [ ] Create `src/engine/default_crawl_config.json` embedded in binary
+- [ ] Mirror current hardcoded rules from `config.rs`:
+  - fileTypes: `.ts`, `.tsx`, `.md`, `.json`, `.yml`, `.yaml`, `.txt`, `.css`, `.scss`
+  - patternsToExclude: `node_modules/`, `dist/`, `build/`, `lib/`, `*.test.ts`, etc.
+  - patternsToKeep: `src/`, `test/`
+
+### 8.7 Refactor Existing Code
+
+- [ ] Replace `should_skip_path()` with `!should_crawl()`
+- [ ] Replace `get_chunk_strategy()` with config lookup
+- [ ] Update commit-based crawler to use config
+- [ ] Update working-dir crawler to use same config
+- [ ] Remove hardcoded rules from `config.rs`
+
+### 8.8 Document and Test
+
+- [ ] Update README.md with crawl config documentation
+- [ ] Add example `monodex-crawl.json` files
+- [ ] Test config discovery precedence
+- [ ] Test validation errors
+- [ ] Test pattern matching edge cases
+- [ ] Verify backward compatibility (existing behavior preserved via default config)
+
+### 8.9 Unit Tests
+
+- [ ] Test `should_crawl()` with various path/config combinations:
+  - File type matching (`.ts` → crawl, `.png` → skip)
+  - Exclusion matching (`node_modules/` → skip)
+  - Keep override (`src/*.test.ts` → crawl despite exclude)
+  - Combined: file type + exclude + keep interaction
+- [ ] Test `get_strategy()` returns correct strategy for each file type
+- [ ] Test config loading from JSON string (for embedded default)
+- [ ] Test validation rejects invalid config (unknown strategy, bad glob, missing fields)
+
+### 8.10 JSON Schema (Future)
+
+- [ ] Author JSON schema files for IDE autocomplete/validation:
+  - `schemas/config.schema.json` for `config.json`
+  - `schemas/crawl.schema.json` for `monodex-crawl.json`
+  - `schemas/context.schema.json` for `context.json`
+- [ ] Schema files use `.schema.json` extension and live in `schemas/` folder
+- [ ] Users can reference via `"$schema": "https://.../schemas/crawl.schema.json"`
+- [ ] Publishing mechanism TBD (website, crate assets, etc.)
 
 ---
 

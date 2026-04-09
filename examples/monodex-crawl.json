@@ -1,5 +1,4 @@
 {
-  "$schema": "https://raw.githubusercontent.com/nickmillerdev/monodex/main/schemas/crawl.schema.json",
   "version": 1,
   "fileTypes": {
     ".ts": "typescript",

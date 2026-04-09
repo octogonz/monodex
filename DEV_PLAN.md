@@ -513,15 +513,17 @@ In `src/engine/git_ops.rs`:
 - [ ] Test config loading from JSON string (for embedded default)
 - [ ] Test validation rejects invalid config (unknown strategy, bad glob, missing fields)
 
-### 8.10 JSON Schema (Future)
+### 8.10 JSON Schema ✅ COMPLETE
 
-- [ ] Author JSON schema files for IDE autocomplete/validation:
+- [x] Author JSON schema files for IDE autocomplete/validation:
   - `schemas/config.schema.json` for `config.json`
   - `schemas/crawl.schema.json` for `monodex-crawl.json`
   - `schemas/context.schema.json` for `context.json`
-- [ ] Schema files use `.schema.json` extension and live in `schemas/` folder
-- [ ] Users can reference via `"$schema": "https://.../schemas/crawl.schema.json"`
-- [ ] Publishing mechanism TBD (website, crate assets, etc.)
+- [x] Schema files use `.schema.json` extension and live in `schemas/` folder
+- [x] Users can reference via `"$schema": "https://.../schemas/crawl.schema.json"`
+- [x] Added example config files in `examples/` directory
+- [x] Updated README with schema table and usage instructions
+- [ ] Publishing mechanism TBD (currently using raw.githubusercontent.com URLs)
 
 ---
 

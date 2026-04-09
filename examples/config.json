@@ -1,0 +1,16 @@
+{
+  "qdrant": {
+    "url": "http://localhost:6333",
+    "collection": "my_monorepo"
+  },
+  "catalogs": {
+    "my_monorepo": {
+      "type": "monorepo",
+      "path": "~/projects/my-monorepo"
+    },
+    "standalone_app": {
+      "type": "folder",
+      "path": "~/projects/my-app"
+    }
+  }
+}

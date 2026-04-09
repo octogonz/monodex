@@ -397,6 +397,14 @@ No merging occurs — exactly one config is used.
 
 #### Config Schema
 
+JSON schemas are available in the `schemas/` directory for IDE autocomplete and validation. Copy the appropriate schema file to your project or reference it locally:
+
+| Config File | Schema File |
+|-------------|-------------|
+| `config.json` | `schemas/config.schema.json` |
+| `monodex-crawl.json` | `schemas/crawl.schema.json` |
+| `context.json` | `schemas/context.schema.json` |
+
 Create a `monodex-crawl.json` file:
 
 ```json
@@ -405,9 +413,8 @@ Create a `monodex-crawl.json` file:
   "fileTypes": {
     ".ts": "typescript",
     ".tsx": "typescript",
-    ".js": "javascript",
     ".md": "markdown",
-    ".json": "simpleLine"
+    ".yaml": "lineBased"
   },
   "patternsToExclude": [
     "node_modules/",

@@ -525,11 +525,54 @@ In `src/engine/git_ops.rs`:
 
 ---
 
-## Phase 9: Offline Garbage Collection
+## Phase 9: Markdown Heading-Based Chunking
+
+**Goal:** Implement proper heading-based chunking for markdown files.
+
+### 11.1 Design Markdown Chunking Algorithm
+
+- [ ] Analyze markdown structure:
+  - Heading hierarchy (H1-H6)
+  - Code blocks, lists, tables
+  - Link/reference sections
+- [ ] Design chunk boundaries:
+  - Split at heading boundaries (each section becomes a chunk)
+  - Handle nested headings (H2 under H1)
+  - Include parent heading context in breadcrumbs
+- [ ] Consider special cases:
+  - Very large sections (need sub-chunking?)
+  - Code blocks (preserve as single unit?)
+  - Front matter (YAML metadata)
+
+### 10.2 Implement Markdown Chunker
+
+- [ ] Add `markdown` tree-sitter parser or custom parser
+- [ ] Implement `chunk_markdown(content, file_id, ctx, target_size)` function
+- [ ] Generate chunks with:
+  - Heading breadcrumb context
+  - Section boundaries
+  - Proper line numbers
+- [ ] Handle edge cases:
+  - Empty sections
+  - Very long code blocks
+  - Nested list structures
+
+### 9.3 Test Markdown Chunker
+
+- [ ] Test simple document with H1/H2/H3 sections
+- [ ] Test document with code blocks
+- [ ] Test document with tables
+- [ ] Test document with nested lists
+- [ ] Test very large markdown files
+- [ ] Compare chunk quality vs line-based chunking
+
+---
+
+## Phase 10: Offline Garbage Collection
 
 **Goal:** Provide a command to clean up orphaned chunks and recover storage.
 
-### 9.1 Implement GC Command
+### 11.1 Implement GC Command
 
 - [ ] Add `gc` command: `monodex gc --catalog rushstack`
 - [ ] Implementation:
@@ -539,7 +582,7 @@ In `src/engine/git_ops.rs`:
   - Report count and estimated storage recovered
 - [ ] Add `--dry-run` flag to show what would be deleted without actually deleting
 
-### 9.2 Test GC Scenarios
+### 10.2 Test GC Scenarios
 
 - [ ] Create orphaned chunks (interrupt a crawl, or delete a label's chunks manually)
 - [ ] Run `monodex gc --dry-run` and verify correct chunks identified
@@ -548,11 +591,11 @@ In `src/engine/git_ops.rs`:
 
 ---
 
-## Phase 10: Watch Mode
+## Phase 11: Watch Mode
 
 **Goal:** Continuously monitor and re-index a working directory as files change.
 
-### 10.1 Design Watch Mode Architecture
+### 11.1 Design Watch Mode Architecture
 
 - [ ] Research file watching libraries (notify, notify-debouncer-mini)
 - [ ] Decide on watch mode trigger:

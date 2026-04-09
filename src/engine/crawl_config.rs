@@ -92,7 +92,7 @@ impl CrawlConfig {
         for (suffix, strategy) in &self.file_types {
             if !is_valid_strategy(strategy) {
                 return Err(anyhow!(
-                    "Unknown chunking strategy '{}' for suffix '{}'. Valid strategies: typescript, javascript, markdown, json, yamlSimple, simpleLine",
+                    "Unknown chunking strategy '{}' for suffix '{}'. Valid strategies: typescript, markdown, lineBased",
                     strategy,
                     suffix
                 ));
@@ -237,10 +237,7 @@ impl CompiledCrawlConfig {
 
 /// Check if a strategy name is valid.
 fn is_valid_strategy(strategy: &str) -> bool {
-    matches!(
-        strategy,
-        "typescript" | "javascript" | "markdown" | "json" | "yamlSimple" | "simpleLine"
-    )
+    matches!(strategy, "typescript" | "markdown" | "lineBased")
 }
 
 // =============================================================================
@@ -254,17 +251,12 @@ const DEFAULT_CRAWL_CONFIG_JSON: &str = r#"{
     "fileTypes": {
         ".ts": "typescript",
         ".tsx": "typescript",
-        ".js": "javascript",
-        ".jsx": "javascript",
-        ".cjs": "javascript",
-        ".mjs": "javascript",
         ".md": "markdown",
-        ".json": "simpleLine",
-        ".yml": "simpleLine",
-        ".yaml": "simpleLine",
-        ".txt": "simpleLine",
-        ".css": "simpleLine",
-        ".scss": "simpleLine"
+        ".yml": "lineBased",
+        ".yaml": "lineBased",
+        ".txt": "lineBased",
+        ".css": "lineBased",
+        ".scss": "lineBased"
     },
     "patternsToExclude": [
         "node_modules/",
@@ -287,6 +279,11 @@ const DEFAULT_CRAWL_CONFIG_JSON: &str = r#"{
         "**/*.spec.ts",
         "**/*.test.tsx",
         "**/*.spec.tsx",
+        "**/*.js",
+        "**/*.jsx",
+        "**/*.cjs",
+        "**/*.mjs",
+        "**/*.json",
         "**/package-lock.json",
         "**/pnpm-lock.yaml",
         "**/yarn.lock",
@@ -374,12 +371,12 @@ mod tests {
                     ".ts": "typescript",
                     ".tsx": "typescript",
                     ".md": "markdown",
-                    ".json": "simpleLine"
+                    ".yaml": "lineBased"
                 },
                 "patternsToExclude": [
                     "node_modules/",
-                    "*.test.ts",
-                    "*.spec.ts"
+                    "**/*.test.ts",
+                    "**/*.spec.ts"
                 ],
                 "patternsToKeep": [
                     "src/",
@@ -494,11 +491,11 @@ mod tests {
         assert!(compiled.matches_file_type("src/index.ts"));
         assert!(compiled.matches_file_type("src/App.tsx"));
         assert!(compiled.matches_file_type("README.md"));
-        assert!(compiled.matches_file_type("package.json"));
+        assert!(compiled.matches_file_type("config.yaml"));
 
         // File type doesn't match
         assert!(!compiled.matches_file_type("image.png"));
-        assert!(!compiled.matches_file_type("style.css"));
+        assert!(!compiled.matches_file_type("package.json")); // .json not in fileTypes
     }
 
     #[test]
@@ -549,7 +546,7 @@ mod tests {
         assert_eq!(compiled.get_strategy("src/index.ts"), Some("typescript"));
         assert_eq!(compiled.get_strategy("src/App.tsx"), Some("typescript"));
         assert_eq!(compiled.get_strategy("README.md"), Some("markdown"));
-        assert_eq!(compiled.get_strategy("package.json"), Some("simpleLine"));
+        assert_eq!(compiled.get_strategy("config.yaml"), Some("lineBased"));
         assert_eq!(compiled.get_strategy("image.png"), None);
     }
 

@@ -152,21 +152,12 @@ pub fn chunk_content(content: &str, ctx: &ChunkContext, target_size: usize) -> R
 
             Ok(chunks)
         }
-        ChunkingStrategy::JavaScript => {
-            // Skip .js files for now (per todo plan)
-            Ok(Vec::new())
-        }
         ChunkingStrategy::Markdown => {
             // TODO: Implement heading-based splitting
             chunk_by_lines(content, &file_id, ctx, target_size, "markdown")
         }
-        ChunkingStrategy::Json => {
-            // Skip JSON files (low value for AI search)
-            Ok(Vec::new())
-        }
+        ChunkingStrategy::LineBased => chunk_by_lines(content, &file_id, ctx, target_size, "text"),
         ChunkingStrategy::Skip => Ok(Vec::new()),
-        ChunkingStrategy::YamlSimple => chunk_by_lines(content, &file_id, ctx, target_size, "yaml"),
-        ChunkingStrategy::SimpleLine => chunk_by_lines(content, &file_id, ctx, target_size, "text"),
     }
 }
 

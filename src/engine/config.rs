@@ -52,11 +52,8 @@ pub fn get_chunk_strategy(path: &str) -> ChunkingStrategy {
     let config = load_compiled_crawl_config(None).expect("Embedded config should be valid");
     match config.get_strategy(path) {
         Some("typescript") => ChunkingStrategy::TypeScript,
-        Some("javascript") => ChunkingStrategy::JavaScript,
         Some("markdown") => ChunkingStrategy::Markdown,
-        Some("json") => ChunkingStrategy::Json,
-        Some("yamlSimple") => ChunkingStrategy::YamlSimple,
-        Some("simpleLine") => ChunkingStrategy::SimpleLine,
+        Some("lineBased") => ChunkingStrategy::LineBased,
         _ => ChunkingStrategy::Skip,
     }
 }
@@ -70,20 +67,11 @@ pub enum ChunkingStrategy {
     /// TypeScript files - AST-based semantic chunking
     TypeScript,
 
-    /// JavaScript files - Currently skipped (returns empty)
-    JavaScript,
-
-    /// Markdown files - Split by heading hierarchy
+    /// Markdown files - Split by heading hierarchy (TODO: implement)
     Markdown,
 
-    /// JSON files - Simple line-based chunking
-    Json,
-
-    /// YAML files - Simple line-based chunking
-    YamlSimple,
-
     /// Simple line-based chunking (50-100 lines)
-    SimpleLine,
+    LineBased,
 
     /// Skip this file (don't index)
     Skip,
@@ -104,7 +92,8 @@ mod tests {
     fn test_should_skip_lock_files() {
         assert!(should_skip_path("package-lock.json"));
         assert!(should_skip_path("common/config/rush/pnpm-lock.yaml"));
-        assert!(!should_skip_path("package.json"));
+        // package.json is now excluded by default (not useful for semantic search)
+        assert!(should_skip_path("package.json"));
     }
 
     #[test]
@@ -116,12 +105,14 @@ mod tests {
     #[test]
     fn test_chunk_strategy() {
         assert_eq!(get_chunk_strategy("foo.ts"), ChunkingStrategy::TypeScript);
-        assert_eq!(get_chunk_strategy("bar.js"), ChunkingStrategy::JavaScript);
         assert_eq!(get_chunk_strategy("README.md"), ChunkingStrategy::Markdown);
         assert_eq!(
-            get_chunk_strategy("config.json"),
-            ChunkingStrategy::SimpleLine
+            get_chunk_strategy("config.yaml"),
+            ChunkingStrategy::LineBased
         );
         assert_eq!(get_chunk_strategy("image.png"), ChunkingStrategy::Skip);
+        // .js and .json files are now excluded via patternsToExclude, not fake strategies
+        assert_eq!(get_chunk_strategy("app.js"), ChunkingStrategy::Skip);
+        assert_eq!(get_chunk_strategy("data.json"), ChunkingStrategy::Skip);
     }
 }

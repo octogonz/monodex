@@ -194,7 +194,10 @@ impl CompiledCrawlConfig {
         }
         // Check directory prefixes
         for dir in &self.exclude_dirs {
-            if path.starts_with(dir) {
+            // Directory patterns match if:
+            // 1. Path starts with the directory (e.g., "lib/foo.ts" matches "lib/")
+            // 2. Path contains the directory with leading slash (e.g., "foo/lib/bar.ts" matches "lib/")
+            if path.starts_with(dir) || path.contains(&format!("/{}", dir)) {
                 return true;
             }
         }
@@ -209,7 +212,10 @@ impl CompiledCrawlConfig {
         }
         // Check directory prefixes
         for dir in &self.keep_dirs {
-            if path.starts_with(dir) {
+            // Directory patterns match if:
+            // 1. Path starts with the directory (e.g., "src/foo.ts" matches "src/")
+            // 2. Path contains the directory with leading slash (e.g., "foo/src/bar.ts" matches "src/")
+            if path.starts_with(dir) || path.contains(&format!("/{}", dir)) {
                 return true;
             }
         }
@@ -248,6 +254,10 @@ const DEFAULT_CRAWL_CONFIG_JSON: &str = r#"{
     "fileTypes": {
         ".ts": "typescript",
         ".tsx": "typescript",
+        ".js": "javascript",
+        ".jsx": "javascript",
+        ".cjs": "javascript",
+        ".mjs": "javascript",
         ".md": "markdown",
         ".json": "simpleLine",
         ".yml": "simpleLine",
@@ -272,16 +282,16 @@ const DEFAULT_CRAWL_CONFIG_JSON: &str = r#"{
         "common/temp/",
         "common/deploy/",
         ".docusaurus/",
-        "*.snap",
-        "*.test.ts",
-        "*.spec.ts",
-        "*.test.tsx",
-        "*.spec.tsx",
-        "package-lock.json",
-        "pnpm-lock.yaml",
-        "yarn.lock",
-        "*.lock",
-        "*.tsbuildinfo"
+        "**/*.snap",
+        "**/*.test.ts",
+        "**/*.spec.ts",
+        "**/*.test.tsx",
+        "**/*.spec.tsx",
+        "**/package-lock.json",
+        "**/pnpm-lock.yaml",
+        "**/yarn.lock",
+        "**/*.lock",
+        "**/*.tsbuildinfo"
     ],
     "patternsToKeep": [
         "src/",

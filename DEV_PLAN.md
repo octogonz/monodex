@@ -458,41 +458,40 @@ In `src/engine/git_ops.rs`:
 - [x] No merging - exactly one config is used
 - [x] Implement `load_crawl_config(repo_path) -> Result<CrawlConfig>`
 
-### 8.4 Implement Strict Validation
+### 8.4 Implement Strict Validation ✅ COMPLETE
 
-- [ ] Add `#[serde(deny_unknown_fields)]` to all config structs (crawl config + existing Config, QdrantConfig, DefaultContext)
-- [ ] Implement `validate()` method on `CrawlConfig`:
+- [x] Add `#[serde(deny_unknown_fields)]` to all config structs (crawl config + existing Config, QdrantConfig, DefaultContext)
+- [x] Implement `validate()` method on `CrawlConfig`:
   - `version == 1`
   - Strategy names are valid
   - Glob patterns compile successfully
-- [ ] Add validation for existing config structs if needed (catalog type values, etc.)
-- [ ] Return descriptive error messages for all validation failures
+- [x] Add validation for existing config structs if needed (catalog type values, etc.)
+- [x] Return descriptive error messages for all validation failures
 
-### 8.5 Implement Evaluation Logic
+### 8.5 Implement Evaluation Logic ✅ COMPLETE
 
-- [ ] Implement `should_crawl(path, config) -> bool`:
+- [x] Implement `should_crawl(path, config) -> bool`:
   ```rust
   matches_file_type(path, config)
     && (matches_patterns_to_keep(path, config) || !matches_patterns_to_exclude(path, config))
   ```
-- [ ] Implement `get_strategy(path, config) -> ChunkingStrategy`
-- [ ] Matching is repo-relative paths, case-sensitive, `/` separator
+- [x] Implement `get_strategy(path, config) -> ChunkingStrategy`
+- [x] Matching is repo-relative paths, case-sensitive, `/` separator
 
-### 8.6 Create Built-in Default Config
+### 8.6 Create Built-in Default Config ✅ COMPLETE
 
-- [ ] Create `src/engine/default_crawl_config.json` embedded in binary
-- [ ] Mirror current hardcoded rules from `config.rs`:
-  - fileTypes: `.ts`, `.tsx`, `.md`, `.json`, `.yml`, `.yaml`, `.txt`, `.css`, `.scss`
+- [x] Create embedded default config in `crawl_config.rs`
+- [x] Mirror current hardcoded rules from `config.rs`:
+  - fileTypes: `.ts`, `.tsx`, `.js`, `.jsx`, `.md`, `.json`, `.yml`, `.yaml`, `.txt`, `.css`, `.scss`
   - patternsToExclude: `node_modules/`, `dist/`, `build/`, `lib/`, `*.test.ts`, etc.
   - patternsToKeep: `src/`, `test/`
 
-### 8.7 Refactor Existing Code
+### 8.7 Refactor Existing Code ✅ COMPLETE
 
-- [ ] Replace `should_skip_path()` with `!should_crawl()`
-- [ ] Replace `get_chunk_strategy()` with config lookup
-- [ ] Update commit-based crawler to use config
-- [ ] Update working-dir crawler to use same config
-- [ ] Remove hardcoded rules from `config.rs`
+- [x] Replace `should_skip_path()` with `!should_crawl()`
+- [x] Replace `get_chunk_strategy()` with config lookup
+- [x] `config.rs` now delegates to `crawl_config.rs` for backward compatibility
+- [x] Directory patterns now match anywhere in path (e.g., `lib/` matches `foo/lib/bar.ts`)
 
 ### 8.8 Document and Test
 

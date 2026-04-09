@@ -18,5 +18,9 @@ pub mod util;
 
 // Re-export commonly used types for convenience
 pub use chunker::Chunk;
+pub use crawl_config::{
+    CompiledCrawlConfig, CrawlConfig, get_default_crawl_config, load_compiled_crawl_config,
+    load_crawl_config,
+};
 pub use parallel_embedder::ParallelEmbedder;
 pub use partitioner::SMALL_CHUNK_CHARS;

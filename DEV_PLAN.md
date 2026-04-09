@@ -451,12 +451,12 @@ In `src/engine/git_ops.rs`:
 
 ### 8.3 Implement Config Discovery
 
-- [ ] Implement discovery precedence:
+- [x] Implement discovery precedence:
   1. `<repo-root>/monodex-crawl.json` (repo-local)
   2. `~/.config/monodex/crawl.json` (user-global)
   3. Embedded default (same JSON format, compiled into binary)
-- [ ] No merging - exactly one config is used
-- [ ] Implement `load_crawl_config(repo_path) -> Result<CrawlConfig>`
+- [x] No merging - exactly one config is used
+- [x] Implement `load_crawl_config(repo_path) -> Result<CrawlConfig>`
 
 ### 8.4 Implement Strict Validation
 

@@ -226,8 +226,10 @@ impl QdrantUploader {
     pub fn new(collection: &str, qdrant_url: Option<&str>) -> Result<Self> {
         let url = qdrant_url.unwrap_or(DEFAULT_QDRANT_URL).to_string();
 
+        // Use a longer timeout to accommodate wait=true operations
+        // which require Qdrant to fully index points before responding
         let client = Client::builder()
-            .timeout(std::time::Duration::from_secs(60))
+            .timeout(std::time::Duration::from_secs(300)) // 5 minutes
             .build()?;
 
         Ok(Self {

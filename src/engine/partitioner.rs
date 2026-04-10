@@ -182,7 +182,7 @@ pub fn chunk_quality_score(chunks: &[PartitionedChunk], file_chars: usize) -> f6
     let total_chars: usize = chunk_sizes.iter().sum();
 
     // Ideal number of chunks
-    let ideal_chunk_count = (total_chars + max_chunk_size - 1) / max_chunk_size; // ceil division
+    let ideal_chunk_count = total_chars.div_ceil(max_chunk_size); // ceil division
 
     // 1) Count badness: 0 at ideal chunk count, 1 at all 1-char chunks
     let count_badness = if total_chars == ideal_chunk_count {
@@ -404,6 +404,7 @@ enum SplitResult {
 }
 
 /// Find the best split point for an oversized chunk using scope-based approach.
+#[allow(clippy::too_many_arguments)]
 fn find_best_split(
     root: Node,
     start_line: usize,
@@ -481,7 +482,7 @@ fn find_best_split(
                 let size_note = if estimated_first_size < min_chunk_size
                     || estimated_second_size < min_chunk_size
                 {
-                    format!(" (WARNING: creates tiny chunk)")
+                    " (WARNING: creates tiny chunk)".to_string()
                 } else {
                     String::new()
                 };
@@ -490,7 +491,7 @@ fn find_best_split(
                     split_line, estimated_first_size, estimated_second_size, badness, size_note
                 ));
 
-                if least_bad_split.map_or(true, |(_, b)| badness < b) {
+                if least_bad_split.is_none_or(|(_, b)| badness < b) {
                     least_bad_split = Some((split_line, badness));
                 }
             }
@@ -749,8 +750,8 @@ fn find_deepest_split_scope<'a>(
         }
 
         // Recursively descend into transparent conduits or split scopes
-        if is_transparent_conduit(child.kind()) || is_split_scope(child.kind()) {
-            if let Some(deeper) = find_deepest_split_scope(
+        if (is_transparent_conduit(child.kind()) || is_split_scope(child.kind()))
+            && let Some(deeper) = find_deepest_split_scope(
                 child,
                 start_line,
                 end_line,
@@ -758,9 +759,9 @@ fn find_deepest_split_scope<'a>(
                 min_chunk_size,
                 source,
                 debug,
-            ) {
-                return Some(deeper);
-            }
+            )
+        {
+            return Some(deeper);
         }
     }
 
@@ -832,11 +833,7 @@ fn find_usable_split(
         }
 
         // Prefer splits closest to middle
-        let distance = if estimated_first_size > ideal_first_size {
-            estimated_first_size - ideal_first_size
-        } else {
-            ideal_first_size - estimated_first_size
-        };
+        let distance = estimated_first_size.abs_diff(ideal_first_size);
 
         if distance < best_distance {
             best_distance = distance;
@@ -858,11 +855,7 @@ fn compute_split_badness(
     let total_lines = end_line - start_line + 1;
     let estimated_first_size = (chunk_size * lines_before) / total_lines;
 
-    let distance = if estimated_first_size > ideal_first_size {
-        estimated_first_size - ideal_first_size
-    } else {
-        ideal_first_size - estimated_first_size
-    };
+    let distance = estimated_first_size.abs_diff(ideal_first_size);
 
     // Add penalty for small chunks
     let estimated_second_size = chunk_size - estimated_first_size;

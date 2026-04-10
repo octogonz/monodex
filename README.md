@@ -167,13 +167,12 @@ Create `~/.config/monodex/config.json`:
 | ---------------------- | -------- | ---------------------------------------------------- |
 | `qdrant.url`           | No       | Qdrant server URL (default: `http://localhost:6333`) |
 | `qdrant.collection`    | Yes      | Qdrant collection name                               |
-| `catalogs.<name>.type` | Yes      | Catalog type: `"monorepo"` or `"folder"`             |
+| `catalogs.<name>.type` | Yes      | Catalog type: `"monorepo"`                           |
 | `catalogs.<name>.path` | Yes      | Absolute path to the repository root                 |
 
 **Catalog types:**
 
 - **`monorepo`**: Walks upward to find the nearest `package.json` for package name resolution. Breadcrumbs show `@scope/package-name:File.ts:Symbol`.
-- **`folder`**: Uses the parent folder name as the package identifier. Breadcrumbs show `folder-name:File.ts:Symbol`.
 
 ### Label-Based Indexing
 
@@ -346,7 +345,8 @@ monodex/
 │   ├── main.rs                    # CLI entry point
 │   └── engine/                    # Reusable indexing engine
 │       ├── mod.rs                 # Module exports
-│       ├── config.rs              # File exclusion rules
+│       ├── crawl_config.rs        # Crawl config loading, validation, and pattern matching
+│       ├── config.rs              # Legacy compatibility wrapper (delegates to crawl_config)
 │       ├── chunker.rs             # File chunking dispatcher
 │       ├── partitioner.rs         # AST-based TypeScript chunking
 │       ├── markdown_partitioner.rs # Markdown heading-based chunking
@@ -444,7 +444,7 @@ Create a `monodex-crawl.json` file:
 | Strategy | Description |
 |----------|-------------|
 | `typescript` | AST-based semantic chunking (TS/TSX) |
-| `markdown` | Split by heading hierarchy (TODO: currently line-based) |
+| `markdown` | Split by heading hierarchy |
 | `lineBased` | Generic line-based chunking |
 
 **Evaluation rule:**

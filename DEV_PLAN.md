@@ -101,7 +101,7 @@ In `src/engine/uploader.rs`:
 - [x] Add `add_label_to_chunk(chunk_id, label_id)` for updating `active_label_ids`
 - [x] Add `add_label_to_file_chunks(file_id, label_id)` for batch file updates
 - [x] Add `remove_label_from_chunks(label_id)` for cleanup scan
-- [x] Add `get_file_sentinel(file_id, label_id)` to check if file already indexed
+- [x] Add `get_file_sentinel(file_id)` to check if file already indexed
 - [x] Add `set_active_labels(chunk_id, label_ids)` for atomic replacement
 - [x] Add `delete_point(chunk_id)` for cleanup
 - [x] Add `search_with_label(query, label_id)` for label-filtered search
@@ -117,7 +117,7 @@ In `src/engine/util.rs`:
   - Returns 16-char hex string
 - [x] Add `EMBEDDER_ID` and `CHUNKER_ID` constants
 - [x] Implement `compute_point_id(file_id, chunk_ordinal) -> String`
-  - Returns `<file_id>:<ordinal>` format for deterministic chunk IDs
+  - Returns `string_to_uuid(format!("{}:{}", file_id, chunk_ordinal))` for deterministic chunk IDs
 - [x] Implement `compute_label_id(catalog, label_name) -> String`
   - Returns `<catalog>:<label_name>` format
 - [x] Update `Chunk` struct to include new Phase 2 fields
@@ -527,17 +527,17 @@ In `src/engine/git_ops.rs`:
 
 ---
 
-## Phase 9: Markdown Heading-Based Chunking
+## Phase 9: Markdown Heading-Based Chunking ✅ PARTIAL
 
 **Goal:** Implement proper heading-based chunking for markdown files.
 
-### 11.1 Design Markdown Chunking Algorithm
+### 9.1 Design Markdown Chunking Algorithm ✅ COMPLETE
 
-- [ ] Analyze markdown structure:
+- [x] Analyze markdown structure:
   - Heading hierarchy (H1-H6)
   - Code blocks, lists, tables
   - Link/reference sections
-- [ ] Design chunk boundaries:
+- [x] Design chunk boundaries:
   - Split at heading boundaries (each section becomes a chunk)
   - Handle nested headings (H2 under H1)
   - Include parent heading context in breadcrumbs
@@ -546,11 +546,12 @@ In `src/engine/git_ops.rs`:
   - Code blocks (preserve as single unit?)
   - Front matter (YAML metadata)
 
-### 10.2 Implement Markdown Chunker
+### 9.2 Implement Markdown Chunker ✅ COMPLETE
 
-- [ ] Add `markdown` tree-sitter parser or custom parser
-- [ ] Implement `chunk_markdown(content, file_id, ctx, target_size)` function
-- [ ] Generate chunks with:
+- [x] Add custom markdown parser in `markdown_partitioner.rs`
+- [x] Implement `partition_markdown(content, config, file_path, catalog)` function
+- [x] Wire `partition_markdown()` into `chunk_content()` for the `Markdown` strategy branch
+- [x] Generate chunks with:
   - Heading breadcrumb context
   - Section boundaries
   - Proper line numbers

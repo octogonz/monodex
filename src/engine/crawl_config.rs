@@ -354,6 +354,7 @@ pub fn load_compiled_crawl_config(repo_path: Option<&Path>) -> Result<CompiledCr
 /// Get the embedded default crawl config.
 ///
 /// Useful for debugging or generating a starter config file.
+#[allow(dead_code)]
 pub fn get_default_crawl_config() -> CrawlConfig {
     CrawlConfig::from_json(DEFAULT_CRAWL_CONFIG_JSON)
         .expect("Embedded default config should be valid")
@@ -592,21 +593,22 @@ mod tests {
         let schema_path = "schemas/crawl.schema.json";
         let schema_str = fs::read_to_string(schema_path)
             .expect("Failed to read crawl.schema.json - run from project root");
-        let schema: serde_json::Value = serde_json::from_str(&schema_str)
-            .expect("Failed to parse crawl.schema.json as JSON");
+        let schema: serde_json::Value =
+            serde_json::from_str(&schema_str).expect("Failed to parse crawl.schema.json as JSON");
 
         // Compile the schema
-        let validator = Validator::new(&schema)
-            .expect("Failed to compile JSON schema");
+        let validator = Validator::new(&schema).expect("Failed to compile JSON schema");
 
         // Load and validate the example crawl config
         let example_path = "examples/monodex-crawl.json";
         let example_str = fs::read_to_string(example_path)
             .expect("Failed to read monodex-crawl.json - run from project root");
-        let example: serde_json::Value = serde_json::from_str(&example_str)
-            .expect("Failed to parse monodex-crawl.json as JSON");
+        let example: serde_json::Value =
+            serde_json::from_str(&example_str).expect("Failed to parse monodex-crawl.json as JSON");
 
-        assert!(validator.is_valid(&example), 
-            "Example monodex-crawl.json does not validate against schema");
+        assert!(
+            validator.is_valid(&example),
+            "Example monodex-crawl.json does not validate against schema"
+        );
     }
 }

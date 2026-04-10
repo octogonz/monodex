@@ -3,8 +3,14 @@
 //! Walks upwards from a file path to find the governing package.json,
 //! then extracts the "name" field. If no package.json is found,
 //! uses a simple relative folder path as a fallback identifier.
+//!
+//! This is a filesystem-only convenience for the `dump-chunks` command.
+//! The main crawl path uses `git_ops::extract_package_name_from_bytes()`
+//! directly on Git blob data.
 
 use std::path::Path;
+
+use super::git_ops::extract_package_name_from_bytes;
 
 /// Find the package name for a given source file.
 ///
@@ -52,30 +58,11 @@ pub fn find_package_name(file_path: &str, repo_root: &str) -> String {
 
 /// Extracts the "name" field from a package.json file.
 ///
-/// Simple string search for "name": "value" pattern.
-/// No need for a full JSON parser since we only need the name field.
+/// Delegates to the shared `extract_package_name_from_bytes` which uses
+/// proper JSON parsing (not string search) to handle edge cases.
 fn extract_package_name(package_json: &Path) -> Option<String> {
-    let content = std::fs::read_to_string(package_json).ok()?;
-
-    // Find "name": "value" in JSON
-    // Look for pattern: "name" : "package-name"
-    let name_key = "\"name\"";
-    let key_pos = content.find(name_key)?;
-
-    // Find the colon after "name"
-    let after_key = &content[key_pos + name_key.len()..];
-    let colon_pos = after_key.find(':')?;
-
-    // Find the opening quote of the value
-    let after_colon = &after_key[colon_pos + 1..];
-    let first_quote = after_colon.find('"')?;
-
-    // Find the closing quote
-    let value_start = first_quote + 1;
-    let after_first_quote = &after_colon[value_start..];
-    let end_quote = after_first_quote.find('"')?;
-
-    Some(after_first_quote[..end_quote].to_string())
+    let content = std::fs::read(package_json).ok()?;
+    extract_package_name_from_bytes(&content)
 }
 
 /// Converts an absolute path to a relative path from the repo root.

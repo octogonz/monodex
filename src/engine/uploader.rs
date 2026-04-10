@@ -140,7 +140,9 @@ pub struct LabelMetadata {
 }
 
 /// Information about a file for incremental sync
+/// Note: Fields are currently unused but kept for future incremental sync implementation
 #[derive(Debug, Clone)]
+#[allow(dead_code)]
 pub struct FileSyncInfo {
     pub content_hash: String,
     pub file_complete: bool,
@@ -187,28 +189,6 @@ struct ScrollPoint {
 pub enum QdrantId {
     String(String),
     Integer(u64),
-}
-
-impl std::ops::Shr<i32> for QdrantId {
-    type Output = u64;
-
-    fn shr(self, rhs: i32) -> Self::Output {
-        match self {
-            QdrantId::Integer(n) => n >> rhs,
-            QdrantId::String(_) => 0,
-        }
-    }
-}
-
-impl std::ops::Shr<i32> for &QdrantId {
-    type Output = u64;
-
-    fn shr(self, rhs: i32) -> Self::Output {
-        match self {
-            QdrantId::Integer(n) => *n >> rhs,
-            QdrantId::String(_) => 0,
-        }
-    }
 }
 
 /// Response from delete
@@ -287,6 +267,8 @@ impl QdrantUploader {
     }
 
     /// Delete all points for a specific file
+    /// Legacy - uses source_uri filter, not the file-id-centric model
+    #[allow(dead_code)]
     pub fn delete_file(&self, file_path: &str, catalog: &str) -> Result<u64> {
         let endpoint = format!("{}/collections/{}/points/delete", self.url, self.collection);
 
@@ -322,6 +304,7 @@ impl QdrantUploader {
     /// Get all points for a specific catalog
     /// Returns a map of file path → FileSyncInfo (content_hash and file_complete)
     /// Only queries chunk #1 per file for efficiency
+    #[allow(dead_code)]
     pub fn get_catalog_files(
         &self,
         catalog: &str,
@@ -614,6 +597,8 @@ impl QdrantUploader {
     }
 
     /// Queries the collection with an embedding
+    /// Legacy - catalog-only search, superseded by search_with_label()
+    #[allow(dead_code)]
     pub fn query(
         &self,
         embedding: &[f32],
@@ -695,6 +680,8 @@ impl QdrantUploader {
     ///
     /// # Returns
     /// Vector of points sorted by chunk_ordinal, or error
+    /// Legacy - unfiltered by label, superseded by get_chunks_by_file_id_with_label()
+    #[allow(dead_code)]
     pub fn get_chunks_by_file_id(&self, file_id: &str) -> Result<Vec<PointResult>> {
         // Build scroll request with filter on file_id
         #[derive(Debug, Serialize)]
@@ -826,10 +813,13 @@ impl QdrantUploader {
     }
 
     /// Get label metadata by label_id
+    #[allow(dead_code)]
     pub fn get_label_metadata(&self, label_id: &str) -> Result<Option<LabelMetadata>> {
+        // Convert label_id to UUID the same way upsert_label_metadata does
+        let point_id = super::util::string_to_uuid(label_id);
         let endpoint = format!(
             "{}/collections/{}/points/{}",
-            self.url, self.collection, label_id
+            self.url, self.collection, point_id
         );
 
         let response = self.client.get(&endpoint).send()?;
@@ -922,13 +912,13 @@ impl QdrantUploader {
 
         let sentinel_response: SentinelResponse = response.json()?;
 
-        if let Some(point) = sentinel_response.result.points.first() {
-            if point.payload.file_complete {
-                return Ok(Some(FileSyncInfo {
-                    content_hash: point.payload.content_hash.clone(),
-                    file_complete: true,
-                }));
-            }
+        if let Some(point) = sentinel_response.result.points.first()
+            && point.payload.file_complete
+        {
+            return Ok(Some(FileSyncInfo {
+                content_hash: point.payload.content_hash.clone(),
+                file_complete: true,
+            }));
         }
 
         Ok(None)
@@ -1374,7 +1364,35 @@ impl QdrantUploader {
 
 /// A point retrieved by ID (no score, unlike SearchResult)
 #[derive(Debug, Deserialize)]
+#[allow(dead_code)]
 pub struct PointResult {
     pub id: QdrantId,
     pub payload: PointPayload,
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_label_metadata_id_round_trip_uses_same_uuid_strategy() {
+        let label_id = "rushstack:feature/foo";
+        let metadata = LabelMetadata {
+            source_type: "label-metadata".to_string(),
+            catalog: "rushstack".to_string(),
+            label_id: label_id.to_string(),
+            label_name: "feature/foo".to_string(),
+            commit_oid: "abc123".to_string(),
+            source_kind: "git-commit".to_string(),
+            crawl_complete: false,
+            updated_at_unix_secs: 123,
+        };
+
+        let upsert_point_id = crate::engine::util::string_to_uuid(&metadata.label_id);
+        let get_point_id = crate::engine::util::string_to_uuid(label_id);
+
+        assert_eq!(upsert_point_id, get_point_id);
+        assert_eq!(upsert_point_id.len(), 36);
+        assert!(upsert_point_id.contains('-'));
+    }
 }

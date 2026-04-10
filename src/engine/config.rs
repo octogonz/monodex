@@ -1,29 +1,26 @@
 //! Repository-specific configuration for Qdrant indexer
 //!
-//! **EDIT THIS FILE** to customize indexing behavior for your Rush monorepo.
+//! This module provides backward-compatible functions that delegate to the
+//! new `crawl_config` module. The actual configuration is now loaded from
+//! `monodex-crawl.json` files.
 //!
-//! This file contains rules specific to the RushStack repository.
-//! When using this tool in other Rush repos, modify these functions
-//! to match your repository's structure.
+//! ## Config Discovery
 //!
-//! Future: This will be replaced with a .json configuration file
+//! Configs are loaded in this precedence order:
+//! 1. `<repo-root>/monodex-crawl.json` (repo-local)
+//! 2. `~/.config/monodex/crawl.json` (user-global)
+//! 3. Embedded default (compiled into binary)
+//!
+//! See `crawl_config.rs` for the full implementation.
 
 use std::path::Path;
 
+use super::crawl_config::{CompiledCrawlConfig, load_compiled_crawl_config};
+
 /// Determines if a file should be skipped during indexing
 ///
-/// CUSTOMIZE THIS for your repository's structure!
-///
-/// Common exclusions for Rush repositories:
-/// - **Build outputs**: `lib/`, `dist/`, `build/`, `lib-*/`
-/// - **Dependencies**: `node_modules/`
-/// - **Lock files**: `*.lock`, `package-lock.json`, `pnpm-lock.yaml`
-/// - **Temporary files**: `temp/`, `.cache/`, `.heft/`
-/// - **Generated files**: `.tsbuildinfo`, `.docusaurus/`
-///
-/// # RushStack-specific exclusions
-///
-/// - `api.rushstack.io/docs/` - Auto-generated API documentation (duplicates TypeScript source)
+/// This is a convenience function that uses the embedded default config.
+/// For crawls that need repo-specific config, use `CompiledCrawlConfig::should_crawl()`.
 ///
 /// # Arguments
 ///
@@ -31,116 +28,17 @@ use std::path::Path;
 ///
 /// # Returns
 ///
-/// `true` if is file should be skipped, `false` if it should be indexed
+/// `true` if the file should be skipped, `false` if it should be indexed
 pub fn should_skip_path(path: &str) -> bool {
-    use std::path::Path;
-
-    // === NEVER INDEX THESE (absolute exclusions) ===
-
-    // Dependencies - always skip node_modules regardless of location
-    if path.contains("/node_modules/") {
-        return true;
-    }
-
-    // RushStack-specific exclusions
-    // Skip auto-generated API documentation (duplicates TypeScript source)
-    if path.contains("api.rushstack.io/docs/") {
-        return true;
-    }
-
-    // === Standard Rush monorepo exclusions ===
-
-    // Build outputs and compiled code (except in src/ and test/ for examples)
-    if !path.contains("/src/") && !path.contains("/test/") {
-        if path.contains("/lib/")
-            || path.contains("/lib-commonjs/")
-            || path.contains("/lib-esm/")
-            || path.contains("/lib-esnext/")
-            || path.contains("/lib-amd/")
-            || path.contains("/lib-dts/")
-            || path.contains("/dist/")
-            || path.contains("/build/")
-        {
-            return true;
-        }
-    }
-
-    // Rush temporary and cache directories
-    if path.contains("/temp/")
-        || path.contains("/.cache/")
-        || path.contains("/heft/")
-        || path.contains("/.rush/temp/")
-        || path.contains("/common/temp/")
-        || path.contains("/common/deploy/")
-        || path.contains("/.docusaurus/")
-    {
-        return true;
-    }
-
-    // Lock files and build cache
-    if path.ends_with("package-lock.json")
-        || path.ends_with("pnpm-lock.yaml")
-        || path.ends_with("yarn.lock")
-        || path.ends_with(".lock")
-        || path.ends_with(".tsbuildinfo")
-    {
-        return true;
-    }
-
-    // Test files and snapshots (not useful for semantic search)
-    if path.ends_with(".snap")
-        || path.ends_with(".test.ts")
-        || path.ends_with(".spec.ts")
-        || path.ends_with(".test.tsx")
-        || path.ends_with(".spec.tsx")
-    {
-        return true;
-    }
-
-    // Skip test directories
-    if path.contains("/test/") || path.contains("/tests/") || path.contains("/__tests__/") {
-        return true;
-    }
-
-    // Skip .js files initially (RushStack rarely uses .js for important code)
-    if path.ends_with(".js")
-        || path.ends_with(".jsx")
-        || path.ends_with(".cjs")
-        || path.ends_with(".mjs")
-    {
-        return true;
-    }
-
-    // Version control and IDE files
-    if path.contains("/.git/") || path.contains("/.idea/") || path.ends_with(".DS_Store") {
-        return true;
-    }
-
-    // Binary and media files
-    let extension = Path::new(path)
-        .extension()
-        .and_then(|e| e.to_str())
-        .unwrap_or("");
-
-    if matches!(
-        extension,
-        "png" | "jpg" | "jpeg" | "gif" | "ico" | "svg" | "woff" | "woff2" | "ttf" | "eot" | "webp"
-    ) {
-        return true;
-    }
-
-    false
+    // Use embedded default for backward compatibility
+    let config = load_compiled_crawl_config(None).expect("Embedded config should be valid");
+    !config.should_crawl(path)
 }
 
 /// Determines chunking strategy for a file based on its extension
 ///
-/// # Supported strategies
-///
-/// - **TypeScript/JavaScript** (.ts, .tsx, .js, .jsx, .cjs) - Simple line-based chunking
-/// - **Markdown** (.md) - Split by heading hierarchy
-/// - **JSON** (.json) - Split by 2-level key nesting
-/// - **YAML** (.yml, .yaml) - Simple line-based chunking
-/// - **Other** - Skip
+/// This is a convenience function that uses the embedded default config.
+/// For crawls that need repo-specific config, use `CompiledCrawlConfig::get_strategy()`.
 ///
 /// # Arguments
 ///
@@ -150,47 +48,30 @@ pub fn should_skip_path(path: &str) -> bool {
 ///
 /// `ChunkingStrategy` enum indicating how to process file
 pub fn get_chunk_strategy(path: &str) -> ChunkingStrategy {
-    let extension = Path::new(path)
-        .extension()
-        .and_then(|e| e.to_str())
-        .unwrap_or("");
-
-    match extension {
-        "ts" | "tsx" => ChunkingStrategy::TypeScript,
-        "js" | "jsx" | "cjs" | "mjs" => ChunkingStrategy::JavaScript,
-        "md" => ChunkingStrategy::Markdown,
-        "json" => {
-            // Small JSON files: keep whole
-            // Large JSON files: split by 2-level keys
-            // For now, use simple line-based chunking (will improve later)
-            ChunkingStrategy::SimpleLine
-        }
-        "yml" | "yaml" => ChunkingStrategy::SimpleLine,
-        "txt" | "css" | "scss" => ChunkingStrategy::SimpleLine,
+    // Use embedded default for backward compatibility
+    let config = load_compiled_crawl_config(None).expect("Embedded config should be valid");
+    match config.get_strategy(path) {
+        Some("typescript") => ChunkingStrategy::TypeScript,
+        Some("markdown") => ChunkingStrategy::Markdown,
+        Some("lineBased") => ChunkingStrategy::LineBased,
         _ => ChunkingStrategy::Skip,
     }
 }
 
 /// Chunking strategy enumeration
+///
+/// This enum is kept for backward compatibility with existing code.
+/// The new `crawl_config` module uses string-based strategy names.
 #[derive(Debug, Clone, PartialEq)]
 pub enum ChunkingStrategy {
-    /// TypeScript files - Simple line-based chunking (will improve to AST later)
+    /// TypeScript files - AST-based semantic chunking
     TypeScript,
 
-    /// JavaScript files - Simple line-based chunking (will improve to AST later)
-    JavaScript,
-
-    /// Markdown files - Split by heading hierarchy
+    /// Markdown files - Split by heading hierarchy (TODO: implement)
     Markdown,
 
-    /// JSON files - Simple line-based chunking (will improve to nested key splitting later)
-    Json,
-
-    /// YAML files - Simple line-based chunking
-    YamlSimple,
-
     /// Simple line-based chunking (50-100 lines)
-    SimpleLine,
+    LineBased,
 
     /// Skip this file (don't index)
     Skip,
@@ -211,28 +92,27 @@ mod tests {
     fn test_should_skip_lock_files() {
         assert!(should_skip_path("package-lock.json"));
         assert!(should_skip_path("common/config/rush/pnpm-lock.yaml"));
-        assert!(!should_skip_path("package.json"));
+        // package.json is now excluded by default (not useful for semantic search)
+        assert!(should_skip_path("package.json"));
     }
 
     #[test]
-    fn test_should_skip_generated_api_docs() {
-        // api.rushstack.io/docs/ is auto-generated API docs, should be skipped
-        assert!(should_skip_path(
-            "rushstack-websites/websites/api.rushstack.io/docs/pages/foo.md"
-        ));
-        // But other markdown files should not be skipped
-        assert!(!should_skip_path("docs/getting-started.md"));
+    fn test_should_skip_node_modules() {
+        assert!(should_skip_path("node_modules/foo/index.ts"));
+        assert!(!should_skip_path("src/index.ts"));
     }
 
     #[test]
     fn test_chunk_strategy() {
         assert_eq!(get_chunk_strategy("foo.ts"), ChunkingStrategy::TypeScript);
-        assert_eq!(get_chunk_strategy("bar.js"), ChunkingStrategy::JavaScript);
         assert_eq!(get_chunk_strategy("README.md"), ChunkingStrategy::Markdown);
         assert_eq!(
-            get_chunk_strategy("config.json"),
-            ChunkingStrategy::SimpleLine
+            get_chunk_strategy("config.yaml"),
+            ChunkingStrategy::LineBased
         );
         assert_eq!(get_chunk_strategy("image.png"), ChunkingStrategy::Skip);
+        // .js and .json files are now excluded via patternsToExclude, not fake strategies
+        assert_eq!(get_chunk_strategy("app.js"), ChunkingStrategy::Skip);
+        assert_eq!(get_chunk_strategy("data.json"), ChunkingStrategy::Skip);
     }
 }

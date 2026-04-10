@@ -379,7 +379,89 @@ monodex/
 
 **JSON files** are skipped (low value for semantic search).
 
-**Exclusions:** Folders like `node_modules` and files like `*.test.ts` are automatically skipped. Exclusion rules are currently hardcoded in `config.rs` but will be configurable in a future release.
+**Exclusions:** Folders like `node_modules` and files like `*.test.ts` are automatically skipped. Exclusion rules can be customized via `monodex-crawl.json` (see [Crawl Configuration](#crawl-configuration)).
+
+### Crawl Configuration
+
+The crawl behavior (which files to index and how to chunk them) can be customized via configuration files.
+
+#### Config Discovery
+
+Configs are loaded in this precedence order:
+
+1. `<repo-root>/monodex-crawl.json` (repo-local)
+2. `~/.config/monodex/crawl.json` (user-global)
+3. Embedded default (compiled into binary)
+
+No merging occurs — exactly one config is used.
+
+#### Config Schema
+
+JSON schemas are available in the `schemas/` directory for IDE autocomplete and validation. Copy the appropriate schema file to your project or reference it locally:
+
+| Config File | Schema File |
+|-------------|-------------|
+| `config.json` | `schemas/config.schema.json` |
+| `monodex-crawl.json` | `schemas/crawl.schema.json` |
+| `context.json` | `schemas/context.schema.json` |
+
+Create a `monodex-crawl.json` file:
+
+```json
+{
+  "version": 1,
+  "fileTypes": {
+    ".ts": "typescript",
+    ".tsx": "typescript",
+    ".md": "markdown",
+    ".yaml": "lineBased"
+  },
+  "patternsToExclude": [
+    "node_modules/",
+    "dist/",
+    "build/",
+    "**/*.test.ts",
+    "**/*.spec.ts"
+  ],
+  "patternsToKeep": [
+    "src/",
+    "test/"
+  ]
+}
+```
+
+**Fields:**
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `version` | number | Must be `1` |
+| `fileTypes` | object | Maps file extension to chunking strategy |
+| `patternsToExclude` | array | Glob patterns for paths to skip |
+| `patternsToKeep` | array | Glob patterns that override exclusions |
+
+**Chunking strategies:**
+
+| Strategy | Description |
+|----------|-------------|
+| `typescript` | AST-based semantic chunking (TS/TSX) |
+| `markdown` | Split by heading hierarchy (TODO: currently line-based) |
+| `lineBased` | Generic line-based chunking |
+
+**Evaluation rule:**
+
+```text
+shouldCrawl = matchesFileType && (matchesPatternsToKeep || !matchesPatternsToExclude)
+```
+
+- `fileTypes` is the primary filter — unsupported file types are never crawled
+- `patternsToKeep` overrides `patternsToExclude` (useful for keeping test files in `src/`)
+- Directory patterns (ending in `/`) match anywhere in the path
+
+**Pattern syntax:**
+
+- Glob patterns use the standard syntax: `**` for recursive, `*` for wildcard
+- Directory patterns end with `/` (e.g., `node_modules/`)
+- Example: `**/*.test.ts` matches test files at any depth
 
 ### Chunk Size Target
 

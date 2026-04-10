@@ -1,0 +1,58 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "Monodex Config",
+  "description": "Main configuration for monodex - defines Qdrant connection and catalogs",
+  "type": "object",
+  "required": ["qdrant", "catalogs"],
+  "additionalProperties": false,
+  "properties": {
+    "qdrant": {
+      "type": "object",
+      "description": "Qdrant vector database connection settings",
+      "required": ["collection"],
+      "additionalProperties": false,
+      "properties": {
+        "url": {
+          "type": "string",
+          "description": "Qdrant server URL (default: http://localhost:6333)",
+          "default": "http://localhost:6333",
+          "examples": ["http://localhost:6333", "http://qdrant.example.com:6333"]
+        },
+        "collection": {
+          "type": "string",
+          "description": "Qdrant collection name for storing embeddings",
+          "examples": ["my_monorepo", "code_index"]
+        }
+      }
+    },
+    "catalogs": {
+      "type": "object",
+      "description": "Named catalog configurations",
+      "additionalProperties": {
+        "$ref": "#/definitions/CatalogConfig"
+      },
+      "minProperties": 1
+    }
+  },
+  "definitions": {
+    "CatalogConfig": {
+      "type": "object",
+      "description": "Configuration for a single catalog",
+      "required": ["type", "path"],
+      "additionalProperties": false,
+      "properties": {
+        "type": {
+          "type": "string",
+          "description": "Catalog type",
+          "enum": ["monorepo", "folder"],
+          "examples": ["monorepo", "folder"]
+        },
+        "path": {
+          "type": "string",
+          "description": "Path to the catalog root directory",
+          "examples": ["/path/to/monorepo", "~/projects/my-app"]
+        }
+      }
+    }
+  }
+}

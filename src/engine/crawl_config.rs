@@ -21,10 +21,11 @@
 //! - patternsToKeep only overrides exclusion
 //! - patternsToKeep does NOT force unsupported file types to be crawled
 
-use anyhow::{anyhow, Result};
+use anyhow::{Result, anyhow};
 use globset::{Glob, GlobSet, GlobSetBuilder};
 use serde::Deserialize;
 use std::collections::HashMap;
+use std::path::Path;
 
 /// Crawl configuration loaded from `monodex-crawl.json`.
 #[derive(Debug, Clone, Deserialize)]
@@ -91,7 +92,7 @@ impl CrawlConfig {
         for (suffix, strategy) in &self.file_types {
             if !is_valid_strategy(strategy) {
                 return Err(anyhow!(
-                    "Unknown chunking strategy '{}' for suffix '{}'. Valid strategies: typescript, javascript, markdown, json, yamlSimple, simpleLine",
+                    "Unknown chunking strategy '{}' for suffix '{}'. Valid strategies: typescript, markdown, lineBased",
                     strategy,
                     suffix
                 ));
@@ -112,8 +113,7 @@ impl CrawlConfig {
         }
 
         for pattern in &self.patterns_to_keep {
-            Glob::new(pattern)
-                .map_err(|e| anyhow!("Invalid keep pattern '{}': {}", pattern, e))?;
+            Glob::new(pattern).map_err(|e| anyhow!("Invalid keep pattern '{}': {}", pattern, e))?;
         }
 
         Ok(())
@@ -123,7 +123,7 @@ impl CrawlConfig {
     pub fn compile(&self) -> Result<CompiledCrawlConfig> {
         let mut exclude_builder = GlobSetBuilder::new();
         let mut exclude_dirs = Vec::new();
-        
+
         for pattern in &self.patterns_to_exclude {
             if pattern.ends_with('/') {
                 // Directory pattern: store as prefix matcher
@@ -135,7 +135,7 @@ impl CrawlConfig {
 
         let mut keep_builder = GlobSetBuilder::new();
         let mut keep_dirs = Vec::new();
-        
+
         for pattern in &self.patterns_to_keep {
             if pattern.ends_with('/') {
                 // Directory pattern: store as prefix matcher
@@ -194,7 +194,10 @@ impl CompiledCrawlConfig {
         }
         // Check directory prefixes
         for dir in &self.exclude_dirs {
-            if path.starts_with(dir) {
+            // Directory patterns match if:
+            // 1. Path starts with the directory (e.g., "lib/foo.ts" matches "lib/")
+            // 2. Path contains the directory with leading slash (e.g., "foo/lib/bar.ts" matches "lib/")
+            if path.starts_with(dir) || path.contains(&format!("/{}", dir)) {
                 return true;
             }
         }
@@ -209,7 +212,10 @@ impl CompiledCrawlConfig {
         }
         // Check directory prefixes
         for dir in &self.keep_dirs {
-            if path.starts_with(dir) {
+            // Directory patterns match if:
+            // 1. Path starts with the directory (e.g., "src/foo.ts" matches "src/")
+            // 2. Path contains the directory with leading slash (e.g., "foo/src/bar.ts" matches "src/")
+            if path.starts_with(dir) || path.contains(&format!("/{}", dir)) {
                 return true;
             }
         }
@@ -231,10 +237,126 @@ impl CompiledCrawlConfig {
 
 /// Check if a strategy name is valid.
 fn is_valid_strategy(strategy: &str) -> bool {
-    matches!(
-        strategy,
-        "typescript" | "javascript" | "markdown" | "json" | "yamlSimple" | "simpleLine"
-    )
+    matches!(strategy, "typescript" | "markdown" | "lineBased")
+}
+
+// =============================================================================
+// Config Discovery
+// =============================================================================
+
+/// Embedded default crawl config.
+/// This is used when no repo-local or user-global config is found.
+const DEFAULT_CRAWL_CONFIG_JSON: &str = r#"{
+    "version": 1,
+    "fileTypes": {
+        ".ts": "typescript",
+        ".tsx": "typescript",
+        ".md": "markdown",
+        ".yml": "lineBased",
+        ".yaml": "lineBased",
+        ".txt": "lineBased",
+        ".css": "lineBased",
+        ".scss": "lineBased"
+    },
+    "patternsToExclude": [
+        "node_modules/",
+        "dist/",
+        "build/",
+        "lib/",
+        "lib-commonjs/",
+        "lib-esm/",
+        "lib-esnext/",
+        "lib-amd/",
+        "lib-dts/",
+        "temp/",
+        ".cache/",
+        ".rush/temp/",
+        "common/temp/",
+        "common/deploy/",
+        ".docusaurus/",
+        "**/*.snap",
+        "**/*.test.ts",
+        "**/*.spec.ts",
+        "**/*.test.tsx",
+        "**/*.spec.tsx",
+        "**/*.js",
+        "**/*.jsx",
+        "**/*.cjs",
+        "**/*.mjs",
+        "**/*.json",
+        "**/package-lock.json",
+        "**/pnpm-lock.yaml",
+        "**/yarn.lock",
+        "**/*.lock",
+        "**/*.tsbuildinfo"
+    ],
+    "patternsToKeep": [
+        "src/",
+        "test/"
+    ]
+}"#;
+
+/// Load crawl config with discovery precedence.
+///
+/// Precedence order (first found wins):
+/// 1. `<repo-root>/monodex-crawl.json` (repo-local)
+/// 2. `~/.config/monodex/crawl.json` (user-global)
+/// 3. Embedded default (compiled into binary)
+///
+/// No merging is performed - exactly one config is used.
+pub fn load_crawl_config(repo_path: Option<&Path>) -> Result<CrawlConfig> {
+    // Try repo-local config first
+    if let Some(repo) = repo_path {
+        let repo_local_path = repo.join("monodex-crawl.json");
+        if repo_local_path.exists() {
+            let content = std::fs::read_to_string(&repo_local_path).map_err(|e| {
+                anyhow!(
+                    "Failed to read repo-local config {:?}: {}",
+                    repo_local_path,
+                    e
+                )
+            })?;
+            eprintln!("Using repo-local crawl config: {:?}", repo_local_path);
+            return CrawlConfig::from_json(&content);
+        }
+    }
+
+    // Try user-global config
+    if let Some(config_dir) = dirs::config_dir() {
+        let user_global_path = config_dir.join("monodex").join("crawl.json");
+        if user_global_path.exists() {
+            let content = std::fs::read_to_string(&user_global_path).map_err(|e| {
+                anyhow!(
+                    "Failed to read user-global config {:?}: {}",
+                    user_global_path,
+                    e
+                )
+            })?;
+            eprintln!("Using user-global crawl config: {:?}", user_global_path);
+            return CrawlConfig::from_json(&content);
+        }
+    }
+
+    // Fall back to embedded default
+    eprintln!("Using embedded default crawl config");
+    CrawlConfig::from_json(DEFAULT_CRAWL_CONFIG_JSON)
+}
+
+/// Load and compile crawl config in one step.
+///
+/// This is a convenience function that loads the config and compiles it
+/// for use in crawl operations.
+pub fn load_compiled_crawl_config(repo_path: Option<&Path>) -> Result<CompiledCrawlConfig> {
+    let config = load_crawl_config(repo_path)?;
+    config.compile()
+}
+
+/// Get the embedded default crawl config.
+///
+/// Useful for debugging or generating a starter config file.
+pub fn get_default_crawl_config() -> CrawlConfig {
+    CrawlConfig::from_json(DEFAULT_CRAWL_CONFIG_JSON)
+        .expect("Embedded default config should be valid")
 }
 
 #[cfg(test)]
@@ -249,12 +371,12 @@ mod tests {
                     ".ts": "typescript",
                     ".tsx": "typescript",
                     ".md": "markdown",
-                    ".json": "simpleLine"
+                    ".yaml": "lineBased"
                 },
                 "patternsToExclude": [
                     "node_modules/",
-                    "*.test.ts",
-                    "*.spec.ts"
+                    "**/*.test.ts",
+                    "**/*.spec.ts"
                 ],
                 "patternsToKeep": [
                     "src/",
@@ -282,7 +404,12 @@ mod tests {
             }"#,
         );
         assert!(result.is_err());
-        assert!(result.unwrap_err().to_string().contains("Unsupported config version"));
+        assert!(
+            result
+                .unwrap_err()
+                .to_string()
+                .contains("Unsupported config version")
+        );
     }
 
     #[test]
@@ -296,7 +423,12 @@ mod tests {
             }"#,
         );
         assert!(result.is_err());
-        assert!(result.unwrap_err().to_string().contains("Unknown chunking strategy"));
+        assert!(
+            result
+                .unwrap_err()
+                .to_string()
+                .contains("Unknown chunking strategy")
+        );
     }
 
     #[test]
@@ -310,7 +442,12 @@ mod tests {
             }"#,
         );
         assert!(result.is_err());
-        assert!(result.unwrap_err().to_string().contains("must start with '.'"));
+        assert!(
+            result
+                .unwrap_err()
+                .to_string()
+                .contains("must start with '.'")
+        );
     }
 
     #[test]
@@ -324,7 +461,12 @@ mod tests {
             }"#,
         );
         assert!(result.is_err());
-        assert!(result.unwrap_err().to_string().contains("Invalid exclude pattern"));
+        assert!(
+            result
+                .unwrap_err()
+                .to_string()
+                .contains("Invalid exclude pattern")
+        );
     }
 
     #[test]
@@ -349,11 +491,11 @@ mod tests {
         assert!(compiled.matches_file_type("src/index.ts"));
         assert!(compiled.matches_file_type("src/App.tsx"));
         assert!(compiled.matches_file_type("README.md"));
-        assert!(compiled.matches_file_type("package.json"));
+        assert!(compiled.matches_file_type("config.yaml"));
 
         // File type doesn't match
         assert!(!compiled.matches_file_type("image.png"));
-        assert!(!compiled.matches_file_type("style.css"));
+        assert!(!compiled.matches_file_type("package.json")); // .json not in fileTypes
     }
 
     #[test]
@@ -404,7 +546,67 @@ mod tests {
         assert_eq!(compiled.get_strategy("src/index.ts"), Some("typescript"));
         assert_eq!(compiled.get_strategy("src/App.tsx"), Some("typescript"));
         assert_eq!(compiled.get_strategy("README.md"), Some("markdown"));
-        assert_eq!(compiled.get_strategy("package.json"), Some("simpleLine"));
+        assert_eq!(compiled.get_strategy("config.yaml"), Some("lineBased"));
         assert_eq!(compiled.get_strategy("image.png"), None);
+    }
+
+    #[test]
+    fn test_embedded_default_config_is_valid() {
+        let config = get_default_crawl_config();
+        assert!(config.validate().is_ok());
+
+        let compiled = config.compile().unwrap();
+
+        // Should match TypeScript files
+        assert!(compiled.should_crawl("src/index.ts"));
+
+        // Should exclude node_modules
+        assert!(!compiled.should_crawl("node_modules/foo/index.ts"));
+
+        // Should exclude test files (but src/test files override)
+        assert!(!compiled.should_crawl("utils.test.ts"));
+        assert!(compiled.should_crawl("src/utils.test.ts"));
+    }
+
+    #[test]
+    fn test_load_crawl_config_uses_embedded_default() {
+        // When no repo path and no user-global config, use embedded default
+        let config = load_crawl_config(None).unwrap();
+        assert_eq!(config.version, 1);
+        assert!(config.file_types.contains_key(".ts"));
+    }
+
+    #[test]
+    fn test_load_compiled_crawl_config() {
+        let compiled = load_compiled_crawl_config(None).unwrap();
+        assert!(compiled.should_crawl("src/index.ts"));
+        assert!(!compiled.should_crawl("node_modules/foo.ts"));
+    }
+
+    #[test]
+    fn test_example_crawl_config_validates_against_schema() {
+        use jsonschema::Validator;
+        use std::fs;
+
+        // Load the schema
+        let schema_path = "schemas/crawl.schema.json";
+        let schema_str = fs::read_to_string(schema_path)
+            .expect("Failed to read crawl.schema.json - run from project root");
+        let schema: serde_json::Value = serde_json::from_str(&schema_str)
+            .expect("Failed to parse crawl.schema.json as JSON");
+
+        // Compile the schema
+        let validator = Validator::new(&schema)
+            .expect("Failed to compile JSON schema");
+
+        // Load and validate the example crawl config
+        let example_path = "examples/monodex-crawl.json";
+        let example_str = fs::read_to_string(example_path)
+            .expect("Failed to read monodex-crawl.json - run from project root");
+        let example: serde_json::Value = serde_json::from_str(&example_str)
+            .expect("Failed to parse monodex-crawl.json as JSON");
+
+        assert!(validator.is_valid(&example), 
+            "Example monodex-crawl.json does not validate against schema");
     }
 }

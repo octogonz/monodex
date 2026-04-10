@@ -451,53 +451,52 @@ In `src/engine/git_ops.rs`:
 
 ### 8.3 Implement Config Discovery
 
-- [ ] Implement discovery precedence:
+- [x] Implement discovery precedence:
   1. `<repo-root>/monodex-crawl.json` (repo-local)
   2. `~/.config/monodex/crawl.json` (user-global)
   3. Embedded default (same JSON format, compiled into binary)
-- [ ] No merging - exactly one config is used
-- [ ] Implement `load_crawl_config(repo_path) -> Result<CrawlConfig>`
+- [x] No merging - exactly one config is used
+- [x] Implement `load_crawl_config(repo_path) -> Result<CrawlConfig>`
 
-### 8.4 Implement Strict Validation
+### 8.4 Implement Strict Validation ✅ COMPLETE
 
-- [ ] Add `#[serde(deny_unknown_fields)]` to all config structs (crawl config + existing Config, QdrantConfig, DefaultContext)
-- [ ] Implement `validate()` method on `CrawlConfig`:
+- [x] Add `#[serde(deny_unknown_fields)]` to all config structs (crawl config + existing Config, QdrantConfig, DefaultContext)
+- [x] Implement `validate()` method on `CrawlConfig`:
   - `version == 1`
   - Strategy names are valid
   - Glob patterns compile successfully
-- [ ] Add validation for existing config structs if needed (catalog type values, etc.)
-- [ ] Return descriptive error messages for all validation failures
+- [x] Add validation for existing config structs if needed (catalog type values, etc.)
+- [x] Return descriptive error messages for all validation failures
 
-### 8.5 Implement Evaluation Logic
+### 8.5 Implement Evaluation Logic ✅ COMPLETE
 
-- [ ] Implement `should_crawl(path, config) -> bool`:
+- [x] Implement `should_crawl(path, config) -> bool`:
   ```rust
   matches_file_type(path, config)
     && (matches_patterns_to_keep(path, config) || !matches_patterns_to_exclude(path, config))
   ```
-- [ ] Implement `get_strategy(path, config) -> ChunkingStrategy`
-- [ ] Matching is repo-relative paths, case-sensitive, `/` separator
+- [x] Implement `get_strategy(path, config) -> ChunkingStrategy`
+- [x] Matching is repo-relative paths, case-sensitive, `/` separator
 
-### 8.6 Create Built-in Default Config
+### 8.6 Create Built-in Default Config ✅ COMPLETE
 
-- [ ] Create `src/engine/default_crawl_config.json` embedded in binary
-- [ ] Mirror current hardcoded rules from `config.rs`:
-  - fileTypes: `.ts`, `.tsx`, `.md`, `.json`, `.yml`, `.yaml`, `.txt`, `.css`, `.scss`
+- [x] Create embedded default config in `crawl_config.rs`
+- [x] Mirror current hardcoded rules from `config.rs`:
+  - fileTypes: `.ts`, `.tsx`, `.js`, `.jsx`, `.md`, `.json`, `.yml`, `.yaml`, `.txt`, `.css`, `.scss`
   - patternsToExclude: `node_modules/`, `dist/`, `build/`, `lib/`, `*.test.ts`, etc.
   - patternsToKeep: `src/`, `test/`
 
-### 8.7 Refactor Existing Code
+### 8.7 Refactor Existing Code ✅ COMPLETE
 
-- [ ] Replace `should_skip_path()` with `!should_crawl()`
-- [ ] Replace `get_chunk_strategy()` with config lookup
-- [ ] Update commit-based crawler to use config
-- [ ] Update working-dir crawler to use same config
-- [ ] Remove hardcoded rules from `config.rs`
+- [x] Replace `should_skip_path()` with `!should_crawl()`
+- [x] Replace `get_chunk_strategy()` with config lookup
+- [x] `config.rs` now delegates to `crawl_config.rs` for backward compatibility
+- [x] Directory patterns now match anywhere in path (e.g., `lib/` matches `foo/lib/bar.ts`)
 
-### 8.8 Document and Test
+### 8.8 Document and Test ✅ COMPLETE
 
-- [ ] Update README.md with crawl config documentation
-- [ ] Add example `monodex-crawl.json` files
+- [x] Update README.md with crawl config documentation
+- [x] Add example `monodex-crawl.json` files
 - [ ] Test config discovery precedence
 - [ ] Test validation errors
 - [ ] Test pattern matching edge cases
@@ -514,23 +513,68 @@ In `src/engine/git_ops.rs`:
 - [ ] Test config loading from JSON string (for embedded default)
 - [ ] Test validation rejects invalid config (unknown strategy, bad glob, missing fields)
 
-### 8.10 JSON Schema (Future)
+### 8.10 JSON Schema ✅ COMPLETE
 
-- [ ] Author JSON schema files for IDE autocomplete/validation:
+- [x] Author JSON schema files for IDE autocomplete/validation:
   - `schemas/config.schema.json` for `config.json`
   - `schemas/crawl.schema.json` for `monodex-crawl.json`
   - `schemas/context.schema.json` for `context.json`
-- [ ] Schema files use `.schema.json` extension and live in `schemas/` folder
-- [ ] Users can reference via `"$schema": "https://.../schemas/crawl.schema.json"`
-- [ ] Publishing mechanism TBD (website, crate assets, etc.)
+- [x] Schema files use `.schema.json` extension and live in `schemas/` folder
+- [x] Users can reference via `"$schema": "https://.../schemas/crawl.schema.json"`
+- [x] Added example config files in `examples/` directory
+- [x] Updated README with schema table and usage instructions
+- [ ] Publishing mechanism TBD (currently using raw.githubusercontent.com URLs)
 
 ---
 
-## Phase 9: Offline Garbage Collection
+## Phase 9: Markdown Heading-Based Chunking
+
+**Goal:** Implement proper heading-based chunking for markdown files.
+
+### 11.1 Design Markdown Chunking Algorithm
+
+- [ ] Analyze markdown structure:
+  - Heading hierarchy (H1-H6)
+  - Code blocks, lists, tables
+  - Link/reference sections
+- [ ] Design chunk boundaries:
+  - Split at heading boundaries (each section becomes a chunk)
+  - Handle nested headings (H2 under H1)
+  - Include parent heading context in breadcrumbs
+- [ ] Consider special cases:
+  - Very large sections (need sub-chunking?)
+  - Code blocks (preserve as single unit?)
+  - Front matter (YAML metadata)
+
+### 10.2 Implement Markdown Chunker
+
+- [ ] Add `markdown` tree-sitter parser or custom parser
+- [ ] Implement `chunk_markdown(content, file_id, ctx, target_size)` function
+- [ ] Generate chunks with:
+  - Heading breadcrumb context
+  - Section boundaries
+  - Proper line numbers
+- [ ] Handle edge cases:
+  - Empty sections
+  - Very long code blocks
+  - Nested list structures
+
+### 9.3 Test Markdown Chunker
+
+- [ ] Test simple document with H1/H2/H3 sections
+- [ ] Test document with code blocks
+- [ ] Test document with tables
+- [ ] Test document with nested lists
+- [ ] Test very large markdown files
+- [ ] Compare chunk quality vs line-based chunking
+
+---
+
+## Phase 10: Offline Garbage Collection
 
 **Goal:** Provide a command to clean up orphaned chunks and recover storage.
 
-### 9.1 Implement GC Command
+### 11.1 Implement GC Command
 
 - [ ] Add `gc` command: `monodex gc --catalog rushstack`
 - [ ] Implementation:
@@ -540,7 +584,7 @@ In `src/engine/git_ops.rs`:
   - Report count and estimated storage recovered
 - [ ] Add `--dry-run` flag to show what would be deleted without actually deleting
 
-### 9.2 Test GC Scenarios
+### 10.2 Test GC Scenarios
 
 - [ ] Create orphaned chunks (interrupt a crawl, or delete a label's chunks manually)
 - [ ] Run `monodex gc --dry-run` and verify correct chunks identified
@@ -549,11 +593,11 @@ In `src/engine/git_ops.rs`:
 
 ---
 
-## Phase 10: Watch Mode
+## Phase 11: Watch Mode
 
 **Goal:** Continuously monitor and re-index a working directory as files change.
 
-### 10.1 Design Watch Mode Architecture
+### 11.1 Design Watch Mode Architecture
 
 - [ ] Research file watching libraries (notify, notify-debouncer-mini)
 - [ ] Decide on watch mode trigger:

@@ -1,0 +1,54 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "Monodex Crawl Config",
+  "description": "Crawl configuration for monodex - defines which files to index and how to chunk them",
+  "type": "object",
+  "required": ["version", "fileTypes", "patternsToExclude", "patternsToKeep"],
+  "additionalProperties": false,
+  "properties": {
+    "version": {
+      "type": "integer",
+      "description": "Config schema version (currently only 1 is supported)",
+      "const": 1
+    },
+    "fileTypes": {
+      "type": "object",
+      "description": "Maps file extensions to chunking strategies",
+      "additionalProperties": {
+        "type": "string",
+        "enum": ["typescript", "markdown", "lineBased"],
+        "description": "Chunking strategy name"
+      },
+      "examples": [
+        {
+          ".ts": "typescript",
+          ".tsx": "typescript",
+          ".md": "markdown",
+          ".yaml": "lineBased"
+        }
+      ]
+    },
+    "patternsToExclude": {
+      "type": "array",
+      "description": "Glob patterns for paths to exclude from indexing",
+      "items": {
+        "type": "string",
+        "description": "Glob pattern (supports ** for recursive, * for wildcard)"
+      },
+      "examples": [
+        ["node_modules/", "dist/", "**/*.test.ts", "**/package-lock.json"]
+      ]
+    },
+    "patternsToKeep": {
+      "type": "array",
+      "description": "Glob patterns that override exclusions (useful for keeping test files in src/)",
+      "items": {
+        "type": "string",
+        "description": "Glob pattern (supports ** for recursive, * for wildcard)"
+      },
+      "examples": [
+        ["src/", "test/"]
+      ]
+    }
+  }
+}

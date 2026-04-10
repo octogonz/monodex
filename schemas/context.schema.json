@@ -1,0 +1,26 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "Monodex Context",
+  "description": "Context file storing the default catalog and label for commands",
+  "type": "object",
+  "required": ["catalog", "label", "set_at"],
+  "additionalProperties": false,
+  "properties": {
+    "catalog": {
+      "type": "string",
+      "description": "Default catalog name for commands",
+      "examples": ["my_monorepo", "frontend_app"]
+    },
+    "label": {
+      "type": "string",
+      "description": "Default label name for indexing/searching",
+      "examples": ["main", "feature-branch", "v1.2.3"]
+    },
+    "set_at": {
+      "type": "string",
+      "format": "date-time",
+      "description": "ISO 8601 timestamp when the context was set",
+      "examples": ["2024-01-15T10:30:00Z"]
+    }
+  }
+}

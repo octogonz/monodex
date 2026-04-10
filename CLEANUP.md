@@ -56,7 +56,7 @@ diverges.
 
 - [x] Choose one ID strategy: either use raw `label_id` strings consistently (and URL-encode when needed), or use `string_to_uuid()` consistently for both read and write
 - [x] Update the DESIGN doc to match whichever strategy is chosen
-- [ ] Verify that `get_label_metadata()` actually works with a round-trip test
+- [x] Verify that `get_label_metadata()` actually works with a round-trip test
 
 ### A.3 — Existing-file label-add failures treated as "touched"
 
@@ -108,8 +108,8 @@ the catalog name instead of the correct package name. Since monorepo package att
 is the core breadcrumb feature, this is a significant correctness bug.
 
 - [x] Fix the directory extraction to produce the full relative path (strip only the trailing `/package.json` from the filepath)
-- [ ] Ensure `find_package_name()` and the index use the same path format (repo-relative, `/`-separated)
-- [ ] Add a test case with nested packages (e.g., `libraries/node-core-library/package.json`) to verify correct resolution
+- [x] Ensure `find_package_name()` and the index use the same path format (repo-relative, `/`-separated)
+- [x] Add a test case with nested packages (e.g., `libraries/node-core-library/package.json`) to verify correct resolution
 
 ---
 

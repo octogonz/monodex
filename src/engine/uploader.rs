@@ -1380,3 +1380,31 @@ pub struct PointResult {
     pub id: QdrantId,
     pub payload: PointPayload,
 }
+
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_label_metadata_id_round_trip_uses_same_uuid_strategy() {
+        let label_id = "rushstack:feature/foo";
+        let metadata = LabelMetadata {
+            source_type: "label-metadata".to_string(),
+            catalog: "rushstack".to_string(),
+            label_id: label_id.to_string(),
+            label_name: "feature/foo".to_string(),
+            commit_oid: "abc123".to_string(),
+            source_kind: "git-commit".to_string(),
+            crawl_complete: false,
+            updated_at_unix_secs: 123,
+        };
+
+        let upsert_point_id = crate::engine::util::string_to_uuid(&metadata.label_id);
+        let get_point_id = crate::engine::util::string_to_uuid(label_id);
+
+        assert_eq!(upsert_point_id, get_point_id);
+        assert_eq!(upsert_point_id.len(), 36);
+        assert!(upsert_point_id.contains('-'));
+    }
+}

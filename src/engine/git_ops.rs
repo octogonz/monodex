@@ -252,8 +252,11 @@ pub struct WorkingDirEntry {
 /// content hashes. Directory filtering is handled by passing the results through
 /// the compiled crawl config's `should_crawl()` method.
 ///
-/// Note: Only `.git` directories are explicitly excluded here. All other
-/// filtering (node_modules, dist, etc.) should be handled by the crawl config.
+/// Note: All dot-prefixed entries (hidden files and directories) are excluded
+/// during enumeration. This includes `.git`, `.cache`, `.temp`, `.idea`, `.vscode`,
+/// `.env`, and similar hidden paths. This is a pre-filter before crawl config
+/// evaluation, so crawl config cannot override this to include hidden paths.
+/// All other filtering (node_modules, dist, etc.) is handled by the crawl config.
 pub fn enumerate_working_directory(repo_path: &Path) -> Result<Vec<WorkingDirEntry>> {
     use std::fs;
 
@@ -491,8 +494,8 @@ mod tests {
         let entries =
             enumerate_working_directory(&repo_path).expect("Failed to enumerate working directory");
         assert!(!entries.is_empty(), "Should have found some files");
-        // README.md should be found (it's in the gitignore exclusion list but we only skip .git)
-        // Actually README.md is a regular file that should be found
+        // README.md should be found (it's a regular file that should be found)
+        // Note: Hidden files/directories (dot-prefixed) are skipped during enumeration
         assert!(entries.iter().any(|e| e.relative_path == "README.md"));
     }
 

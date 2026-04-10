@@ -162,12 +162,30 @@ code. The entire embed/upload/progress/uploader-thread pipeline is copy-pasted b
 them. The working-dir version is already a stale fork (it lacks the failure tracking
 added to the commit-based path).
 
-- [ ] Extract the shared embed → upload → checkpoint → progress pipeline into a common function
+- [x] Add shared types for crawl pipeline: `CrawlSource`, `CrawlFileEntry`, `CrawlFailures`
+- [x] Create `run_embed_upload_pipeline()` helper function with failure tracking
+- [ ] Refactor `run_crawl_label()` to use the shared helper
+- [ ] Refactor `run_crawl_working_dir()` to use the shared helper
 - [ ] Both crawl paths should differ only in: file enumeration source, blob_id vs content_hash, and label metadata fields
 
-**Progress**: CI warnings fixed (see commit). Added `#[allow(dead_code)]` with comments for
-intentionally unused functions/fields (future API surface), fixed clippy style warnings
-(collapsible if, needless borrow, type complexity via alias), and ran cargo fmt.
+**Progress (2026-04-10)**: 
+- Added shared types in `main.rs`: `CrawlSource` enum, `CrawlFileEntry` struct, `CrawlFailures` struct
+- Created `run_embed_upload_pipeline()` helper function (~300 lines) that handles:
+  - Parallel embedding with proper worker_index distribution
+  - Periodic checkpoint uploads (every 60s)
+  - Progress reporting thread
+  - Failure tracking (upload, file-complete, label-add, embedding)
+  - Final upload and cleanup
+- Helper function is ready but not yet wired into the crawl paths
+- Next step: Refactor `run_crawl_label()` to use the helper, then `run_crawl_working_dir()`
+
+**Note**: The helper function is currently marked as `#[allow(dead_code)]` until the crawl
+functions are refactored to use it. This is intentional incremental refactoring.
+
+**Stopping point**: The shared infrastructure is in place. The remaining refactoring to
+wire the helper into the crawl functions is a larger change that should be done in a
+dedicated session to ensure correctness. The current code compiles, tests pass, and the
+infrastructure is ready for use.
 
 ### C.2 — Consolidate package-name extraction
 

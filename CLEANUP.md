@@ -1,372 +1,166 @@
 # Monodex — Consolidated Punch List
 
-This document combines findings from multiple independent code reviews into a single
-prioritized work plan. Items are grouped by theme, with explanation and motivation
-preceding each batch of work items.
+This document is a revised, post-review punch list focused on the remaining
+functional and architectural issues that still matter for the next round of work.
+Items that appear reasonably addressed have been removed to keep this document
+actionable.
 
 ---
 
 ## Decisions (for future sessions)
 
-These clarifications were made during the review process:
+1. **Priority order**: Work through categories A→B→C unless there is a concrete reason to reorder.
 
-1. **Priority order**: Work through categories A→B→C→D→E→F unless there's a specific reason to reorder.
+2. **Bar for inclusion here**: This list is intentionally limited to correctness bugs,
+   failure-semantics gaps, and architectural mismatches likely to trip up future work.
+   Trivial cleanup and polish items are omitted.
 
-2. **A.2 Label metadata ID strategy**: Use UUID-derived point IDs consistently. Keep `string_to_uuid()` derivation for both `upsert_label_metadata()` and `get_label_metadata()`. DESIGN.md has been updated to reflect this.
+3. **Crawl config direction**: `crawl_config.rs` is the source of truth. Legacy wrappers
+   in `config.rs` should not remain on the hot crawl path.
 
-3. **A.7 Package index bug**: This was elevated to Category A (done) because it impacts breadcrumb quality for all nested packages in a monorepo.
-
-4. **D.4 "folder" catalog type**: Removed from docs/schema for now (not implemented). Can be re-added later if needed.
-
----
-
-## Notes
-
-### Work Item Tracking
-
-**Active work items** (categories A-E) are tracked in this document. 
-
-**Future feature work** (formerly category F) has been moved to DEV_PLAN.md under "Upcoming Features" to keep the development plan comprehensive and avoid fragmentation.
+4. **Catalog type direction**: `monorepo` is the only implemented catalog type for now.
+   Docs/schema were updated accordingly; runtime should enforce the same constraint.
 
 ---
 
 ## A. Crawl Correctness
 
-These are the highest-priority items. They affect whether the crawl produces correct,
-trustworthy data — the core promise of the tool.
+These are the highest-priority items because they affect whether a crawl can be trusted.
 
-### A.1 — Crawl failure semantics
+### A.1 — Existing-file label-add failures still do not count as crawl failure
 
-The DESIGN doc says label reassignment cleanup runs "ONLY after a fully successful crawl
-completion" and that interrupted/failed crawls must NOT trigger cleanup. The implementation
-does not enforce this. After the embed/upload phase, failures are counted and logged, but
-cleanup still runs unconditionally, and `crawl_complete` is still set to `true`.
+The shared crawl pipeline improved failure tracking, but there is still a correctness hole
+for already-indexed files.
 
-This can produce a state where some chunks failed to upload or failed to get labels
-assigned, but old chunks are removed and the label is marked complete anyway — silently
-losing previously-reachable content.
+In both crawl entry points, the "existing file" path attempts `add_label_to_file_chunks()`
+and logs failures, but those failures are not propagated into `CrawlFailures`. The final
+`had_failures` check only looks at `pipeline_failures`, so the crawl can still proceed as
+successful and mark `crawl_complete = true` even when label attachment failed for some
+already-indexed files.
 
-The working-directory crawl path has a second problem: it has no failure tracking at all
-(the `Arc<Mutex<Vec<String>>>` pattern used in the commit-based path was not carried over).
+That is a real data-visibility bug: the crawl may claim success while some files were not
+actually attached to the label.
 
-- [x] Track upload, file-complete, and label-add failures in both `run_crawl_label()` and `run_crawl_working_dir()`
-- [x] Skip label reassignment cleanup if any failures occurred during the crawl
-- [x] Skip setting `crawl_complete = true` if any failures occurred
-- [x] Add a summary line at the end reporting whether the crawl was fully successful or partial
+- [ ] Ensure failures from `add_label_to_file_chunks()` on already-indexed files are added to `CrawlFailures`
+- [ ] Make those failures participate in the same `had_failures` / partial-crawl logic as upload and embedding failures
+- [ ] Confirm the end-of-crawl summary reports these failures explicitly
 
-### A.2 — Label metadata identity mismatch
+### A.2 — Cleanup failure does not block `crawl_complete`
 
-`upsert_label_metadata()` stores label metadata under a UUID derived from `label_id`
-via `string_to_uuid()`, but `get_label_metadata()` fetches `/points/{label_id}` using
-the raw string. These will never match. Additionally, if label names contain `/`
-(e.g., `feature/foo`), the raw string in a URL path is fragile.
+The current logic skips cleanup when earlier crawl failures happened, which is good.
+However, if label reassignment cleanup itself fails (`remove_label_from_chunks()`), the
+code only logs a warning and still sets `crawl_complete = true`.
 
-The DESIGN doc says label IDs are used "directly as the point ID," but the implementation
-diverges.
+This violates the intended semantics that label cleanup only completes after a fully
+successful crawl transition. A failed cleanup means the label state may still be
+inconsistent.
 
-- [x] Choose one ID strategy: either use raw `label_id` strings consistently (and URL-encode when needed), or use `string_to_uuid()` consistently for both read and write
-- [x] Update the DESIGN doc to match whichever strategy is chosen
-- [x] Verify that `get_label_metadata()` actually works with a round-trip test
-
-### A.3 — Existing-file label-add failures treated as "touched"
-
-For already-indexed files, the sentinel check inserts the `file_id` into `existing_files`
-before calling `add_label_to_file_chunks()`. If that call fails, the file is still in
-`existing_files`, so cleanup skips it — but the label was never actually added. The file
-becomes invisible to search under that label.
-
-- [x] Only add to `existing_files` after `add_label_to_file_chunks()` succeeds, or track label-add failures separately and exclude failed files from the cleanup's "touched" set
-
-### A.4 — Embedding failures are silently dropped
-
-`all_chunks.into_par_iter().for_each()` swallows embedding errors — if `embedder.encode()`
-fails, the chunk vanishes with no log entry, no error counter, and no indication in the
-final summary. This applies to both crawl paths.
-
-- [x] Log embedding failures with the file path / chunk info
-- [x] Count embedding failures and include them in the crawl summary
-- [x] Consider whether embedding failures should prevent `crawl_complete = true`
-
-### A.5 — All parallel embeddings use worker_index=0
-
-The `ParallelEmbedder` creates multiple ONNX sessions to parallelize embedding work, but
-both crawl paths pass `worker_index = 0` for every chunk. Despite using `rayon::par_iter()`,
-all chunks contend on a single `Mutex<(Session, Tokenizer)>`, partially negating the
-benefit of the worker pool.
-
-- [x] Pass the rayon thread index or chunk index modulo `num_workers` instead of hardcoded `0`
-
-### A.6 — `--commit` and `--working-dir` mutual exclusion is not enforced
-
-The doc comments say these flags are mutually exclusive, but clap is not configured to
-enforce it. Since `--commit` has `default_value = "HEAD"`, passing `--working-dir` silently
-ignores whatever commit was specified.
-
-- [x] Add `#[arg(long, conflicts_with = "commit")]` to `working_dir`, or remove the `default_value` from `commit` and handle the default in code
-
-### A.7 — Package index extracts only the leaf directory name, not the full path
-
-`build_package_index_for_commit()` in `git_ops.rs` uses `rsplit('/').nth(1)` to extract
-the directory from a `package.json` path. This returns only the immediate parent folder
-name, not the full relative path. For example, `libraries/node-core-library/package.json`
-is indexed under key `"node-core-library"` instead of `"libraries/node-core-library"`.
-
-`find_package_name()` then walks full ancestor paths like `"libraries/node-core-library"`,
-`"libraries"`, `""` — none of which match the truncated key. This causes package name
-resolution to fail for essentially every nested package in a monorepo, falling back to
-the catalog name instead of the correct package name. Since monorepo package attribution
-is the core breadcrumb feature, this is a significant correctness bug.
-
-- [x] Fix the directory extraction to produce the full relative path (strip only the trailing `/package.json` from the filepath)
-- [x] Ensure `find_package_name()` and the index use the same path format (repo-relative, `/`-separated)
-- [x] Add a test case with nested packages (e.g., `libraries/node-core-library/package.json`) to verify correct resolution
+- [ ] Treat label-cleanup failure as crawl failure for completion semantics
+- [ ] Do not set `crawl_complete = true` when cleanup fails
+- [ ] Report cleanup failure in the final crawl summary as a first-class failure mode
 
 ---
 
 ## B. Crawl Configuration Wiring
 
-The crawl config system (Phase 8) was designed and built correctly — the schema, validation,
-discovery precedence, and compilation logic in `crawl_config.rs` are all sound. But the
-actual crawl path never uses it. Both `run_crawl_label()` and `run_crawl_working_dir()`
-still filter files through compatibility wrappers that hardwire the embedded default
-config, and add a second independent filter (`is_text_file()`) with its own extension
-list.
+The crawl config system itself is sound, but there are still places where actual behavior
+does not match the intended architecture.
 
-This means repo-local `monodex-crawl.json` files and user-global `crawl.json` files are
-completely ignored during actual crawls, and Phase 8 completion is overstated.
+### B.1 — Chunking strategy dispatch still ignores discovered crawl config
 
-### B.1 — Wire crawl config into the crawl flow
+Both crawl paths now load `CompiledCrawlConfig` and use it for `should_crawl()` filtering.
+But chunking still goes through `chunk_content()` → `get_chunk_strategy()` →
+`load_compiled_crawl_config(None)`, which falls back to the embedded default config.
 
-- [x] Load `CompiledCrawlConfig` once at crawl start using `load_compiled_crawl_config(Some(repo_path))` and pass it through the crawl pipeline
-- [x] Replace `should_skip_path()` calls with `compiled_config.should_crawl()` (done: both crawl paths now use crawl_config.should_crawl())
-- [x] Replace `is_text_file()` with `compiled_config.matches_file_type()` — eliminated (file type matching is now handled by should_crawl())
-- [x] Pass the compiled config to `chunk_content()` so strategy dispatch uses discovered config, not the embedded default
-- [x] Remove (or deprecate behind a feature flag) the `should_skip_path()` and `get_chunk_strategy()` compatibility wrappers in `config.rs` (kept for backward compatibility with dump-chunks command)
+This means repo-local or user-global crawl config can decide whether a file is crawled,
+but not reliably how it is chunked. For example, a repo can override a file type to use
+`markdown`, but the actual chunking path may still use the default strategy.
 
-### B.2 — Eliminate per-call config recompilation
+This is the most important remaining config-wiring bug.
 
-- [x] This is automatically fixed by B.1 (load once, pass through) — verified no other call sites remain that load-and-compile per file
+- [ ] Pass `CompiledCrawlConfig` (or the resolved strategy) into `chunk_content()`
+- [ ] Remove strategy dispatch from the legacy default-config wrapper on the hot crawl path
+- [ ] Keep any default-config fallback only for commands that truly have no repo context (e.g. ad hoc tooling)
+- [ ] Add a regression test proving that a repo-local `monodex-crawl.json` strategy override actually changes chunking behavior during a real crawl path
 
-### B.3 — Wire crawl config into working-directory enumeration
+### B.2 — Working-directory enumeration still hard-filters hidden paths
 
-- [x] Use the compiled crawl config for working-directory filtering instead of hardcoded directory lists
-- [x] Fix the `.git` directory exclusion: now properly excludes `.git` (hidden directories are skipped during filesystem walk, then crawl config filters the results)
+The working-directory crawl now uses crawl config for file filtering, but filesystem
+enumeration still excludes all dot-prefixed entries up front. That means hidden files and
+directories never reach crawl-config evaluation, regardless of configured include/exclude
+rules.
 
-### B.4 — Fix `.gitignore` claim
+This is an architectural mismatch: crawl config is supposed to be the main policy surface,
+but the enumerator still imposes hardcoded filtering before config gets a chance.
 
-- [x] Remove the `.gitignore` claim from the doc comment (the function now only excludes `.git` directories, all other filtering is delegated to crawl config)
+Also, some comments now claim only `.git` is excluded, which is no longer an accurate
+description of the actual behavior.
 
----
-
-## C. Code Deduplication and Cleanup
-
-The codebase has accumulated migration debt from the Phase 1-8 progression. Several
-subsystems exist in duplicate — an old version and a new version — with the old version
-still on the hot path. Cleaning this up reduces the surface area for bugs and makes the
-codebase easier to work in.
-
-### C.1 — Extract shared crawl pipeline
-
-`run_crawl_label()` and `run_crawl_working_dir()` are each ~500 lines with ~80% identical
-code. The entire embed/upload/progress/uploader-thread pipeline is copy-pasted between
-them. The working-dir version is already a stale fork (it lacks the failure tracking
-added to the commit-based path).
-
-- [x] Add shared types for crawl pipeline: `CrawlSource`, `CrawlFileEntry`, `CrawlFailures`
-- [x] Create `run_embed_upload_pipeline()` helper function with failure tracking
-- [x] Refactor `run_crawl_label()` to use the shared helper
-- [x] Refactor `run_crawl_working_dir()` to use the shared helper
-- [x] Both crawl paths should differ only in: file enumeration source, blob_id vs content_hash, and label metadata fields
-
-**Progress (2026-04-10)**: 
-- Added shared types in `main.rs`: `CrawlSource` enum, `CrawlFileEntry` struct, `CrawlFailures` struct
-- Created `run_embed_upload_pipeline()` helper function (~300 lines) that handles:
-  - Parallel embedding with proper worker_index distribution
-  - Periodic checkpoint uploads (every 60s)
-  - Progress reporting thread
-  - Failure tracking (upload, file-complete, label-add, embedding)
-  - Final upload and cleanup
-- Refactored `run_crawl_label()` to use the shared helper (reduced ~310 lines of inline code)
-- Refactored `run_crawl_working_dir()` to use the shared helper (reduced ~285 lines of inline code)
-- Total reduction: ~614 lines (from 2689 to 2075)
-- Helper now returns `anyhow::Result<(HashSet<String>, CrawlFailures)>` to propagate embedder init failures
-- Removed unused `_collection` and `_qdrant_url` parameters from helper
-- Removed stale `#[allow(dead_code)]` markers and TODO comments from active code
-- Both crawl paths now have consistent failure handling semantics
-
-**Note**: `CrawlSource` and `CrawlFileEntry` are prepared for future use but not yet
-integrated - they are marked with `#[allow(dead_code)]` and will be used in future
-refactoring to further unify the crawl entry points.
-
-### C.2 — Consolidate package-name extraction
-
-Two independent implementations parse package.json by ad-hoc string search:
-`extract_package_name_from_bytes()` in `git_ops.rs` and `extract_package_name()` in
-`package_lookup.rs`. Both are fragile — they find the first textual `"name"` key, which
-can misfire on package.json files where a nested object's `"name"` appears first.
-
-`serde_json` is already a dependency.
-
-- [x] Replace both string-search implementations with a single JSON-parsing implementation (e.g., `serde_json::from_slice` with a struct that has `name: Option<String>`)
-- [x] Put the canonical implementation in one place (probably `git_ops.rs` since that's where both callers live)
-- [x] Either remove `package_lookup.rs` entirely (it appears unused by the crawl path) or clearly document its role as a filesystem-only convenience for `dump-chunks`
-
-### C.3 — Consolidate SHA256 hashing — WONTFIX
-
-Three places compute SHA256 with `sha256:` prefix independently: `util::compute_hash()`,
-`git_ops::compute_content_hash()`, and inline in `markdown_partitioner.rs`. This is real
-duplication but each is ~4 lines of identical logic that won't drift (SHA256 is SHA256).
-Fix opportunistically when touching adjacent code; not worth a standalone work item.
-
-- [x] WONTFIX — fix opportunistically when touching adjacent code
-
-### C.4 — Remove unused dependencies
-
-- [x] Remove `ndarray` from Cargo.toml (not imported anywhere)
-- [x] Remove `uuid` from Cargo.toml (UUIDs are generated via custom `string_to_uuid()`, not the crate)
-- [x] Remove `serde_bytes` from Cargo.toml (not imported anywhere)
-
-### C.5 — Remove or mark legacy Qdrant methods
-
-Several uploader methods are leftovers from pre-label API surface:
-
-- `query()` — catalog-only search, superseded by `search_with_label()`
-- `get_chunks_by_file_id()` — unfiltered by label, superseded by `get_chunks_by_file_id_with_label()`
-- `get_point()` — explicitly marked legacy
-- `delete_file()` — filters by `source_uri`, doesn't match the file-id-centric model
-- `Shr` trait implementations on `QdrantId` — never used
-
-- [x] Remove unused methods, or gate them behind `#[cfg(test)]` / `#[allow(dead_code)]` with a clear "legacy — remove after migration" comment
-- [x] Remove the `Shr` trait implementations for `QdrantId`
-
-### C.6 — Fix stale comments and doc strings — WONTFIX
-
-Several comments now misdescribe behavior after migration steps. These should be fixed
-opportunistically as adjacent code is touched, not as a dedicated pass.
-
-- [x] WONTFIX — fix individually when touching the relevant file in other work items
+- [ ] Decide whether working-dir enumeration should exclude only `.git` by default, or whether broader hidden-path exclusion is intentional
+- [ ] Align the implementation with that decision
+- [ ] If crawl config is intended to own inclusion policy, stop pre-filtering all dot-prefixed entries before config evaluation
+- [ ] Update stale comments/docstrings so they describe the actual enumeration behavior
 
 ---
 
-## D. Spec/Implementation Alignment
+## C. Spec / Runtime Alignment
 
-The DESIGN doc, DEV_PLAN, README, and code have drifted apart in several places. This
-creates false confidence for developers working with the plan and confusion for users
-reading the README.
+These issues matter because they create false confidence for the next round of work or
+cause users/developers to copy invalid examples.
 
-### D.1 — Fix strategy naming inconsistency
+### C.1 — Runtime still does not enforce `monorepo` as the only supported catalog type
 
-DESIGN.md lists valid strategies as: `typescript`, `javascript`, `markdown`, `json`,
-`simpleLine`. The implementation (`crawl_config.rs:240`) only accepts: `typescript`,
-`markdown`, `lineBased`. The JSON schema (`crawl.schema.json`) matches the code. The
-README config table uses `lineBased`.
+Docs/schema/examples were updated to remove `folder`, but runtime config loading still
+accepts arbitrary catalog type strings and does not reject unsupported values. If config
+validation is bypassed or drift occurs again, the binary will still accept unsupported
+types without implementing distinct behavior.
 
-- [x] Update DESIGN.md strategy table to match implementation: remove `javascript`, `json`, `simpleLine`; use `lineBased`
-- [x] Defer support for additional config strategy names unless/until they are implemented in `crawl_config.rs`
+At this point, runtime should enforce the same invariant the docs and schema already
+communicate.
 
-### D.2 — Fix point ID format descriptions
+- [ ] Validate catalog type during config loading / startup
+- [ ] Reject unsupported values with a clear error message
+- [ ] Remove or update any remaining runtime comments implying `"folder"` is supported
 
-Three sources disagree on point ID format:
-- DESIGN says `hash(file_id + chunk_ordinal)`
-- DEV_PLAN says `<file_id>:<ordinal>`
-- Code returns a UUID-shaped deterministic hash string
+### C.2 — `DESIGN.md` still contains a stale strategy example
 
-- [x] Update DESIGN.md and DEV_PLAN to describe the actual implementation: `string_to_uuid(format!("{}:{}", file_id, chunk_ordinal))`
+The strategy table was corrected, but an example config block in `DESIGN.md` still shows
+a stale strategy value (`simpleLine`). Copying that example into a real crawl config will
+fail validation because the implementation/schema only accept the currently supported
+strategy names.
 
-### D.3 — Fix `deny_unknown_fields` completion claim — WONTFIX (roll into B.1)
+This is not a runtime bug, but it is still worth fixing because it will mislead the next
+person using the design doc as a source of truth.
 
-DEV_PLAN Phase 8.4 says `deny_unknown_fields` was added to all config structs. Only
-`CatalogConfig` and `CrawlConfig` actually have it. `Config`, `QdrantConfig`, and
-`DefaultContext` do not. This is a three-line fix with near-zero blast radius — users
-with config typos will notice immediately because the tool won't find their catalog.
-
-- [x] WONTFIX as standalone item — add the annotations when touching config structs during B.1
-
-### D.4 — Fix `folder` catalog type
-
-The README, config schema, and example config all support `type: "folder"` and describe
-distinct behavior (using parent folder name as package identifier). The implementation
-never branches on catalog type — it always uses package.json-based resolution.
-
-- [x] Either implement folder catalog semantics (use parent folder name when no package.json found), or remove `folder` from the docs/schema until implemented, and validate that `type` is `"monorepo"` in config loading
-
-### D.5 — Fix tilde expansion for catalog paths
-
-The example config uses `~/projects/...` for catalog paths, but the code passes the raw
-string to `Path::new()` without shell expansion. Users who copy the example will get
-"path not found" errors.
-
-- [x] Apply `shellexpand::tilde()` to `catalog_config.path` (it's already used for config and context file paths)
-
-### D.6 — Fix `get_file_sentinel` signature mismatch
-
-DEV_PLAN says `get_file_sentinel(file_id, label_id)` was added, but the implementation
-has `get_file_sentinel(file_id)` with no label filtering on the sentinel check.
-
-- [x] Update DEV_PLAN to reflect the actual signature, or add label filtering if the design intent was to scope sentinel checks by label
-
-### D.7 — Fix markdown feature description
-
-Markdown support is currently described three different ways across the docs:
-- README feature list says it's supported
-- README config table says "TODO: currently line-based"
-- DEV_PLAN Phase 9 says it's future work
-- `markdown_partitioner.rs` exists with tests and snapshots
-- `chunker.rs` still uses line-based splitting
-
-- [x] Wire `partition_markdown()` into `chunk_content()` for the `Markdown` strategy branch
-- [x] Update README to remove the "TODO" hedge
-- [x] Update DEV_PLAN Phase 9 to mark the basic implementation as complete, with remaining items for sub-chunking, front matter, etc.
-
-### D.8 — Fix README architecture section
-
-The README architecture file tree doesn't list `crawl_config.rs`, and describes `config.rs`
-as "File exclusion rules" when it's now just a thin compatibility wrapper.
-
-- [x] Update the architecture file tree to include `crawl_config.rs`
-- [x] Update the `config.rs` description to "Legacy compatibility wrapper (delegates to crawl_config)"
-
-### D.9 — Update `CHUNKER_ID` or document its scope — WONTFIX
-
-`CHUNKER_ID` is `"typescript-partitioner:v1"` but it's used in file_id computation for
-all file types. This is semantically misleading for markdown and line-based files, even
-if functionally correct (changing it would invalidate all existing IDs, which is the
-designed mechanism). A one-line comment is fine but doesn't need its own work item.
-
-- [x] WONTFIX — add a clarifying comment when the markdown partitioner is wired in (D.7)
-
----
-
-## E. Hardening
-
-These items improve robustness and security without changing core functionality.
-
-### E.1 — Sanitize non-code output fields
-
-The README says code lines are prefixed with `>` to prevent injection. But breadcrumbs,
-catalog names, relative paths, and source URIs are printed raw. A malicious repository
-could embed terminal control sequences in file paths or headings.
-
-- [x] Sanitize or escape non-code fields in search and view output (strip control characters at minimum)
-
-### E.2 — Fix `source_uri` format — WONTFIX
-
-`source_uri` is built as `"{repo_path}:{relative_path}"`, which is not a URI and is
-ambiguous on Windows (drive letters contain `:`). But the field is explicitly documented
-as "best-effort display/debug locator, NOT a key." Nobody is parsing it. Making it a
-proper `file://` URI adds complexity for zero user benefit.
-
-- [x] WONTFIX — the field serves its purpose as-is
-
-### E.3 — Fix `chrono_timestamp()` — WONTFIX
-
-The function name implies it uses the chrono crate but it does manual UTC epoch math.
-The displayed time is always UTC with no timezone indicator. This is purely cosmetic —
-the timestamps work, the function is internal, and users aren't making decisions based
-on the exact time shown in progress logs.
-
-- [x] WONTFIX — rename opportunistically if the function is touched for other reasons
+- [ ] Update the stale `DESIGN.md` example config to use supported strategy names only
+- [ ] Remove any example entries for file types that are excluded by default and not meant to be configured in the example
+- [ ] Do a quick pass for any other copied strategy examples that still reference old names
 
 ---
 
 ## Notes
+
+### What is intentionally not included here
+
+The previous review found many checklist items that now look reasonably addressed, including:
+
+- shared crawl pipeline extraction,
+- worker distribution for parallel embedding,
+- package-index nested path fix,
+- markdown partitioner wiring,
+- non-code output sanitization,
+- dependency cleanup,
+- package-name extraction deduplication.
+
+Those are omitted from this revised list so the next round stays focused on the remaining
+correctness and architecture gaps.
+
+### Completion bar for this document
+
+This document should be considered complete only when:
+
+1. a crawl cannot be marked complete after any label-add or cleanup failure,
+2. discovered crawl config actually controls chunking strategy during real crawls,
+3. working-dir enumeration behavior is consciously aligned with crawl-config ownership,
+4. runtime validation matches the documented/schematized catalog model,
+5. design docs no longer contain invalid config examples.

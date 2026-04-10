@@ -34,7 +34,7 @@ type EmbedChannel = (
 // ============================================================================
 
 /// Source type for crawling
-/// TODO: Will be used when refactoring crawl functions to use shared pipeline
+/// (Prepared for future refactoring to further unify crawl entry points)
 #[allow(dead_code)]
 #[derive(Debug, Clone)]
 enum CrawlSource {
@@ -44,8 +44,8 @@ enum CrawlSource {
     WorkingDirectory,
 }
 
-#[allow(dead_code)]
 impl CrawlSource {
+    #[allow(dead_code)]
     /// Get the source kind string for label metadata
     fn source_kind(&self) -> &'static str {
         match self {
@@ -55,6 +55,7 @@ impl CrawlSource {
     }
 
     /// Get the commit OID (empty string for working directory)
+    #[allow(dead_code)]
     fn commit_oid(&self) -> &str {
         match self {
             CrawlSource::GitCommit { commit_oid } => commit_oid,
@@ -64,7 +65,7 @@ impl CrawlSource {
 }
 
 /// File entry from crawl source
-/// TODO: Will be used when refactoring crawl functions to use shared pipeline
+/// (Prepared for future refactoring to further unify crawl entry points)
 #[allow(dead_code)]
 #[derive(Debug, Clone)]
 struct CrawlFileEntry {
@@ -73,8 +74,6 @@ struct CrawlFileEntry {
 }
 
 /// Failure tracking for crawl pipeline
-/// TODO: Will be used when refactoring crawl functions to use shared pipeline
-#[allow(dead_code)]
 #[derive(Debug, Default)]
 struct CrawlFailures {
     upload_failures: Vec<String>,
@@ -83,7 +82,6 @@ struct CrawlFailures {
     embedding_failures: Vec<String>,
 }
 
-#[allow(dead_code)]
 impl CrawlFailures {
     fn total(&self) -> usize {
         self.upload_failures.len()
@@ -532,16 +530,11 @@ fn run_use(catalog: Option<&str>, label: Option<String>) -> anyhow::Result<()> {
 
 /// Run the embedding and upload pipeline with progress reporting
 /// Returns (touched_file_ids, failures) for the crawl
-/// TODO: Will be used when refactoring crawl functions to use shared pipeline
-#[allow(dead_code)]
-#[allow(clippy::too_many_arguments)]
 fn run_embed_upload_pipeline(
     all_chunks: Vec<engine::Chunk>,
     uploader: QdrantUploader,
     label_id: &str,
-    _collection: &str,
-    _qdrant_url: Option<&str>,
-) -> (HashSet<String>, CrawlFailures) {
+) -> anyhow::Result<(HashSet<String>, CrawlFailures)> {
     use crossbeam_channel::unbounded;
     use rayon::prelude::*;
     use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
@@ -551,7 +544,7 @@ fn run_embed_upload_pipeline(
     let failures = CrawlFailures::default();
 
     if all_chunks.is_empty() {
-        return (touched_file_ids, failures);
+        return Ok((touched_file_ids, failures));
     }
 
     // Track file IDs from chunks
@@ -563,14 +556,8 @@ fn run_embed_upload_pipeline(
 
     let total_chunks = all_chunks.len();
 
-    // Initialize parallel embedder
-    let embedder = match ParallelEmbedder::new() {
-        Ok(e) => e,
-        Err(e) => {
-            eprintln!("❌ Failed to initialize embedder: {}", e);
-            return (touched_file_ids, failures);
-        }
-    };
+    // Initialize parallel embedder - propagate error to caller
+    let embedder = ParallelEmbedder::new()?;
 
     println!(
         "⚡ Phase 3: Embedding {} chunks with {} parallel sessions...",
@@ -855,7 +842,7 @@ fn run_embed_upload_pipeline(
     }
     println!();
 
-    (touched_file_ids, failures)
+    Ok((touched_file_ids, failures))
 }
 
 // ============================================================================
@@ -869,11 +856,7 @@ fn run_crawl_label(
     commit: &str,
     _incremental_warnings: bool,
 ) -> anyhow::Result<()> {
-    use crossbeam_channel::unbounded;
     use engine::util::{CHUNKER_ID, EMBEDDER_ID, compute_file_id};
-    use rayon::prelude::*;
-    use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
-    use std::sync::{Arc, Mutex};
 
     let total_start = std::time::Instant::now();
     println!("🔍 Starting label-aware crawl...");
@@ -1019,20 +1002,9 @@ fn run_crawl_label(
     let mut all_chunks: Vec<engine::Chunk> = Vec::new();
     let mut touched_file_ids: HashSet<String> = HashSet::new();
 
-    // A.1/A.4: Failure tracking - declared at function scope for cleanup logic
-    let upload_failures: Arc<Mutex<Vec<String>>> = Arc::new(Mutex::new(Vec::new()));
-    let file_complete_failures: Arc<Mutex<Vec<String>>> = Arc::new(Mutex::new(Vec::new()));
-    let label_add_failures: Arc<Mutex<Vec<String>>> = Arc::new(Mutex::new(Vec::new()));
-    let embedding_failures: Arc<Mutex<Vec<String>>> = Arc::new(Mutex::new(Vec::new()));
-
     if !new_files.is_empty() {
-        // Initialize parallel embedder
-        println!("⚙️  Loading embedding model...");
-        let embedder = ParallelEmbedder::new()?;
-        println!();
-
         println!(
-            "📦 Phase 2: Chunking and embedding {} new files...",
+            "📦 Phase 2: Chunking {} new files...",
             new_count
         );
 
@@ -1100,314 +1072,18 @@ fn run_crawl_label(
         let total_chunks = all_chunks.len();
         println!("\n  Found {} chunks to embed", total_chunks);
         println!();
-
-        if !all_chunks.is_empty() {
-            // Phase 3: Parallel embedding
-            println!(
-                "⚡ Phase 3: Embedding {} chunks with {} parallel sessions...",
-                total_chunks,
-                embedder.num_workers()
-            );
-            println!("  (Checkpoints every 60s - safe to CTRL+C)");
-            let embed_start = std::time::Instant::now();
-
-            let (embed_tx, embed_rx): EmbedChannel = unbounded();
-            let processed = Arc::new(AtomicUsize::new(0));
-            let stop_flag = Arc::new(AtomicBool::new(false));
-            let last_upload_time = Arc::new(Mutex::new(std::time::Instant::now()));
-
-            // Progress reporter thread
-            let processed_clone = Arc::clone(&processed);
-            let stop_clone = Arc::clone(&stop_flag);
-            let total_chunks_for_thread = total_chunks;
-            let embed_start_for_thread = std::time::Instant::now();
-            let last_print_time = Arc::new(Mutex::new(std::time::Instant::now()));
-            let last_print_clone = Arc::clone(&last_print_time);
-
-            let progress_thread = std::thread::spawn(move || {
-                while !stop_clone.load(Ordering::Relaxed) {
-                    std::thread::sleep(std::time::Duration::from_secs(5));
-                    let mut last = last_print_clone.lock().unwrap();
-                    if last.elapsed() >= std::time::Duration::from_secs(30) {
-                        let current = processed_clone.load(Ordering::Relaxed);
-                        let elapsed = embed_start_for_thread.elapsed();
-                        let rate = current as f64 / elapsed.as_secs_f64().max(0.001);
-                        let remaining = (total_chunks_for_thread - current) as f64 / rate;
-                        let eta = format_eta(remaining);
-                        eprintln!(
-                            "[{}] Embedded {}/{} ({:.0}%) - {:.1} chunks/sec - ETA: {}",
-                            chrono_timestamp(),
-                            current,
-                            total_chunks_for_thread,
-                            (current as f64 / total_chunks_for_thread as f64) * 100.0,
-                            rate,
-                            eta
-                        );
-                        *last = std::time::Instant::now();
-                    }
-                }
-            });
-
-            // Wrap uploader in Arc<Mutex>
-            let uploader = Arc::new(Mutex::new(uploader));
-
-            // Uploader thread (failure tracking vars already declared at function scope)
-            let stop_uploader = Arc::clone(&stop_flag);
-            let last_upload_time_clone = Arc::clone(&last_upload_time);
-            let uploader_clone = Arc::clone(&uploader);
-            let label_id_clone = label_id.clone();
-            let upload_failures_clone = Arc::clone(&upload_failures);
-            let file_complete_failures_clone = Arc::clone(&file_complete_failures);
-            let label_add_failures_clone = Arc::clone(&label_add_failures);
-
-            let uploader_thread = std::thread::spawn(move || {
-                let mut accumulated: Vec<(engine::Chunk, Vec<f32>)> = Vec::new();
-                let mut expected_count: HashMap<String, usize> = HashMap::new();
-                let mut uploaded_count: HashMap<String, usize> = HashMap::new();
-
-                loop {
-                    let should_upload = {
-                        let mut last = last_upload_time_clone.lock().unwrap();
-                        if last.elapsed() >= std::time::Duration::from_secs(60) {
-                            *last = std::time::Instant::now();
-                            true
-                        } else {
-                            false
-                        }
-                    };
-
-                    while let Ok(embedded) = embed_rx.try_recv() {
-                        let file_id = embedded.0.file_id.clone();
-                        if let std::collections::hash_map::Entry::Vacant(e) =
-                            expected_count.entry(file_id.clone())
-                        {
-                            e.insert(embedded.0.chunk_count);
-                        }
-                        accumulated.push(embedded);
-                    }
-
-                    if should_upload && !accumulated.is_empty() {
-                        let count = accumulated.len();
-                        eprintln!(
-                            "[{}] Uploading checkpoint ({} chunks)...",
-                            chrono_timestamp(),
-                            count
-                        );
-
-                        let uploader_guard = uploader_clone.lock().unwrap();
-                        match uploader_guard.upload_batch(&accumulated) {
-                            Err(e) => {
-                                eprintln!("[{}] ❌ Upload failed: {}", chrono_timestamp(), e);
-                                // Track which files failed
-                                let mut failures = upload_failures_clone.lock().unwrap();
-                                for (chunk, _) in &accumulated {
-                                    let file_id = &chunk.file_id;
-                                    if !failures.contains(file_id) {
-                                        failures.push(format!("{}: {}", file_id, e));
-                                    }
-                                }
-                            }
-                            Ok(_) => {
-                                let mut files_in_batch: HashMap<String, usize> = HashMap::new();
-                                for (chunk, _) in &accumulated {
-                                    *files_in_batch.entry(chunk.file_id.clone()).or_insert(0) += 1;
-                                }
-                                for (file_id, batch_count) in &files_in_batch {
-                                    *uploaded_count.entry(file_id.clone()).or_insert(0) +=
-                                        batch_count;
-                                }
-
-                                let mut completed_files: Vec<String> = Vec::new();
-                                for file_id in files_in_batch.keys() {
-                                    let uploaded =
-                                        uploaded_count.get(file_id).copied().unwrap_or(0);
-                                    let expected =
-                                        expected_count.get(file_id).copied().unwrap_or(0);
-                                    if uploaded == expected && expected > 0 {
-                                        completed_files.push(file_id.clone());
-                                    }
-                                }
-
-                                for file_id in &completed_files {
-                                    if let Err(e) = uploader_guard.mark_file_complete(file_id) {
-                                        eprintln!(
-                                            "[{}] ❌ Failed to mark file complete: {}",
-                                            chrono_timestamp(),
-                                            e
-                                        );
-                                        file_complete_failures_clone
-                                            .lock()
-                                            .unwrap()
-                                            .push(format!("{}: {}", file_id, e));
-                                    }
-                                    // Add label to the file
-                                    if let Err(e) = uploader_guard
-                                        .add_label_to_file_chunks(file_id, &label_id_clone)
-                                    {
-                                        eprintln!(
-                                            "[{}] ❌ Failed to add label: {}",
-                                            chrono_timestamp(),
-                                            e
-                                        );
-                                        label_add_failures_clone
-                                            .lock()
-                                            .unwrap()
-                                            .push(format!("{}: {}", file_id, e));
-                                    }
-                                }
-                            }
-                        }
-                        accumulated.clear();
-                    }
-
-                    if stop_uploader.load(Ordering::Relaxed) && embed_rx.is_empty() {
-                        // Final upload
-                        if !accumulated.is_empty() {
-                            let count = accumulated.len();
-                            eprintln!(
-                                "[{}] Final upload ({} chunks)...",
-                                chrono_timestamp(),
-                                count
-                            );
-
-                            let uploader_guard = uploader_clone.lock().unwrap();
-                            match uploader_guard.upload_batch(&accumulated) {
-                                Ok(_) => {
-                                    let mut files_in_batch: HashMap<String, usize> = HashMap::new();
-                                    for (chunk, _) in &accumulated {
-                                        *files_in_batch
-                                            .entry(chunk.file_id.clone())
-                                            .or_insert(0) += 1;
-                                    }
-                                    for file_id in files_in_batch.keys() {
-                                        if let Err(e) = uploader_guard.mark_file_complete(file_id) {
-                                            eprintln!(
-                                                "[{}] ❌ Failed to mark file complete: {}",
-                                                chrono_timestamp(),
-                                                e
-                                            );
-                                            file_complete_failures_clone
-                                                .lock()
-                                                .unwrap()
-                                                .push(format!("{}: {}", file_id, e));
-                                        }
-                                        if let Err(e) = uploader_guard
-                                            .add_label_to_file_chunks(file_id, &label_id_clone)
-                                        {
-                                            eprintln!(
-                                                "[{}] ❌ Failed to add label: {}",
-                                                chrono_timestamp(),
-                                                e
-                                            );
-                                            label_add_failures_clone
-                                                .lock()
-                                                .unwrap()
-                                                .push(format!("{}: {}", file_id, e));
-                                        }
-                                    }
-                                }
-                                Err(e) => {
-                                    eprintln!(
-                                        "[{}] ❌ Final upload failed: {}",
-                                        chrono_timestamp(),
-                                        e
-                                    );
-                                    let mut failures = upload_failures_clone.lock().unwrap();
-                                    for (chunk, _) in &accumulated {
-                                        let file_id = &chunk.file_id;
-                                        if !failures.iter().any(|f| f.starts_with(file_id)) {
-                                            failures.push(format!("{}: {}", file_id, e));
-                                        }
-                                    }
-                                }
-                            }
-                        }
-                        break;
-                    }
-
-                    std::thread::sleep(std::time::Duration::from_millis(100));
-                }
-            });
-
-            // Parallel embedding (A.5: use proper worker_index, A.4: track embedding failures)
-            let processed_clone = Arc::clone(&processed);
-            let embedding_failures_clone = Arc::clone(&embedding_failures);
-            let num_workers = embedder.num_workers();
-
-            all_chunks
-                .into_par_iter()
-                .enumerate()
-                .for_each(|(idx, chunk)| {
-                    let worker_index = idx % num_workers;
-                    match embedder.encode(&chunk.text, worker_index) {
-                        Ok(embedding) => {
-                            let _ = embed_tx.send((chunk, embedding));
-                            processed_clone.fetch_add(1, Ordering::Relaxed);
-                        }
-                        Err(e) => {
-                            // A.4: Log embedding failures (not silently dropped)
-                            eprintln!(
-                                "\n[{}] ❌ Embedding failed for {}:{} - {}",
-                                chrono_timestamp(),
-                                chunk.relative_path,
-                                chunk.chunk_ordinal,
-                                e
-                            );
-                            let mut failures = embedding_failures_clone.lock().unwrap();
-                            failures.push(format!(
-                                "{}:{}: {}",
-                                chunk.relative_path, chunk.chunk_ordinal, e
-                            ));
-                        }
-                    }
-                });
-
-            // Signal completion
-            stop_flag.store(true, Ordering::Relaxed);
-            progress_thread.join().ok();
-            uploader_thread.join().ok();
-
-            let embed_elapsed = embed_start.elapsed();
-            let rate = total_chunks as f64 / embed_elapsed.as_secs_f64().max(0.001);
-            println!(
-                "\n  Embedding complete: {} chunks in {} ({:.1} chunks/sec)",
-                total_chunks,
-                format_duration(embed_elapsed.as_secs_f64()),
-                rate
-            );
-
-            // Report any failures from embedding/upload pipeline
-            let upload_failures_count = upload_failures.lock().unwrap().len();
-            let file_complete_failures_count = file_complete_failures.lock().unwrap().len();
-            let label_add_failures_count = label_add_failures.lock().unwrap().len();
-            let embedding_failures_count = embedding_failures.lock().unwrap().len();
-
-            let total_failures = upload_failures_count
-                + file_complete_failures_count
-                + label_add_failures_count
-                + embedding_failures_count;
-
-            if total_failures > 0 {
-                println!();
-                println!(
-                    "  ⚠️  Encountered {} embedding failures, {} upload failures, {} file-complete failures, {} label-add failures",
-                    embedding_failures_count,
-                    upload_failures_count,
-                    file_complete_failures_count,
-                    label_add_failures_count
-                );
-                println!("      These files may not be searchable. Check logs above for details.");
-            }
-            println!();
-        }
     }
 
-    // A.1: Compute total failures across all phases
-    let total_failures = upload_failures.lock().unwrap().len()
-        + file_complete_failures.lock().unwrap().len()
-        + label_add_failures.lock().unwrap().len()
-        + embedding_failures.lock().unwrap().len();
-    let had_failures = total_failures > 0;
+    // Phase 3: Run the shared embed/upload pipeline (handles empty chunks gracefully)
+    let (pipeline_file_ids, pipeline_failures) = run_embed_upload_pipeline(
+        all_chunks,
+        uploader,
+        &label_id,
+    )?;
+
+    // Merge file IDs from pipeline with those tracked during chunking
+    touched_file_ids.extend(pipeline_file_ids);
+    let had_failures = pipeline_failures.has_failures();
 
     // Step 7: Label reassignment cleanup (A.1: ONLY after fully successful crawl)
     // Remove label from chunks that were NOT touched in this crawl
@@ -1477,7 +1153,7 @@ fn run_crawl_label(
             "  Existing files updated successfully: {}",
             existing_files.len()
         );
-        println!("  Total failures: {}", total_failures);
+        println!("  Total failures: {}", pipeline_failures.total());
         println!();
         println!("  This crawl is marked as incomplete. Re-run to complete indexing.");
     } else {
@@ -1509,11 +1185,7 @@ fn run_crawl_working_dir(
     label_name: &str,
     _incremental_warnings: bool,
 ) -> anyhow::Result<()> {
-    use crossbeam_channel::unbounded;
     use engine::util::{CHUNKER_ID, EMBEDDER_ID, compute_file_id};
-    use rayon::prelude::*;
-    use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
-    use std::sync::{Arc, Mutex};
 
     let total_start = std::time::Instant::now();
     println!("🔍 Starting working directory crawl...");
@@ -1659,23 +1331,13 @@ fn run_crawl_working_dir(
     // Replace existing_files with only the successful ones
     let existing_files: HashSet<String> = label_add_success_files;
 
-    // Index new files
+    // Step 6: Index new files
     let mut all_chunks: Vec<engine::Chunk> = Vec::new();
     let mut touched_file_ids: HashSet<String> = HashSet::new();
 
-    // A.1/A.4: Failure tracking - declared at function scope for cleanup logic
-    let upload_failures: Arc<Mutex<Vec<String>>> = Arc::new(Mutex::new(Vec::new()));
-    let file_complete_failures: Arc<Mutex<Vec<String>>> = Arc::new(Mutex::new(Vec::new()));
-    let label_add_failures: Arc<Mutex<Vec<String>>> = Arc::new(Mutex::new(Vec::new()));
-    let embedding_failures: Arc<Mutex<Vec<String>>> = Arc::new(Mutex::new(Vec::new()));
-
     if !new_files.is_empty() {
-        println!("⚙️  Loading embedding model...");
-        let embedder = ParallelEmbedder::new()?;
-        println!();
-
         println!(
-            "📦 Phase 2: Chunking and embedding {} new files...",
+            "📦 Phase 2: Chunking {} new files...",
             new_count
         );
 
@@ -1718,6 +1380,7 @@ fn run_crawl_working_dir(
                 source_uri: format!("{}:{}", repo_path.display(), relative_path),
             };
 
+            // Chunk the content
             match chunk_content(&content_str, &ctx, 6000) {
                 Ok(chunks) => {
                     if !chunks.is_empty() {
@@ -1734,297 +1397,20 @@ fn run_crawl_working_dir(
         let total_chunks = all_chunks.len();
         println!("\n  Found {} chunks to embed", total_chunks);
         println!();
-
-        if !all_chunks.is_empty() {
-            // Embed and upload (same as commit-based crawl)
-            println!(
-                "⚡ Phase 3: Embedding {} chunks with {} parallel sessions...",
-                total_chunks,
-                embedder.num_workers()
-            );
-            println!("  (Checkpoints every 60s - safe to CTRL+C)");
-            let embed_start = std::time::Instant::now();
-
-            let (embed_tx, embed_rx): EmbedChannel = unbounded();
-            let processed = Arc::new(AtomicUsize::new(0));
-            let stop_flag = Arc::new(AtomicBool::new(false));
-            let last_upload_time = Arc::new(Mutex::new(std::time::Instant::now()));
-
-            let processed_clone = Arc::clone(&processed);
-            let stop_clone = Arc::clone(&stop_flag);
-            let total_chunks_for_thread = total_chunks;
-            let embed_start_for_thread = std::time::Instant::now();
-            let last_print_clone = Arc::clone(&last_upload_time);
-
-            let progress_thread = std::thread::spawn(move || {
-                while !stop_clone.load(Ordering::Relaxed) {
-                    std::thread::sleep(std::time::Duration::from_secs(5));
-                    let mut last = last_print_clone.lock().unwrap();
-                    if last.elapsed() >= std::time::Duration::from_secs(30) {
-                        let current = processed_clone.load(Ordering::Relaxed);
-                        let elapsed = embed_start_for_thread.elapsed();
-                        let rate = current as f64 / elapsed.as_secs_f64().max(0.001);
-                        let remaining = (total_chunks_for_thread - current) as f64 / rate;
-                        let eta = format_eta(remaining);
-                        eprintln!(
-                            "[{}] Embedded {}/{} ({:.0}%) - {:.1} chunks/sec - ETA: {}",
-                            chrono_timestamp(),
-                            current,
-                            total_chunks_for_thread,
-                            (current as f64 / total_chunks_for_thread as f64) * 100.0,
-                            rate,
-                            eta
-                        );
-                        *last = std::time::Instant::now();
-                    }
-                }
-            });
-
-            let uploader = Arc::new(Mutex::new(uploader));
-            let stop_uploader = Arc::clone(&stop_flag);
-            let last_upload_time_clone = Arc::clone(&last_upload_time);
-            let uploader_clone = Arc::clone(&uploader);
-            let label_id_clone = label_id.clone();
-
-            // Failure tracking clones (vars already declared at function scope)
-            let upload_failures_clone = Arc::clone(&upload_failures);
-            let file_complete_failures_clone = Arc::clone(&file_complete_failures);
-            let label_add_failures_clone = Arc::clone(&label_add_failures);
-
-            let uploader_thread = std::thread::spawn(move || {
-                let mut accumulated: Vec<(engine::Chunk, Vec<f32>)> = Vec::new();
-                let mut expected_count: HashMap<String, usize> = HashMap::new();
-                let mut uploaded_count: HashMap<String, usize> = HashMap::new();
-
-                loop {
-                    let should_upload = {
-                        let mut last = last_upload_time_clone.lock().unwrap();
-                        if last.elapsed() >= std::time::Duration::from_secs(60) {
-                            *last = std::time::Instant::now();
-                            true
-                        } else {
-                            false
-                        }
-                    };
-
-                    while let Ok(embedded) = embed_rx.try_recv() {
-                        let file_id = embedded.0.file_id.clone();
-                        if let std::collections::hash_map::Entry::Vacant(e) =
-                            expected_count.entry(file_id.clone())
-                        {
-                            e.insert(embedded.0.chunk_count);
-                        }
-                        accumulated.push(embedded);
-                    }
-
-                    if should_upload && !accumulated.is_empty() {
-                        let count = accumulated.len();
-                        eprintln!(
-                            "[{}] Uploading checkpoint ({} chunks)...",
-                            chrono_timestamp(),
-                            count
-                        );
-
-                        let uploader_guard = uploader_clone.lock().unwrap();
-                        if let Err(e) = uploader_guard.upload_batch(&accumulated) {
-                            eprintln!("[{}] ❌ Upload failed: {}", chrono_timestamp(), e);
-                            // A.1: Track upload failures
-                            let mut failures = upload_failures_clone.lock().unwrap();
-                            for (chunk, _) in &accumulated {
-                                let file_id = &chunk.file_id;
-                                if !failures.iter().any(|f| f.starts_with(file_id)) {
-                                    failures.push(format!("{}: {}", file_id, e));
-                                }
-                            }
-                        } else {
-                            let mut files_in_batch: HashMap<String, usize> = HashMap::new();
-                            for (chunk, _) in &accumulated {
-                                *files_in_batch.entry(chunk.file_id.clone()).or_insert(0) += 1;
-                            }
-                            for (file_id, batch_count) in &files_in_batch {
-                                *uploaded_count.entry(file_id.clone()).or_insert(0) += batch_count;
-                            }
-
-                            let mut completed_files: Vec<String> = Vec::new();
-                            for file_id in files_in_batch.keys() {
-                                let uploaded = uploaded_count.get(file_id).copied().unwrap_or(0);
-                                let expected = expected_count.get(file_id).copied().unwrap_or(0);
-                                if uploaded == expected && expected > 0 {
-                                    completed_files.push(file_id.clone());
-                                }
-                            }
-
-                            for file_id in &completed_files {
-                                if let Err(e) = uploader_guard.mark_file_complete(file_id) {
-                                    eprintln!(
-                                        "[{}] ❌ Failed to mark file complete: {}",
-                                        chrono_timestamp(),
-                                        e
-                                    );
-                                    // A.1: Track file complete failures
-                                    file_complete_failures_clone
-                                        .lock()
-                                        .unwrap()
-                                        .push(format!("{}: {}", file_id, e));
-                                }
-                                if let Err(e) = uploader_guard
-                                    .add_label_to_file_chunks(file_id, &label_id_clone)
-                                {
-                                    eprintln!(
-                                        "[{}] ❌ Failed to add label: {}",
-                                        chrono_timestamp(),
-                                        e
-                                    );
-                                    // A.1: Track label add failures
-                                    label_add_failures_clone
-                                        .lock()
-                                        .unwrap()
-                                        .push(format!("{}: {}", file_id, e));
-                                }
-                            }
-                        }
-                        accumulated.clear();
-                    }
-
-                    if stop_uploader.load(Ordering::Relaxed) && embed_rx.is_empty() {
-                        if !accumulated.is_empty() {
-                            let count = accumulated.len();
-                            eprintln!(
-                                "[{}] Final upload ({} chunks)...",
-                                chrono_timestamp(),
-                                count
-                            );
-
-                            let uploader_guard = uploader_clone.lock().unwrap();
-                            if let Err(e) = uploader_guard.upload_batch(&accumulated) {
-                                eprintln!("[{}] ❌ Final upload failed: {}", chrono_timestamp(), e);
-                                // A.1: Track upload failures
-                                let mut failures = upload_failures_clone.lock().unwrap();
-                                for (chunk, _) in &accumulated {
-                                    let file_id = &chunk.file_id;
-                                    if !failures.iter().any(|f| f.starts_with(file_id)) {
-                                        failures.push(format!("{}: {}", file_id, e));
-                                    }
-                                }
-                            } else {
-                                for file_id in accumulated
-                                    .iter()
-                                    .map(|(c, _)| c.file_id.clone())
-                                    .collect::<std::collections::HashSet<_>>()
-                                {
-                                    if let Err(e) = uploader_guard.mark_file_complete(&file_id) {
-                                        eprintln!(
-                                            "[{}] ❌ Failed to mark file complete: {}",
-                                            chrono_timestamp(),
-                                            e
-                                        );
-                                        file_complete_failures_clone
-                                            .lock()
-                                            .unwrap()
-                                            .push(format!("{}: {}", file_id, e));
-                                    }
-                                    if let Err(e) = uploader_guard
-                                        .add_label_to_file_chunks(&file_id, &label_id_clone)
-                                    {
-                                        eprintln!(
-                                            "[{}] ❌ Failed to add label: {}",
-                                            chrono_timestamp(),
-                                            e
-                                        );
-                                        label_add_failures_clone
-                                            .lock()
-                                            .unwrap()
-                                            .push(format!("{}: {}", file_id, e));
-                                    }
-                                }
-                            }
-                        }
-                        break;
-                    }
-
-                    std::thread::sleep(std::time::Duration::from_millis(100));
-                }
-            });
-
-            // A.4, A.5: Track embedding failures and use proper worker_index
-            let processed_clone = Arc::clone(&processed);
-            let embedding_failures_clone = Arc::clone(&embedding_failures);
-            let num_workers = embedder.num_workers();
-
-            all_chunks
-                .into_par_iter()
-                .enumerate()
-                .for_each(|(idx, chunk)| {
-                    let worker_index = idx % num_workers;
-                    match embedder.encode(&chunk.text, worker_index) {
-                        Ok(embedding) => {
-                            let _ = embed_tx.send((chunk, embedding));
-                            processed_clone.fetch_add(1, Ordering::Relaxed);
-                        }
-                        Err(e) => {
-                            eprintln!(
-                                "\n[{}] ❌ Embedding failed for {}:{} - {}",
-                                chrono_timestamp(),
-                                chunk.relative_path,
-                                chunk.chunk_ordinal,
-                                e
-                            );
-                            let mut failures = embedding_failures_clone.lock().unwrap();
-                            failures.push(format!(
-                                "{}:{}: {}",
-                                chunk.relative_path, chunk.chunk_ordinal, e
-                            ));
-                        }
-                    }
-                });
-
-            stop_flag.store(true, Ordering::Relaxed);
-            progress_thread.join().ok();
-            uploader_thread.join().ok();
-
-            let embed_elapsed = embed_start.elapsed();
-            let rate = total_chunks as f64 / embed_elapsed.as_secs_f64().max(0.001);
-            println!(
-                "\n  Embedding complete: {} chunks in {} ({:.1} chunks/sec)",
-                total_chunks,
-                format_duration(embed_elapsed.as_secs_f64()),
-                rate
-            );
-
-            // Report any failures from embedding/upload pipeline
-            let upload_failures_count = upload_failures.lock().unwrap().len();
-            let file_complete_failures_count = file_complete_failures.lock().unwrap().len();
-            let label_add_failures_count = label_add_failures.lock().unwrap().len();
-            let embedding_failures_count = embedding_failures.lock().unwrap().len();
-
-            let total_failures = upload_failures_count
-                + file_complete_failures_count
-                + label_add_failures_count
-                + embedding_failures_count;
-
-            if total_failures > 0 {
-                println!();
-                println!(
-                    "  ⚠️  Encountered {} embedding failures, {} upload failures, {} file-complete failures, {} label-add failures",
-                    embedding_failures_count,
-                    upload_failures_count,
-                    file_complete_failures_count,
-                    label_add_failures_count
-                );
-                println!("      These files may not be searchable. Check logs above for details.");
-            }
-            println!();
-        }
     }
 
-    // A.1: Compute total failures and skip cleanup if any occurred
-    let total_failures = upload_failures.lock().unwrap().len()
-        + file_complete_failures.lock().unwrap().len()
-        + label_add_failures.lock().unwrap().len()
-        + embedding_failures.lock().unwrap().len();
-    let had_failures = total_failures > 0;
+    // Phase 3: Run the shared embed/upload pipeline (handles empty chunks gracefully)
+    let (pipeline_file_ids, pipeline_failures) = run_embed_upload_pipeline(
+        all_chunks,
+        uploader,
+        &label_id,
+    )?;
 
-    // Label reassignment cleanup (A.1: ONLY after fully successful crawl)
+    // Merge file IDs from pipeline with those tracked during chunking
+    touched_file_ids.extend(pipeline_file_ids);
+    let had_failures = pipeline_failures.has_failures();
+
+    // Step 7: Label reassignment cleanup (A.1: ONLY after fully successful crawl)
     if had_failures {
         println!("🧹 Phase 4: SKIPPING label reassignment cleanup (crawl had failures)");
         println!("  This is intentional - cleanup should only run after successful crawls.");
@@ -2082,7 +1468,7 @@ fn run_crawl_working_dir(
             "  Existing files updated successfully: {}",
             existing_files.len()
         );
-        println!("  Total failures: {}", total_failures);
+        println!("  Total failures: {}", pipeline_failures.total());
         println!();
         println!("  This crawl is marked as incomplete. Re-run to complete indexing.");
     } else {

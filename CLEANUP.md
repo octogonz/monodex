@@ -164,9 +164,9 @@ added to the commit-based path).
 
 - [x] Add shared types for crawl pipeline: `CrawlSource`, `CrawlFileEntry`, `CrawlFailures`
 - [x] Create `run_embed_upload_pipeline()` helper function with failure tracking
-- [ ] Refactor `run_crawl_label()` to use the shared helper
-- [ ] Refactor `run_crawl_working_dir()` to use the shared helper
-- [ ] Both crawl paths should differ only in: file enumeration source, blob_id vs content_hash, and label metadata fields
+- [x] Refactor `run_crawl_label()` to use the shared helper
+- [x] Refactor `run_crawl_working_dir()` to use the shared helper
+- [x] Both crawl paths should differ only in: file enumeration source, blob_id vs content_hash, and label metadata fields
 
 **Progress (2026-04-10)**: 
 - Added shared types in `main.rs`: `CrawlSource` enum, `CrawlFileEntry` struct, `CrawlFailures` struct
@@ -176,16 +176,17 @@ added to the commit-based path).
   - Progress reporting thread
   - Failure tracking (upload, file-complete, label-add, embedding)
   - Final upload and cleanup
-- Helper function is ready but not yet wired into the crawl paths
-- Next step: Refactor `run_crawl_label()` to use the helper, then `run_crawl_working_dir()`
+- Refactored `run_crawl_label()` to use the shared helper (reduced ~310 lines of inline code)
+- Refactored `run_crawl_working_dir()` to use the shared helper (reduced ~285 lines of inline code)
+- Total reduction: ~614 lines (from 2689 to 2075)
+- Helper now returns `anyhow::Result<(HashSet<String>, CrawlFailures)>` to propagate embedder init failures
+- Removed unused `_collection` and `_qdrant_url` parameters from helper
+- Removed stale `#[allow(dead_code)]` markers and TODO comments from active code
+- Both crawl paths now have consistent failure handling semantics
 
-**Note**: The helper function is currently marked as `#[allow(dead_code)]` until the crawl
-functions are refactored to use it. This is intentional incremental refactoring.
-
-**Stopping point**: The shared infrastructure is in place. The remaining refactoring to
-wire the helper into the crawl functions is a larger change that should be done in a
-dedicated session to ensure correctness. The current code compiles, tests pass, and the
-infrastructure is ready for use.
+**Note**: `CrawlSource` and `CrawlFileEntry` are prepared for future use but not yet
+integrated - they are marked with `#[allow(dead_code)]` and will be used in future
+refactoring to further unify the crawl entry points.
 
 ### C.2 — Consolidate package-name extraction
 

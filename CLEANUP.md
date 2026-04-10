@@ -203,8 +203,8 @@ Several uploader methods are leftovers from pre-label API surface:
 - `delete_file()` — filters by `source_uri`, doesn't match the file-id-centric model
 - `Shr` trait implementations on `QdrantId` — never used
 
-- [ ] Remove unused methods, or gate them behind `#[cfg(test)]` / `#[allow(dead_code)]` with a clear "legacy — remove after migration" comment
-- [ ] Remove the `Shr` trait implementations for `QdrantId`
+- [x] Remove unused methods, or gate them behind `#[cfg(test)]` / `#[allow(dead_code)]` with a clear "legacy — remove after migration" comment
+- [x] Remove the `Shr` trait implementations for `QdrantId`
 
 ### C.6 — Fix stale comments and doc strings — WONTFIX
 

@@ -189,28 +189,6 @@ pub enum QdrantId {
     Integer(u64),
 }
 
-impl std::ops::Shr<i32> for QdrantId {
-    type Output = u64;
-
-    fn shr(self, rhs: i32) -> Self::Output {
-        match self {
-            QdrantId::Integer(n) => n >> rhs,
-            QdrantId::String(_) => 0,
-        }
-    }
-}
-
-impl std::ops::Shr<i32> for &QdrantId {
-    type Output = u64;
-
-    fn shr(self, rhs: i32) -> Self::Output {
-        match self {
-            QdrantId::Integer(n) => *n >> rhs,
-            QdrantId::String(_) => 0,
-        }
-    }
-}
-
 /// Response from delete
 #[derive(Debug, Deserialize)]
 struct DeleteResponse {
@@ -287,6 +265,8 @@ impl QdrantUploader {
     }
 
     /// Delete all points for a specific file
+    /// Legacy - uses source_uri filter, not the file-id-centric model
+    #[allow(dead_code)]
     pub fn delete_file(&self, file_path: &str, catalog: &str) -> Result<u64> {
         let endpoint = format!("{}/collections/{}/points/delete", self.url, self.collection);
 
@@ -614,6 +594,8 @@ impl QdrantUploader {
     }
 
     /// Queries the collection with an embedding
+    /// Legacy - catalog-only search, superseded by search_with_label()
+    #[allow(dead_code)]
     pub fn query(
         &self,
         embedding: &[f32],
@@ -695,6 +677,8 @@ impl QdrantUploader {
     ///
     /// # Returns
     /// Vector of points sorted by chunk_ordinal, or error
+    /// Legacy - unfiltered by label, superseded by get_chunks_by_file_id_with_label()
+    #[allow(dead_code)]
     pub fn get_chunks_by_file_id(&self, file_id: &str) -> Result<Vec<PointResult>> {
         // Build scroll request with filter on file_id
         #[derive(Debug, Serialize)]

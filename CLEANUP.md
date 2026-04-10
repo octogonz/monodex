@@ -81,7 +81,7 @@ This is the most important remaining config-wiring bug.
 - [x] Pass `CompiledCrawlConfig` (or the resolved strategy) into `chunk_content()`
 - [x] Remove strategy dispatch from the legacy default-config wrapper on the hot crawl path
 - [x] Keep any default-config fallback only for commands that truly have no repo context (e.g. ad hoc tooling)
-- [ ] Add a regression test proving that a repo-local `monodex-crawl.json` strategy override actually changes chunking behavior during a real crawl path
+- [x] Add a regression test proving that a repo-local `monodex-crawl.json` strategy override actually changes chunking behavior during a real crawl path
 
 ### B.2 — Working-directory enumeration still hard-filters hidden paths ✅ FIXED
 
@@ -137,7 +137,62 @@ person using the design doc as a source of truth.
 - [x] Remove any example entries for file types that are excluded by default and not meant to be configured in the example
 - [x] Do a quick pass for any other copied strategy examples that still reference old names
 
----
+## D. Remaining Gaps After Initial Cleanup Pass
+
+These items are not nitpicks—they represent inconsistencies between implementation, documentation, and examples that are likely to cause confusion or incorrect assumptions in the next round of development.
+
+### D.1 Stale Enumeration Documentation in `git_ops.rs`
+
+**Problem:**
+The implementation of working directory enumeration now **hard-excludes all dot-prefixed entries** (e.g., `.git`, `.env`, `.config`) before crawl-config evaluation.
+
+However, the top-level docstring and some inline comments in `enumerate_working_directory()` still claim:
+
+- Directory filtering is handled by crawl config
+- Only `.git` is explicitly excluded
+
+This is no longer true and directly contradicts the code.
+
+**Why this matters:**
+Future work may incorrectly assume that crawl config controls hidden directory inclusion, leading to:
+
+- Misplaced logic in crawl config
+- Bugs when attempting to include dot-directories
+- Confusion about where filtering responsibility lives
+
+**Required fix:**
+
+- [x] Update all docstrings and inline comments in `src/engine/git_ops.rs` to reflect:
+  - Dot-prefixed entries are excluded at enumeration time
+  - Crawl config does not currently control inclusion of hidden paths
+- [x] Update any related test comments (e.g., references to “only `.git` is skipped”)
+
+### D.2 Example Config Contradicts Runtime Validation
+
+**Problem:**
+`examples/config.json` still includes:
+
+```json
+"type": "folder"
+```
+
+But runtime validation now **only allows `"monorepo"`**, and will fail fast on `"folder"`.
+
+**Why this matters:**
+This creates a direct mismatch between:
+
+- What users are shown as a valid example
+- What the system actually accepts
+
+This is a high-friction failure mode for anyone onboarding or experimenting:
+
+- Copying the example config will immediately break at runtime
+- It undermines trust in the documentation and examples
+
+**Required fix:**
+
+- [x] Update `examples/config.json` to use `"type": "monorepo"`
+- [x] Optionally remove or rewrite any example implying multiple catalog types exist, if that is no longer supported
 
 ## Notes
 

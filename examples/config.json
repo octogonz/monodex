@@ -8,9 +8,9 @@
       "type": "monorepo",
       "path": "~/projects/my-monorepo"
     },
-    "standalone_app": {
-      "type": "folder",
-      "path": "~/projects/my-app"
+    "another_monorepo": {
+      "type": "monorepo",
+      "path": "~/projects/another-monorepo"
     }
   }
 }

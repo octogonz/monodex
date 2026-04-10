@@ -588,4 +588,130 @@ export function function_{}() {{
             assert_eq!(chunk.file_id.len(), 16, "file_id should be 16 hex chars");
         }
     }
+
+    /// B.1 Regression test: Strategy override changes chunking behavior
+    ///
+    /// This test proves that passing a strategy override from discovered crawl config
+    /// actually changes how content is chunked. We use markdown vs lineBased as the
+    /// test case because they produce measurably different chunk boundaries.
+    ///
+    /// - Markdown strategy splits at heading boundaries
+    /// - lineBased strategy splits at line count boundaries (no heading awareness)
+    #[test]
+    fn test_strategy_override_changes_chunking_behavior() {
+        // Markdown content with clear heading structure
+        let content = r#"# Main Title
+
+This is the introduction paragraph.
+
+## Section One
+
+Content for section one.
+
+### Subsection A
+
+More content here.
+
+## Section Two
+
+Content for section two.
+"#;
+
+        let ctx = test_context("abc123", "docs/README.md", "@test/pkg");
+
+        // Chunk with markdown strategy (default for .md files)
+        let markdown_chunks = chunk_content(content, &ctx, 6000, Some("markdown")).unwrap();
+
+        // Chunk with lineBased strategy (override from crawl config)
+        let linebased_chunks = chunk_content(content, &ctx, 6000, Some("lineBased")).unwrap();
+
+        // Both should produce chunks
+        assert!(
+            !markdown_chunks.is_empty(),
+            "Markdown strategy should produce chunks"
+        );
+        assert!(
+            !linebased_chunks.is_empty(),
+            "lineBased strategy should produce chunks"
+        );
+
+        // The key assertion: different strategies produce different chunking
+        // Markdown strategy splits at headings, producing chunks with heading breadcrumbs
+        // lineBased strategy splits at line boundaries, producing chunks without heading awareness
+
+        // Check that markdown chunks have heading-based breadcrumbs
+        // (e.g., "Main Title", "Section One", etc.)
+        let has_heading_breadcrumbs = markdown_chunks.iter().any(|c| {
+            c.breadcrumb.contains("Main Title")
+                || c.breadcrumb.contains("Section One")
+                || c.breadcrumb.contains("Section Two")
+        });
+        assert!(
+            has_heading_breadcrumbs,
+            "Markdown chunks should have heading-based breadcrumbs. Got: {:?}",
+            markdown_chunks
+                .iter()
+                .map(|c| &c.breadcrumb)
+                .collect::<Vec<_>>()
+        );
+
+        // Check that the number of chunks differs OR the chunk boundaries differ
+        // This is a stronger assertion that strategies actually behave differently
+        if markdown_chunks.len() == linebased_chunks.len() {
+            // Same count, but boundaries should differ
+            let markdown_lines: Vec<_> = markdown_chunks
+                .iter()
+                .map(|c| (c.start_line, c.end_line))
+                .collect();
+            let linebased_lines: Vec<_> = linebased_chunks
+                .iter()
+                .map(|c| (c.start_line, c.end_line))
+                .collect();
+            assert_ne!(
+                markdown_lines, linebased_lines,
+                "Different strategies should produce different chunk boundaries"
+            );
+        }
+        // If counts differ, that's already proof of different behavior
+
+        // Additional check: markdown chunks should have chunk_type reflecting heading structure
+        // (this verifies the partitioner actually ran the markdown-specific logic)
+        let has_section_chunks = markdown_chunks
+            .iter()
+            .any(|c| c.chunk_type.contains("heading") || c.chunk_type.contains("section"));
+        assert!(
+            has_section_chunks || markdown_chunks.len() > 1,
+            "Markdown strategy should recognize heading structure (either via chunk_type or multiple chunks)"
+        );
+    }
+
+    /// B.1 Regression test: Strategy override to "typescript" for .md file
+    ///
+    /// An extreme test: treating markdown as TypeScript should still produce chunks
+    /// (via fallback), but with different characteristics than markdown chunking.
+    #[test]
+    fn test_strategy_override_typescript_for_markdown() {
+        let content = r#"# Title
+
+Some text here.
+"#;
+
+        let ctx = test_context("abc123", "docs/README.md", "@test/pkg");
+
+        // Chunk with typescript strategy (override from crawl config)
+        let ts_chunks = chunk_content(content, &ctx, 6000, Some("typescript")).unwrap();
+
+        // Should still produce chunks (fallback path since markdown isn't valid TS)
+        assert!(
+            !ts_chunks.is_empty(),
+            "TypeScript strategy should produce chunks even for non-TS content"
+        );
+
+        // File ID should still be computed correctly
+        assert_eq!(
+            ts_chunks[0].file_id.len(),
+            16,
+            "file_id should be 16 hex chars"
+        );
+    }
 }

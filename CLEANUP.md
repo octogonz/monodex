@@ -20,6 +20,16 @@ These clarifications were made during the review process:
 
 ---
 
+## Notes
+
+### Work Item Tracking
+
+**Active work items** (categories A-E) are tracked in this document. 
+
+**Future feature work** (formerly category F) has been moved to DEV_PLAN.md under "Upcoming Features" to keep the development plan comprehensive and avoid fragmentation.
+
+---
+
 ## A. Crawl Correctness
 
 These are the highest-priority items. They affect whether the crawl produces correct,
@@ -359,94 +369,4 @@ on the exact time shown in progress logs.
 
 ---
 
-## F. Upcoming Feature Work
-
-These items represent valuable capabilities for the next phase of development, informed by
-the tool's stated goal of being the primary way an AI agent learns about a codebase.
-
-### F.1 — MCP server
-
-Monodex is explicitly designed for AI assistants, but agents currently have to shell out to
-the CLI. A built-in MCP (Model Context Protocol) server would let Claude Code, Cursor, and
-other agents discover and call search/view capabilities as native tools — reducing friction
-from "agent-friendly" to "agent-native."
-
-- [ ] Implement `monodex mcp-serve` command that exposes search and view as MCP tools
-- [ ] Support single-project and workspace modes
-- [ ] Include JSON-structured output for all tool responses
-
-### F.2 — Watch mode
-
-The DEV_PLAN lists this as Phase 11 but it's a high-value capability. Continuously
-monitoring the working directory and updating the index as files change eliminates the
-need for manual re-crawls and makes the tool useful as a live companion during development.
-
-- [ ] Implement `monodex watch` command using filesystem notifications (e.g., `notify` crate)
-- [ ] Debounce rapid changes to avoid redundant re-indexing
-- [ ] Perform incremental updates (re-chunk and re-embed only changed files)
-- [ ] Design integration with the label system (watch mode updates a specific working-dir label)
-
-### F.3 — Hybrid search (vector + keyword)
-
-Pure vector search can miss exact identifier matches — searching for `handleAuth` may not
-find the function if the embedding doesn't preserve the exact token. Combining vector
-similarity with keyword/text matching using Reciprocal Rank Fusion (RRF) addresses this.
-Qdrant supports full-text search indexes natively, so this can be implemented server-side
-rather than loading all chunks into memory.
-
-- [ ] Add a full-text search index to the Qdrant collection for the `text` field
-- [ ] Implement RRF fusion of vector and keyword results
-- [ ] Make hybrid search configurable (enable/disable, tunable k parameter)
-
-### F.4 — Search result boosting
-
-Configurable score multipliers based on file path patterns would let users tune search
-relevance — boosting source directories and penalizing test/mock/generated/vendor files.
-Monodex's crawl config already excludes some file patterns entirely, but there are cases
-where files should be indexed but ranked lower, not invisible.
-
-- [ ] Add a `searchBoost` section to the crawl config with penalties and bonuses by path pattern
-- [ ] Apply multipliers to search scores after Qdrant returns results
-- [ ] Ship sensible defaults (boost `src/`, penalize `test/`, `mock/`, `generated/`, `.md`)
-
-### F.5 — JSON output mode
-
-For programmatic consumption (MCP, scripts, CI pipelines), structured JSON output is
-essential. The current output format is human-readable with `>` prefixed lines, which
-requires ad-hoc parsing.
-
-- [ ] Add `--json` flag to `search` and `view` commands
-- [ ] Output results as a JSON array with file_id, chunk_ordinal, score, breadcrumb, text, and metadata
-- [ ] Add `--compact` flag for minimal JSON (omit text content, include only identifiers and scores)
-
-### F.6 — Call graph tracing (future)
-
-The tree-sitter infrastructure already parses TypeScript ASTs for chunking. Extending
-this to extract cross-file symbol references would enable "who calls this function" and
-"what does this function call" queries — a qualitatively different kind of code
-understanding. This is a larger effort but builds on existing infrastructure.
-
-- [ ] Design a symbol index format for storing caller/callee relationships
-- [ ] Extract function definitions and call sites during the chunking pass
-- [ ] Implement `monodex trace callers <symbol>` and `monodex trace callees <symbol>` commands
-- [ ] Consider both regex-based (fast, multi-language) and AST-based (precise, TypeScript-first) extraction modes
-
-### F.7 — Broader language support for AST chunking
-
-Monodex currently does AST-aware chunking only for TypeScript/TSX. Other languages get
-line-based chunking, which still produces useful search results (the embedding model
-handles any language), but with lower chunk quality — no breadcrumbs, no symbol names,
-no semantic boundaries.
-
-- [ ] Prioritize JavaScript/JSX as the next AST-aware language (tree-sitter grammar already available, syntax is a subset of TypeScript)
-- [ ] Consider Python, Go, and Rust as subsequent targets based on Rush Stack ecosystem needs
-- [ ] Design the partitioner interface to make adding new languages straightforward
-
-### F.8 — Offline garbage collection
-
-The DESIGN doc describes an offline GC command for cleaning up orphaned chunks after
-interrupted crawls. This is tracked in DEV_PLAN Phase 10 but not yet implemented.
-
-- [ ] Implement `monodex gc --catalog <name>` to scan for chunks with empty `active_label_ids` and delete them
-- [ ] Add `--dry-run` flag to show what would be deleted
-- [ ] Report count and estimated storage recovered
+## Notes

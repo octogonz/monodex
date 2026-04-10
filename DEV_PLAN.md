@@ -613,6 +613,63 @@ In `src/engine/git_ops.rs`:
 - [ ] Consider integration with existing `--working-dir` crawl:
   - Watch mode could be `--watch` flag that runs indefinitely
   - Initial crawl + incremental updates
+- [ ] Perform incremental updates (re-chunk and re-embed only changed files)
+- [ ] Design integration with the label system (watch mode updates a specific working-dir label)
+
+---
+
+## Upcoming Features
+
+These items represent valuable capabilities for future development phases, informed by the tool's stated goal of being the primary way an AI agent learns about a codebase.
+
+### MCP Server
+
+Monodex is explicitly designed for AI assistants, but agents currently have to shell out to the CLI. A built-in MCP (Model Context Protocol) server would let Claude Code, Cursor, and other agents discover and call search/view capabilities as native tools — reducing friction from "agent-friendly" to "agent-native."
+
+- [ ] Implement `monodex mcp-serve` command that exposes search and view as MCP tools
+- [ ] Support single-project and workspace modes
+- [ ] Include JSON-structured output for all tool responses
+
+### Hybrid Search (Vector + Keyword)
+
+Pure vector search can miss exact identifier matches — searching for `handleAuth` may not find the function if the embedding doesn't preserve the exact token. Combining vector similarity with keyword/text matching using Reciprocal Rank Fusion (RRF) addresses this. Qdrant supports full-text search indexes natively, so this can be implemented server-side rather than loading all chunks into memory.
+
+- [ ] Add a full-text search index to the Qdrant collection for the `text` field
+- [ ] Implement RRF fusion of vector and keyword results
+- [ ] Make hybrid search configurable (enable/disable, tunable k parameter)
+
+### Search Result Boosting
+
+Configurable score multipliers based on file path patterns would let users tune search relevance — boosting source directories and penalizing test/mock/generated/vendor files. Monodex's crawl config already excludes some file patterns entirely, but there are cases where files should be indexed but ranked lower, not invisible.
+
+- [ ] Add a `searchBoost` section to the crawl config with penalties and bonuses by path pattern
+- [ ] Apply multipliers to search scores after Qdrant returns results
+- [ ] Ship sensible defaults (boost `src/`, penalize `test/`, `mock/`, `generated/`, `.md`)
+
+### JSON Output Mode
+
+For programmatic consumption (MCP, scripts, CI pipelines), structured JSON output is essential. The current output format is human-readable with `>` prefixed lines, which requires ad-hoc parsing.
+
+- [ ] Add `--json` flag to `search` and `view` commands
+- [ ] Output results as a JSON array with file_id, chunk_ordinal, score, breadcrumb, text, and metadata
+- [ ] Add `--compact` flag for minimal JSON (omit text content, include only identifiers and scores)
+
+### Call Graph Tracing
+
+The tree-sitter infrastructure already parses TypeScript ASTs for chunking. Extending this to extract cross-file symbol references would enable "who calls this function" and "what does this function call" queries — a qualitatively different kind of code understanding. This is a larger effort but builds on existing infrastructure.
+
+- [ ] Design a symbol index format for storing caller/callee relationships
+- [ ] Extract function definitions and call sites during the chunking pass
+- [ ] Implement `monodex trace callers <symbol>` and `monodex trace callees <symbol>` commands
+- [ ] Consider both regex-based (fast, multi-language) and AST-based (precise, TypeScript-first) extraction modes
+
+### Broader Language Support for AST Chunking
+
+Monodex currently does AST-aware chunking only for TypeScript/TSX. Other languages get line-based chunking, which still produces useful search results (the embedding model handles any language), but with lower chunk quality — no breadcrumbs, no symbol names, no semantic boundaries.
+
+- [ ] Prioritize JavaScript/JSX as the next AST-aware language (tree-sitter grammar already available, syntax is a subset of TypeScript)
+- [ ] Consider Python, Go, and Rust as subsequent targets based on Rush Stack ecosystem needs
+- [ ] Design the partitioner interface to make adding new languages straightforward
 
 ---
 

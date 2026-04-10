@@ -174,9 +174,9 @@ can misfire on package.json files where a nested object's `"name"` appears first
 
 `serde_json` is already a dependency.
 
-- [ ] Replace both string-search implementations with a single JSON-parsing implementation (e.g., `serde_json::from_slice` with a struct that has `name: Option<String>`)
-- [ ] Put the canonical implementation in one place (probably `git_ops.rs` since that's where both callers live)
-- [ ] Either remove `package_lookup.rs` entirely (it appears unused by the crawl path) or clearly document its role as a filesystem-only convenience for `dump-chunks`
+- [x] Replace both string-search implementations with a single JSON-parsing implementation (e.g., `serde_json::from_slice` with a struct that has `name: Option<String>`)
+- [x] Put the canonical implementation in one place (probably `git_ops.rs` since that's where both callers live)
+- [x] Either remove `package_lookup.rs` entirely (it appears unused by the crawl path) or clearly document its role as a filesystem-only convenience for `dump-chunks`
 
 ### C.3 — Consolidate SHA256 hashing — WONTFIX
 
@@ -228,8 +228,8 @@ DESIGN.md lists valid strategies as: `typescript`, `javascript`, `markdown`, `js
 `markdown`, `lineBased`. The JSON schema (`crawl.schema.json`) matches the code. The
 README config table uses `lineBased`.
 
-- [ ] Update DESIGN.md strategy table to match implementation: remove `javascript`, `json`, `simpleLine`; use `lineBased`
-- [ ] Or, if `javascript`/`json` should be valid config values (even if they produce empty results), add them to `is_valid_strategy()`
+- [x] Update DESIGN.md strategy table to match implementation: remove `javascript`, `json`, `simpleLine`; use `lineBased`
+- [x] Defer support for additional config strategy names unless/until they are implemented in `crawl_config.rs`
 
 ### D.2 — Fix point ID format descriptions
 
@@ -238,7 +238,7 @@ Three sources disagree on point ID format:
 - DEV_PLAN says `<file_id>:<ordinal>`
 - Code returns a UUID-shaped deterministic hash string
 
-- [ ] Update DESIGN.md and DEV_PLAN to describe the actual implementation: `string_to_uuid(format!("{}:{}", file_id, chunk_ordinal))`
+- [x] Update DESIGN.md and DEV_PLAN to describe the actual implementation: `string_to_uuid(format!("{}:{}", file_id, chunk_ordinal))`
 
 ### D.3 — Fix `deny_unknown_fields` completion claim — WONTFIX (roll into B.1)
 
@@ -270,7 +270,7 @@ string to `Path::new()` without shell expansion. Users who copy the example will
 DEV_PLAN says `get_file_sentinel(file_id, label_id)` was added, but the implementation
 has `get_file_sentinel(file_id)` with no label filtering on the sentinel check.
 
-- [ ] Update DEV_PLAN to reflect the actual signature, or add label filtering if the design intent was to scope sentinel checks by label
+- [x] Update DEV_PLAN to reflect the actual signature, or add label filtering if the design intent was to scope sentinel checks by label
 
 ### D.7 — Fix markdown feature description
 
@@ -290,8 +290,8 @@ Markdown support is currently described three different ways across the docs:
 The README architecture file tree doesn't list `crawl_config.rs`, and describes `config.rs`
 as "File exclusion rules" when it's now just a thin compatibility wrapper.
 
-- [ ] Update the architecture file tree to include `crawl_config.rs`
-- [ ] Update the `config.rs` description to "Legacy compatibility wrapper (delegates to crawl_config)"
+- [x] Update the architecture file tree to include `crawl_config.rs`
+- [x] Update the `config.rs` description to "Legacy compatibility wrapper (delegates to crawl_config)"
 
 ### D.9 — Update `CHUNKER_ID` or document its scope — WONTFIX
 

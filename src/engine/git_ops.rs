@@ -226,11 +226,15 @@ pub fn build_package_index_for_commit(repo_path: &Path, commit: &str) -> Result<
 }
 
 #[derive(Deserialize)]
-struct PackageJsonName {
+pub struct PackageJsonName {
     name: Option<String>,
 }
 
-fn extract_package_name_from_bytes(content: &[u8]) -> Option<String> {
+/// Extract the "name" field from a package.json file content.
+///
+/// Uses proper JSON parsing (not string search) to handle edge cases
+/// like nested "name" fields in other objects.
+pub fn extract_package_name_from_bytes(content: &[u8]) -> Option<String> {
     serde_json::from_slice::<PackageJsonName>(content)
         .ok()?
         .name

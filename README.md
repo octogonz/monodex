@@ -345,7 +345,8 @@ monodex/
 │   ├── main.rs                    # CLI entry point
 │   └── engine/                    # Reusable indexing engine
 │       ├── mod.rs                 # Module exports
-│       ├── config.rs              # File exclusion rules
+│       ├── crawl_config.rs        # Crawl config loading, validation, and pattern matching
+│       ├── config.rs              # Legacy compatibility wrapper (delegates to crawl_config)
 │       ├── chunker.rs             # File chunking dispatcher
 │       ├── partitioner.rs         # AST-based TypeScript chunking
 │       ├── markdown_partitioner.rs # Markdown heading-based chunking

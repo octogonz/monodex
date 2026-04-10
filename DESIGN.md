@@ -168,7 +168,7 @@ The **file ID** represents a semantic version of a file. Individual chunks are i
 
 **Point ID formula:**
 ```rust
-point_id = hash(file_id + chunk_ordinal)
+point_id = string_to_uuid(format!("{}:{}", file_id, chunk_ordinal))
 ```
 
 This allows upsert-by-ID semantics: if the same file content at the same path is crawled under multiple labels, we update `active_label_ids` rather than creating duplicates.
@@ -288,7 +288,7 @@ For each file:
 For each file:
 1. Compute `file_id`
 2. **Lookup sentinel point by (file_id, chunk_ordinal=1)**:
-   - Point ID = `hash(file_id + chunk_ordinal=1)`
+   - Point ID = `string_to_uuid(format!("{}:{}", file_id, 1))`
    - Query Qdrant for chunk with `file_id` AND `chunk_ordinal = 1` AND `source_type = "code"`
 3. If sentinel exists and `file_complete = true`:
    - Skip re-embedding
@@ -753,12 +753,9 @@ Valid strategy names (from `src/engine/config.rs`):
 | Strategy | File Types | Description |
 |----------|------------|-------------|
 | `typescript` | `.ts`, `.tsx` | AST-based semantic chunking |
-| `javascript` | `.js`, `.jsx`, `.cjs`, `.mjs` | Currently skipped (returns empty) |
 | `markdown` | `.md` | Heading-based chunking |
-| `json` | `.json` | Currently skipped (low value for search) |
-| `simpleLine` | `.txt`, `.css`, `.scss`, `.yml`, `.yaml` | Line-based chunking |
+| `lineBased` | `.txt`, `.css`, `.scss`, `.yml`, `.yaml` | Generic line-based chunking |
 
-**Note:** `javascript` and `json` strategies exist but return empty chunks in current implementation. Config may specify them, but files won't be indexed until strategies are implemented.
 
 ### Pattern Matching
 

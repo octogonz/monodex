@@ -101,7 +101,7 @@ In `src/engine/uploader.rs`:
 - [x] Add `add_label_to_chunk(chunk_id, label_id)` for updating `active_label_ids`
 - [x] Add `add_label_to_file_chunks(file_id, label_id)` for batch file updates
 - [x] Add `remove_label_from_chunks(label_id)` for cleanup scan
-- [x] Add `get_file_sentinel(file_id, label_id)` to check if file already indexed
+- [x] Add `get_file_sentinel(file_id)` to check if file already indexed
 - [x] Add `set_active_labels(chunk_id, label_ids)` for atomic replacement
 - [x] Add `delete_point(chunk_id)` for cleanup
 - [x] Add `search_with_label(query, label_id)` for label-filtered search
@@ -117,7 +117,7 @@ In `src/engine/util.rs`:
   - Returns 16-char hex string
 - [x] Add `EMBEDDER_ID` and `CHUNKER_ID` constants
 - [x] Implement `compute_point_id(file_id, chunk_ordinal) -> String`
-  - Returns `<file_id>:<ordinal>` format for deterministic chunk IDs
+  - Returns `string_to_uuid(format!("{}:{}", file_id, chunk_ordinal))` for deterministic chunk IDs
 - [x] Implement `compute_label_id(catalog, label_name) -> String`
   - Returns `<catalog>:<label_name>` format
 - [x] Update `Chunk` struct to include new Phase 2 fields

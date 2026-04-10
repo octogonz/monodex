@@ -109,7 +109,7 @@ description of the actual behavior.
 These issues matter because they create false confidence for the next round of work or
 cause users/developers to copy invalid examples.
 
-### C.1 — Runtime still does not enforce `monorepo` as the only supported catalog type
+### C.1 — Runtime still does not enforce `monorepo` as the only supported catalog type ✅ FIXED
 
 Docs/schema/examples were updated to remove `folder`, but runtime config loading still
 accepts arbitrary catalog type strings and does not reject unsupported values. If config
@@ -119,11 +119,11 @@ types without implementing distinct behavior.
 At this point, runtime should enforce the same invariant the docs and schema already
 communicate.
 
-- [ ] Validate catalog type during config loading / startup
-- [ ] Reject unsupported values with a clear error message
-- [ ] Remove or update any remaining runtime comments implying `"folder"` is supported
+- [x] Validate catalog type during config loading / startup
+- [x] Reject unsupported values with a clear error message
+- [x] Remove or update any remaining runtime comments implying `"folder"` is supported
 
-### C.2 — `DESIGN.md` still contains a stale strategy example
+### C.2 — `DESIGN.md` still contains a stale strategy example ✅ FIXED
 
 The strategy table was corrected, but an example config block in `DESIGN.md` still shows
 a stale strategy value (`simpleLine`). Copying that example into a real crawl config will
@@ -133,9 +133,9 @@ strategy names.
 This is not a runtime bug, but it is still worth fixing because it will mislead the next
 person using the design doc as a source of truth.
 
-- [ ] Update the stale `DESIGN.md` example config to use supported strategy names only
-- [ ] Remove any example entries for file types that are excluded by default and not meant to be configured in the example
-- [ ] Do a quick pass for any other copied strategy examples that still reference old names
+- [x] Update the stale `DESIGN.md` example config to use supported strategy names only
+- [x] Remove any example entries for file types that are excluded by default and not meant to be configured in the example
+- [x] Do a quick pass for any other copied strategy examples that still reference old names
 
 ---
 

@@ -59,6 +59,7 @@ rand = "0.10"
 [dev-dependencies]
 insta = { version = "1.47", features = ["yaml"] }
 jsonschema = "0.45"
+tempfile = "3"
 
 [features]
 default = []

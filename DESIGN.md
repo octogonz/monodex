@@ -704,7 +704,7 @@ File: `monodex-crawl.json` (JSON format, `.json` extension per Rush Stack conven
     ".ts": "typescript",
     ".tsx": "typescript",
     ".md": "markdown",
-    ".json": "simpleLine"
+    ".yaml": "lineBased"
   },
   "patternsToExclude": [
     "node_modules/",

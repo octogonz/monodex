@@ -110,10 +110,27 @@ struct QdrantConfig {
 #[derive(Debug, serde::Deserialize, Clone)]
 #[serde(deny_unknown_fields)]
 struct CatalogConfig {
-    /// Catalog type: "monorepo" or "folder"
+    /// Catalog type: currently only "monorepo" is supported
     r#type: String,
     /// Path to scan
     path: String,
+}
+
+impl CatalogConfig {
+    /// Supported catalog types
+    const SUPPORTED_TYPES: &'static [&'static str] = &["monorepo"];
+
+    /// Validate that the catalog type is supported
+    fn validate(&self) -> anyhow::Result<()> {
+        if !Self::SUPPORTED_TYPES.contains(&self.r#type.as_str()) {
+            anyhow::bail!(
+                "Unsupported catalog type '{}'. Supported types: {}",
+                self.r#type,
+                Self::SUPPORTED_TYPES.join(", ")
+            );
+        }
+        Ok(())
+    }
 }
 
 /// Main configuration file
@@ -479,6 +496,13 @@ fn load_config(path: &PathBuf) -> anyhow::Result<Config> {
     // Parse JSON (for now - will add JSONC support later)
     let config: Config = serde_json::from_str(&content)
         .map_err(|e| anyhow::anyhow!("Failed to parse config file: {}", e))?;
+
+    // Validate catalog types
+    for (name, catalog) in &config.catalogs {
+        catalog
+            .validate()
+            .map_err(|e| anyhow::anyhow!("Invalid catalog '{}': {}", name, e))?;
+    }
 
     Ok(config)
 }
@@ -2117,4 +2141,101 @@ fn run_audit_chunks(count: usize, dir: String) -> anyhow::Result<()> {
     }
 
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::io::Write;
+    use tempfile::tempdir;
+
+    #[test]
+    fn test_catalog_config_validates_monorepo_type() {
+        let config = CatalogConfig {
+            r#type: "monorepo".to_string(),
+            path: "/some/path".to_string(),
+        };
+        assert!(config.validate().is_ok());
+    }
+
+    #[test]
+    fn test_catalog_config_rejects_unsupported_type() {
+        let config = CatalogConfig {
+            r#type: "folder".to_string(),
+            path: "/some/path".to_string(),
+        };
+        let err = config.validate().unwrap_err();
+        assert!(
+            err.to_string()
+                .contains("Unsupported catalog type 'folder'")
+        );
+        assert!(err.to_string().contains("Supported types: monorepo"));
+    }
+
+    #[test]
+    fn test_catalog_config_rejects_unknown_type() {
+        let config = CatalogConfig {
+            r#type: "unknown".to_string(),
+            path: "/some/path".to_string(),
+        };
+        let err = config.validate().unwrap_err();
+        assert!(
+            err.to_string()
+                .contains("Unsupported catalog type 'unknown'")
+        );
+    }
+
+    #[test]
+    fn test_load_config_validates_catalog_types() {
+        let dir = tempdir().unwrap();
+        let config_path = dir.path().join("config.json");
+        let mut file = std::fs::File::create(&config_path).unwrap();
+
+        // Config with invalid catalog type
+        writeln!(
+            file,
+            r#"{{
+                "qdrant": {{ "collection": "test" }},
+                "catalogs": {{
+                    "test": {{
+                        "type": "invalid",
+                        "path": "/tmp"
+                    }}
+                }}
+            }}"#
+        )
+        .unwrap();
+
+        let result = load_config(&config_path);
+        let err = result.unwrap_err();
+        assert!(err.to_string().contains("Invalid catalog 'test'"));
+        assert!(
+            err.to_string()
+                .contains("Unsupported catalog type 'invalid'")
+        );
+    }
+
+    #[test]
+    fn test_load_config_accepts_monorepo_type() {
+        let dir = tempdir().unwrap();
+        let config_path = dir.path().join("config.json");
+        let mut file = std::fs::File::create(&config_path).unwrap();
+
+        writeln!(
+            file,
+            r#"{{
+                "qdrant": {{ "collection": "test" }},
+                "catalogs": {{
+                    "sparo": {{
+                        "type": "monorepo",
+                        "path": "/tmp/sparo"
+                    }}
+                }}
+            }}"#
+        )
+        .unwrap();
+
+        let config = load_config(&config_path).unwrap();
+        assert_eq!(config.catalogs.get("sparo").unwrap().r#type, "monorepo");
+    }
 }

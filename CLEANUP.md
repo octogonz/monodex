@@ -314,7 +314,7 @@ The README says code lines are prefixed with `>` to prevent injection. But bread
 catalog names, relative paths, and source URIs are printed raw. A malicious repository
 could embed terminal control sequences in file paths or headings.
 
-- [ ] Sanitize or escape non-code fields in search and view output (strip control characters at minimum)
+- [x] Sanitize or escape non-code fields in search and view output (strip control characters at minimum)
 
 ### E.2 — Fix `source_uri` format — WONTFIX
 

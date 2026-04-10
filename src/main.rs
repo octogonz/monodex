@@ -320,6 +320,19 @@ fn format_eta(secs: f64) -> String {
     format_duration(secs)
 }
 
+/// E.1: Sanitize a string for safe terminal output by stripping control characters.
+/// This prevents terminal injection attacks from malicious file paths, breadcrumbs, etc.
+fn sanitize_for_terminal(s: &str) -> String {
+    s.chars()
+        .filter(|c| {
+            // Allow printable ASCII and common Unicode, but strip control characters
+            // Control characters are those with code points < 0x20 (space) and DEL (0x7F)
+            // Also strip ANSI escape sequences which start with ESC (0x1B)
+            !c.is_control() || *c == '\t' || *c == '\n' || *c == '\r'
+        })
+        .collect()
+}
+
 fn main() -> anyhow::Result<()> {
     let cli = Cli::parse();
 
@@ -1705,7 +1718,9 @@ fn run_search(
     // Display results as blurbs
     for result in &results {
         // Line 1: file_id:chunk_ordinal  score  breadcrumb
-        let breadcrumb = result.payload.breadcrumb.as_deref().unwrap_or("unknown");
+        // E.1: Sanitize breadcrumb to prevent terminal injection
+        let breadcrumb =
+            sanitize_for_terminal(result.payload.breadcrumb.as_deref().unwrap_or("unknown"));
         println!(
             "{}:{}  {:.3}  {}",
             result.payload.file_id, result.payload.chunk_ordinal, result.score, breadcrumb
@@ -1893,8 +1908,12 @@ fn run_view(
             println!("Catalogs:");
             for cat in catalogs {
                 if let Some(cat_config) = config.catalogs.get(cat) {
-                    println!("- {}", cat);
-                    println!("  Catalog path: {}", cat_config.path);
+                    // E.1: Sanitize catalog name and path
+                    println!("- {}", sanitize_for_terminal(cat));
+                    println!(
+                        "  Catalog path: {}",
+                        sanitize_for_terminal(&cat_config.path)
+                    );
                 }
             }
             println!();
@@ -1916,7 +1935,9 @@ fn run_view(
         }
 
         for result in results {
-            let breadcrumb = result.payload.breadcrumb.as_deref().unwrap_or("unknown");
+            // E.1: Sanitize output fields to prevent terminal injection
+            let breadcrumb =
+                sanitize_for_terminal(result.payload.breadcrumb.as_deref().unwrap_or("unknown"));
             let chunk_count = result.payload.chunk_count;
             let chunk_ordinal = result.payload.chunk_ordinal;
 
@@ -1929,12 +1950,16 @@ fn run_view(
             // Source line
             println!(
                 "Source: {}:{}",
-                result.payload.catalog, result.payload.relative_path
+                sanitize_for_terminal(&result.payload.catalog),
+                sanitize_for_terminal(&result.payload.relative_path)
             );
 
             // Full path (optional)
             if show_full_paths {
-                println!("Full path: {}", result.payload.source_uri);
+                println!(
+                    "Full path: {}",
+                    sanitize_for_terminal(&result.payload.source_uri)
+                );
             }
 
             // Lines and type
@@ -1942,7 +1967,10 @@ fn run_view(
                 "Lines: {}-{}",
                 result.payload.start_line, result.payload.end_line
             );
-            println!("Type: {}", result.payload.chunk_type);
+            println!(
+                "Type: {}",
+                sanitize_for_terminal(&result.payload.chunk_type)
+            );
 
             // Content
             println!();

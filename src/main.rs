@@ -171,14 +171,15 @@ enum Commands {
     /// Reports warnings when AST chunking fails and fallback is used.
     /// These warnings indicate partitioner defects to investigate.
     Crawl {
-        /// Catalog name (from config file)
+        /// Catalog name (from config file, uses default context if not provided)
         #[arg(long)]
-        catalog: String,
+        catalog: Option<String>,
 
         /// Label name for this crawl (e.g., "main", "feature-x")
+        /// Uses default context if not provided.
         /// Label ID will be computed as <catalog>:<label>
         #[arg(long)]
-        label: String,
+        label: Option<String>,
 
         /// Git commit to crawl (defaults to HEAD)
         /// Supports branch names, tags, or commit SHA
@@ -438,7 +439,7 @@ fn main() -> anyhow::Result<()> {
 
     match cli.command {
         Commands::Use { catalog, label } => {
-            run_use(catalog.as_deref(), label)?;
+            run_use(catalog.as_deref(), label, &config)?;
         }
         Commands::Crawl {
             catalog,
@@ -447,10 +448,13 @@ fn main() -> anyhow::Result<()> {
             working_dir,
             incremental_warnings,
         } => {
+            // Resolve label ID from explicit flags or default context
+            let (_label_id, catalog_name, label_name) = resolve_label_id(label.as_deref(), catalog.as_deref())?;
+            
             if working_dir {
-                run_crawl_working_dir(&config, &catalog, &label, incremental_warnings)?;
+                run_crawl_working_dir(&config, &catalog_name, &label_name, incremental_warnings)?;
             } else {
-                run_crawl_label(&config, &catalog, &label, &commit, incremental_warnings)?;
+                run_crawl_label(&config, &catalog_name, &label_name, &commit, incremental_warnings)?;
             }
         }
         Commands::Purge { catalog, all } => {
@@ -508,7 +512,7 @@ fn load_config(path: &PathBuf) -> anyhow::Result<Config> {
 }
 
 /// Run the `use` command to set default context
-fn run_use(catalog: Option<&str>, label: Option<String>) -> anyhow::Result<()> {
+fn run_use(catalog: Option<&str>, label: Option<String>, config: &Config) -> anyhow::Result<()> {
     match (catalog, label) {
         (None, None) => {
             // Show current context
@@ -528,6 +532,15 @@ fn run_use(catalog: Option<&str>, label: Option<String>) -> anyhow::Result<()> {
             }
         }
         (Some(catalog_name), Some(label_name)) => {
+            // Validate that catalog exists in config
+            if !config.catalogs.contains_key(catalog_name) {
+                return Err(anyhow::anyhow!(
+                    "Catalog '{}' not found in config. Available catalogs: {}",
+                    catalog_name,
+                    config.catalogs.keys().cloned().collect::<Vec<_>>().join(", ")
+                ));
+            }
+            
             // Set new context
             save_default_context(catalog_name, &label_name)?;
 
@@ -1082,7 +1095,7 @@ fn run_crawl_label(
                 package_name,
                 relative_path: relative_path.clone(),
                 blob_id: blob_id.clone(),
-                source_uri: format!("{}:{}", repo_path.display(), relative_path),
+                source_uri: format!("{}/{}", repo_path.display(), relative_path),
             };
 
             // Chunk the content - B.1: pass strategy from discovered crawl config
@@ -1428,7 +1441,7 @@ fn run_crawl_working_dir(
                 package_name,
                 relative_path: relative_path.clone(),
                 blob_id: content_hash.clone(), // Use content hash as blob_id
-                source_uri: format!("{}:{}", repo_path.display(), relative_path),
+                source_uri: format!("{}/{}", repo_path.display(), relative_path),
             };
 
             // Chunk the content - B.1: pass strategy from discovered crawl config

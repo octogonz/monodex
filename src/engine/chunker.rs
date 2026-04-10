@@ -110,12 +110,28 @@ pub struct ChunkContext {
 /// * `content` - File content as string
 /// * `ctx` - Chunk context with identity information
 /// * `target_size` - Target chunk size in characters (default 6000)
+/// * `strategy_override` - Optional strategy name from discovered crawl config
+///   (e.g., "typescript", "markdown", "lineBased"). If None, falls back to
+///   embedded default config.
 ///
 /// # Returns
 ///
 /// Vector of chunks or an error
-pub fn chunk_content(content: &str, ctx: &ChunkContext, target_size: usize) -> Result<Vec<Chunk>> {
-    let strategy = get_chunk_strategy(&ctx.relative_path);
+pub fn chunk_content(
+    content: &str,
+    ctx: &ChunkContext,
+    target_size: usize,
+    strategy_override: Option<&str>,
+) -> Result<Vec<Chunk>> {
+    // B.1: Use strategy override if provided (from discovered crawl config),
+    // otherwise fall back to embedded default config
+    let strategy = match strategy_override {
+        Some("typescript") => ChunkingStrategy::TypeScript,
+        Some("markdown") => ChunkingStrategy::Markdown,
+        Some("lineBased") => ChunkingStrategy::LineBased,
+        Some(_) => ChunkingStrategy::Skip, // Unknown strategy
+        None => get_chunk_strategy(&ctx.relative_path), // Fallback to default config
+    };
 
     // Compute file ID from the new identity components
     let file_id = compute_file_id(EMBEDDER_ID, CHUNKER_ID, &ctx.blob_id, &ctx.relative_path);
@@ -379,7 +395,7 @@ pub fn chunk_file(
         source_uri: file_path.to_string(),
     };
 
-    chunk_content(&content, &ctx, target_size)
+    chunk_content(&content, &ctx, target_size, None) // Use default strategy
 }
 
 #[cfg(test)]
@@ -408,8 +424,8 @@ export function hello() {
 "#;
         let ctx = test_context("abc123", "src/index.ts", "@test/pkg");
 
-        let chunks1 = chunk_content(content, &ctx, 6000).unwrap();
-        let chunks2 = chunk_content(content, &ctx, 6000).unwrap();
+        let chunks1 = chunk_content(content, &ctx, 6000, None).unwrap();
+        let chunks2 = chunk_content(content, &ctx, 6000, None).unwrap();
 
         assert_eq!(chunks1.len(), chunks2.len());
         for (c1, c2) in chunks1.iter().zip(chunks2.iter()) {
@@ -437,8 +453,8 @@ export function hello() {
         let ctx1 = test_context("abc123", "src/index.ts", "@test/pkg");
         let ctx2 = test_context("abc123", "lib/index.ts", "@test/pkg");
 
-        let chunks1 = chunk_content(content, &ctx1, 6000).unwrap();
-        let chunks2 = chunk_content(content, &ctx2, 6000).unwrap();
+        let chunks1 = chunk_content(content, &ctx1, 6000, None).unwrap();
+        let chunks2 = chunk_content(content, &ctx2, 6000, None).unwrap();
 
         assert!(!chunks1.is_empty() && !chunks2.is_empty());
         assert_ne!(
@@ -467,8 +483,8 @@ export class JsonFile {
         let ctx1 = test_context("abc123", "libraries/foo/src/JsonFile.ts", "@scope/foo");
         let ctx2 = test_context("abc123", "libraries/bar/src/JsonFile.ts", "@scope/bar");
 
-        let chunks1 = chunk_content(content, &ctx1, 6000).unwrap();
-        let chunks2 = chunk_content(content, &ctx2, 6000).unwrap();
+        let chunks1 = chunk_content(content, &ctx1, 6000, None).unwrap();
+        let chunks2 = chunk_content(content, &ctx2, 6000, None).unwrap();
 
         // Both should produce chunks
         assert!(!chunks1.is_empty() && !chunks2.is_empty());
@@ -504,8 +520,8 @@ export function hello() {
         let ctx1 = test_context("abc123", "src/index.ts", "@test/pkg");
         let ctx2 = test_context("def456", "src/index.ts", "@test/pkg");
 
-        let chunks1 = chunk_content(content, &ctx1, 6000).unwrap();
-        let chunks2 = chunk_content(content, &ctx2, 6000).unwrap();
+        let chunks1 = chunk_content(content, &ctx1, 6000, None).unwrap();
+        let chunks2 = chunk_content(content, &ctx2, 6000, None).unwrap();
 
         assert!(!chunks1.is_empty() && !chunks2.is_empty());
         assert_ne!(
@@ -541,7 +557,7 @@ export function function_{}() {{
         }
 
         let ctx = test_context("abc123", "src/large.ts", "@test/pkg");
-        let chunks = chunk_content(&content, &ctx, 1000).unwrap(); // Small target to force splits
+        let chunks = chunk_content(&content, &ctx, 1000, None).unwrap(); // Small target to force splits
 
         // Should have multiple chunks
         assert!(

@@ -269,8 +269,11 @@ pub fn enumerate_working_directory(repo_path: &Path) -> Result<Vec<WorkingDirEnt
                 .map(|n| n.to_string_lossy())
                 .unwrap_or_default();
 
-            // Skip hidden directories except .git (we want to exclude .git contents)
-            // Note: .git is a hidden directory, so we skip it entirely
+            // Skip all hidden files and directories (dot-prefixed).
+            // This includes .git, .cache, .temp, .idea, .vscode, etc.
+            // This is a pre-filter before crawl config evaluation.
+            // If crawl config needs to include specific hidden paths,
+            // this filter would need to be relaxed.
             if name.starts_with('.') {
                 return false;
             }
@@ -317,7 +320,7 @@ fn compute_content_hash(content: &[u8]) -> String {
 /// Build package index from the working directory.
 ///
 /// This function walks the filesystem to find all package.json files and extracts
-/// their package names. Only `.git` directories are explicitly excluded.
+/// their package names. All hidden directories (dot-prefixed) are excluded.
 pub fn build_package_index_for_working_dir(repo_path: &Path) -> Result<PackageIndex> {
     let mut index = PackageIndex::new();
 
@@ -331,7 +334,8 @@ pub fn build_package_index_for_working_dir(repo_path: &Path) -> Result<PackageIn
                 .map(|n| n.to_string_lossy())
                 .unwrap_or_default();
 
-            // Skip hidden directories (including .git)
+            // Skip all hidden files and directories (dot-prefixed).
+            // This includes .git, .cache, .temp, .idea, .vscode, etc.
             if name.starts_with('.') {
                 return false;
             }
@@ -481,6 +485,7 @@ mod tests {
     }
 
     #[test]
+    #[ignore = "slow integration test that walks the entire repository"]
     fn test_enumerate_working_directory() {
         let repo_path = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
         let entries =

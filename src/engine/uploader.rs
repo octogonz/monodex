@@ -797,77 +797,34 @@ impl QdrantUploader {
     /// Get sentinel (chunk 1) for a file to check if already indexed
     ///
     /// Returns FileSyncInfo if the sentinel exists and is complete.
+    /// Optimized: Computes point ID directly instead of using scroll query.
     pub fn get_file_sentinel(&self, file_id: &str) -> Result<Option<FileSyncInfo>> {
-        // Query for chunk_ordinal=1 with the given file_id
-        #[derive(Debug, Serialize)]
-        struct SentinelRequest {
-            filter: SentinelFilter,
-            with_payload: bool,
-            limit: u32,
-        }
+        // Compute point ID directly from file_id and chunk_ordinal=1
+        let point_id = crate::engine::util::compute_point_id(file_id, 1);
 
-        #[derive(Debug, Serialize)]
-        struct SentinelFilter {
-            must: Vec<serde_json::Value>,
-        }
-
-        let must_values = vec![
-            serde_json::json!({
-                "key": "file_id",
-                "match": { "value": file_id }
-            }),
-            serde_json::json!({
-                "key": "chunk_ordinal",
-                "match": { "value": 1 }
-            }),
-            serde_json::json!({
-                "key": "source_type",
-                "match": { "value": "code" }
-            }),
-        ];
-
+        // Use Qdrant's point retrieval API with string ID
         let endpoint = format!(
-            "{}/collections/{}/points/scroll?limit=1",
-            self.url, self.collection
+            "{}/collections/{}/points/{}",
+            self.url, self.collection, point_id
         );
 
-        let request_body = SentinelRequest {
-            filter: SentinelFilter { must: must_values },
-            with_payload: true,
-            limit: 1,
-        };
-
-        let response = self.client.post(&endpoint).json(&request_body).send()?;
+        let response = self.client.get(&endpoint).send()?;
 
         if !response.status().is_success() {
-            return Err(anyhow!(
-                "Failed to query sentinel: HTTP {}",
-                response.status()
-            ));
+            // Point doesn't exist
+            return Ok(None);
         }
 
         #[derive(Debug, Deserialize)]
-        struct SentinelResponse {
-            result: SentinelResult,
+        struct PointResponse {
+            result: PointResult,
         }
 
-        #[derive(Debug, Deserialize)]
-        struct SentinelResult {
-            points: Vec<SentinelPoint>,
-        }
+        let point_response: PointResponse = response.json()?;
 
-        #[derive(Debug, Deserialize)]
-        struct SentinelPoint {
-            payload: PointPayload,
-        }
-
-        let sentinel_response: SentinelResponse = response.json()?;
-
-        if let Some(point) = sentinel_response.result.points.first()
-            && point.payload.file_complete
-        {
+        if point_response.result.payload.file_complete {
             return Ok(Some(FileSyncInfo {
-                content_hash: point.payload.content_hash.clone(),
+                content_hash: point_response.result.payload.content_hash.clone(),
                 file_complete: true,
             }));
         }

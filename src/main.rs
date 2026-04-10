@@ -449,12 +449,19 @@ fn main() -> anyhow::Result<()> {
             incremental_warnings,
         } => {
             // Resolve label ID from explicit flags or default context
-            let (_label_id, catalog_name, label_name) = resolve_label_id(label.as_deref(), catalog.as_deref())?;
-            
+            let (_label_id, catalog_name, label_name) =
+                resolve_label_id(label.as_deref(), catalog.as_deref())?;
+
             if working_dir {
                 run_crawl_working_dir(&config, &catalog_name, &label_name, incremental_warnings)?;
             } else {
-                run_crawl_label(&config, &catalog_name, &label_name, &commit, incremental_warnings)?;
+                run_crawl_label(
+                    &config,
+                    &catalog_name,
+                    &label_name,
+                    &commit,
+                    incremental_warnings,
+                )?;
             }
         }
         Commands::Purge { catalog, all } => {
@@ -537,10 +544,15 @@ fn run_use(catalog: Option<&str>, label: Option<String>, config: &Config) -> any
                 return Err(anyhow::anyhow!(
                     "Catalog '{}' not found in config. Available catalogs: {}",
                     catalog_name,
-                    config.catalogs.keys().cloned().collect::<Vec<_>>().join(", ")
+                    config
+                        .catalogs
+                        .keys()
+                        .cloned()
+                        .collect::<Vec<_>>()
+                        .join(", ")
                 ));
             }
-            
+
             // Set new context
             save_default_context(catalog_name, &label_name)?;
 

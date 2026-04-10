@@ -226,8 +226,10 @@ impl QdrantUploader {
     pub fn new(collection: &str, qdrant_url: Option<&str>) -> Result<Self> {
         let url = qdrant_url.unwrap_or(DEFAULT_QDRANT_URL).to_string();
 
+        // Use a longer timeout to accommodate wait=true operations
+        // which require Qdrant to fully index points before responding
         let client = Client::builder()
-            .timeout(std::time::Duration::from_secs(60))
+            .timeout(std::time::Duration::from_secs(300)) // 5 minutes
             .build()?;
 
         Ok(Self {
@@ -461,108 +463,57 @@ impl QdrantUploader {
 
         let request_body = UpsertRequest { points };
 
-        let endpoint = format!("{}/collections/{}/points", self.url, self.collection);
+        // Use wait=true to ensure points are fully indexed before subsequent reads
+        // This prevents race conditions with mark_file_complete() and add_label_to_file_chunks()
+        let endpoint = format!(
+            "{}/collections/{}/points?wait=true",
+            self.url, self.collection
+        );
 
-        let response = self
-            .client
-            .put(&endpoint)
-            .json(&request_body)
-            .send()?
-            .json::<UpsertResponse>()?;
+        let response = self.client.put(&endpoint).json(&request_body).send()?;
 
-        if response.status != "ok" {
+        if !response.status().is_success() {
             return Err(anyhow!(
-                "Qdrant upsert failed with status: {}",
-                response.status
+                "Qdrant upsert failed with HTTP status: {}",
+                response.status()
             ));
         }
 
-        Ok(response.result.operation_id)
+        // Parse response with error observability for malformed responses
+        let response_text = response.text()?;
+        let upsert_response: UpsertResponse = match serde_json::from_str(&response_text) {
+            Ok(r) => r,
+            Err(e) => {
+                eprintln!("Failed to deserialize Qdrant upsert response: {}", e);
+                eprintln!(
+                    "Raw response (first 2000 chars): {}",
+                    &response_text.chars().take(2000).collect::<String>()
+                );
+                return Err(anyhow!("Upsert response deserialization error: {}", e));
+            }
+        };
+
+        if upsert_response.status != "ok" {
+            return Err(anyhow!(
+                "Qdrant upsert failed with status: {}",
+                upsert_response.status
+            ));
+        }
+
+        Ok(upsert_response.result.operation_id)
     }
 
     /// Mark a file as complete by setting file_complete=true on chunk #1
     ///
     /// This is called after all chunks for a file have been uploaded.
     /// Uses Qdrant's payload update API to set the field without rewriting the point.
+    ///
+    /// Optimized: Computes point ID directly instead of using scroll query.
+    /// This eliminates the read-after-write race condition and is more efficient.
     pub fn mark_file_complete(&self, file_id: &str) -> Result<()> {
-        // First, find the point ID for chunk #1 of this file
-        #[derive(Debug, Serialize)]
-        struct ScrollRequestForId {
-            filter: FilterForId,
-            with_payload: bool,
-            limit: u32,
-        }
-
-        #[derive(Debug, Serialize)]
-        struct FilterForId {
-            must: Vec<serde_json::Value>,
-        }
-
-        let must_values = vec![
-            serde_json::json!({
-                "key": "file_id",
-                "match": { "value": file_id }
-            }),
-            serde_json::json!({
-                "key": "chunk_ordinal",
-                "match": { "value": 1 }
-            }),
-            serde_json::json!({
-                "key": "source_type",
-                "match": { "value": "code" }
-            }),
-        ];
-
-        let endpoint = format!(
-            "{}/collections/{}/points/scroll?limit=1",
-            self.url, self.collection
-        );
-
-        let request_body = ScrollRequestForId {
-            filter: FilterForId { must: must_values },
-            with_payload: false,
-            limit: 1,
-        };
-
-        let response = self.client.post(&endpoint).json(&request_body).send()?;
-
-        if !response.status().is_success() {
-            return Err(anyhow!(
-                "Failed to find chunk #1 for file {}: HTTP {}",
-                file_id,
-                response.status()
-            ));
-        }
-
-        #[derive(Debug, Deserialize)]
-        struct ScrollIdResponse {
-            result: ScrollIdResult,
-        }
-
-        #[derive(Debug, Deserialize)]
-        struct ScrollIdResult {
-            points: Vec<ScrollIdPoint>,
-        }
-
-        #[derive(Debug, Deserialize)]
-        struct ScrollIdPoint {
-            id: QdrantId,
-        }
-
-        let scroll_response: ScrollIdResponse = response.json()?;
-
-        let point_id = scroll_response
-            .result
-            .points
-            .first()
-            .ok_or_else(|| anyhow!("No chunk #1 found for file {}", file_id))?;
-
-        // Now update the payload using Qdrant's set_payload API
-        // The point ID should be passed as a plain string (UUID) or integer
-        let point_id_str = match &point_id.id {
-            QdrantId::String(s) => s.clone(),
-            QdrantId::Integer(n) => n.to_string(),
-        };
+        // Compute point ID directly from file_id and chunk_ordinal=1
+        // This is deterministic and matches how upload_batch creates point IDs
+        let point_id = crate::engine::util::compute_point_id(file_id, 1);
 
         #[derive(Debug, Serialize)]
         struct SetPayloadRequest {
@@ -575,11 +526,11 @@ impl QdrantUploader {
 
         let request_body = SetPayloadRequest {
             payload,
-            points: vec![point_id_str],
+            points: vec![point_id],
         };
 
         let endpoint = format!(
-            "{}/collections/{}/points/payload",
+            "{}/collections/{}/points/payload?wait=true",
             self.url, self.collection
         );
 
@@ -846,77 +797,34 @@ impl QdrantUploader {
     /// Get sentinel (chunk 1) for a file to check if already indexed
     ///
     /// Returns FileSyncInfo if the sentinel exists and is complete.
+    /// Optimized: Computes point ID directly instead of using scroll query.
     pub fn get_file_sentinel(&self, file_id: &str) -> Result<Option<FileSyncInfo>> {
-        // Query for chunk_ordinal=1 with the given file_id
-        #[derive(Debug, Serialize)]
-        struct SentinelRequest {
-            filter: SentinelFilter,
-            with_payload: bool,
-            limit: u32,
-        }
+        // Compute point ID directly from file_id and chunk_ordinal=1
+        let point_id = crate::engine::util::compute_point_id(file_id, 1);
 
-        #[derive(Debug, Serialize)]
-        struct SentinelFilter {
-            must: Vec<serde_json::Value>,
-        }
-
-        let must_values = vec![
-            serde_json::json!({
-                "key": "file_id",
-                "match": { "value": file_id }
-            }),
-            serde_json::json!({
-                "key": "chunk_ordinal",
-                "match": { "value": 1 }
-            }),
-            serde_json::json!({
-                "key": "source_type",
-                "match": { "value": "code" }
-            }),
-        ];
-
+        // Use Qdrant's point retrieval API with string ID
         let endpoint = format!(
-            "{}/collections/{}/points/scroll?limit=1",
-            self.url, self.collection
+            "{}/collections/{}/points/{}",
+            self.url, self.collection, point_id
         );
 
-        let request_body = SentinelRequest {
-            filter: SentinelFilter { must: must_values },
-            with_payload: true,
-            limit: 1,
-        };
-
-        let response = self.client.post(&endpoint).json(&request_body).send()?;
+        let response = self.client.get(&endpoint).send()?;
 
         if !response.status().is_success() {
-            return Err(anyhow!(
-                "Failed to query sentinel: HTTP {}",
-                response.status()
-            ));
+            // Point doesn't exist
+            return Ok(None);
         }
 
         #[derive(Debug, Deserialize)]
-        struct SentinelResponse {
-            result: SentinelResult,
+        struct PointResponse {
+            result: PointResult,
         }
 
-        #[derive(Debug, Deserialize)]
-        struct SentinelResult {
-            points: Vec<SentinelPoint>,
-        }
+        let point_response: PointResponse = response.json()?;
 
-        #[derive(Debug, Deserialize)]
-        struct SentinelPoint {
-            payload: PointPayload,
-        }
-
-        let sentinel_response: SentinelResponse = response.json()?;
-
-        if let Some(point) = sentinel_response.result.points.first()
-            && point.payload.file_complete
-        {
+        if point_response.result.payload.file_complete {
             return Ok(Some(FileSyncInfo {
-                content_hash: point.payload.content_hash.clone(),
+                content_hash: point_response.result.payload.content_hash.clone(),
                 file_complete: true,
             }));
         }
@@ -1175,8 +1083,9 @@ impl QdrantUploader {
 
     /// Set active_label_ids on a point
     fn set_active_labels(&self, point_id: &str, labels: &[String]) -> Result<()> {
+        // Use wait=true to ensure the update is visible before subsequent operations
         let endpoint = format!(
-            "{}/collections/{}/points/payload",
+            "{}/collections/{}/points/payload?wait=true",
             self.url, self.collection
         );
 

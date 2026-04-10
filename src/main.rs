@@ -9,7 +9,6 @@ use clap::{Parser, Subcommand};
 use engine::{
     ParallelEmbedder, SMALL_CHUNK_CHARS,
     chunker::{ChunkContext, chunk_content},
-    config::should_skip_path,
     crawl_config::load_compiled_crawl_config,
     git_ops::{
         build_package_index_for_commit, build_package_index_for_working_dir, enumerate_commit_tree,
@@ -1121,8 +1120,8 @@ fn run_crawl_working_dir(
 
     // Enumerate working directory files
     println!("📂 Enumerating working directory...");
-    let files = enumerate_working_directory(repo_path, should_skip_path)?;
-    println!("Found {} files in working directory", files.len());
+    let files = enumerate_working_directory(repo_path)?;
+    println!("Found {} files in working directory (before crawl config filtering)", files.len());
     println!();
 
     // Build package index from working directory
@@ -1971,23 +1970,6 @@ fn run_purge(config: &Config, catalog: Option<&str>, all: bool) -> anyhow::Resul
     }
 
     Ok(())
-}
-
-/// Check if a file is a text file we want to index
-fn is_text_file(path: &str) -> bool {
-    let extensions = [
-        "ts", "tsx", "js", "jsx", // TypeScript/JavaScript
-        "md", "mdx",  // Markdown
-        "json", // JSON
-        "yaml", "yml", // YAML
-        "txt", "rst", "mdn", // Text docs
-        "toml", "ini", "conf", // Config files
-    ];
-
-    let path_lower = path.to_lowercase();
-    extensions
-        .iter()
-        .any(|ext| path_lower.ends_with(&format!(".{}", ext)))
 }
 
 /// Run chunking diagnostics on a TypeScript file

@@ -243,10 +243,15 @@ pub struct WorkingDirEntry {
     pub content_hash: String,
 }
 
-pub fn enumerate_working_directory<F>(repo_path: &Path, should_skip: F) -> Result<Vec<WorkingDirEntry>>
-where
-    F: Fn(&str) -> bool,
-{
+/// Enumerate files from the working directory.
+///
+/// This function walks the filesystem and returns all regular files with their
+/// content hashes. Directory filtering is handled by passing the results through
+/// the compiled crawl config's `should_crawl()` method.
+///
+/// Note: Only `.git` directories are explicitly excluded here. All other
+/// filtering (node_modules, dist, etc.) should be handled by the crawl config.
+pub fn enumerate_working_directory(repo_path: &Path) -> Result<Vec<WorkingDirEntry>> {
     use std::fs;
 
     let mut entries: Vec<WorkingDirEntry> = Vec::new();
@@ -261,14 +266,9 @@ where
                 .map(|n| n.to_string_lossy())
                 .unwrap_or_default();
 
-            if name.starts_with('.') && name != ".git" {
-                return false;
-            }
-
-            if matches!(
-                name.as_ref(),
-                "node_modules" | "target" | "dist" | "build" | ".cache" | "temp"
-            ) {
+            // Skip hidden directories except .git (we want to exclude .git contents)
+            // Note: .git is a hidden directory, so we skip it entirely
+            if name.starts_with('.') {
                 return false;
             }
 
@@ -286,10 +286,6 @@ where
             .map_err(|e| anyhow!("Failed to strip prefix: {}", e))?
             .to_string_lossy()
             .replace('\\', "/");
-
-        if should_skip(&relative_path) {
-            continue;
-        }
 
         let content = match fs::read(path) {
             Ok(c) => c,
@@ -315,6 +311,10 @@ fn compute_content_hash(content: &[u8]) -> String {
     format!("sha256:{}", hex::encode(result))
 }
 
+/// Build package index from the working directory.
+///
+/// This function walks the filesystem to find all package.json files and extracts
+/// their package names. Only `.git` directories are explicitly excluded.
 pub fn build_package_index_for_working_dir(repo_path: &Path) -> Result<PackageIndex> {
     let mut index = PackageIndex::new();
 
@@ -328,14 +328,8 @@ pub fn build_package_index_for_working_dir(repo_path: &Path) -> Result<PackageIn
                 .map(|n| n.to_string_lossy())
                 .unwrap_or_default();
 
-            if name.starts_with('.') && name != ".git" {
-                return false;
-            }
-
-            if matches!(
-                name.as_ref(),
-                "node_modules" | "target" | "dist" | "build" | ".cache" | "temp"
-            ) {
+            // Skip hidden directories (including .git)
+            if name.starts_with('.') {
                 return false;
             }
 
@@ -480,9 +474,11 @@ mod tests {
     #[test]
     fn test_enumerate_working_directory() {
         let repo_path = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
-        let entries = enumerate_working_directory(&repo_path, |_path| false)
+        let entries = enumerate_working_directory(&repo_path)
             .expect("Failed to enumerate working directory");
         assert!(!entries.is_empty(), "Should have found some files");
+        // README.md should be found (it's in the gitignore exclusion list but we only skip .git)
+        // Actually README.md is a regular file that should be found
         assert!(entries.iter().any(|e| e.relative_path == "README.md"));
     }
 

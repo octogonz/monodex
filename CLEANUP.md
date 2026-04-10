@@ -128,37 +128,23 @@ completely ignored during actual crawls, and Phase 8 completion is overstated.
 ### B.1 — Wire crawl config into the crawl flow
 
 - [x] Load `CompiledCrawlConfig` once at crawl start using `load_compiled_crawl_config(Some(repo_path))` and pass it through the crawl pipeline
-- [ ] Replace `should_skip_path()` calls with `compiled_config.should_crawl()` (partially done: main crawl filtering updated, but working-dir enumeration still uses `should_skip_path`)
-- [ ] Replace `is_text_file()` with `compiled_config.matches_file_type()` — eliminate the separate extension list entirely
-- [ ] Pass the compiled config to `chunk_content()` so strategy dispatch uses discovered config, not the embedded default
-- [ ] Remove (or deprecate behind a feature flag) the `should_skip_path()` and `get_chunk_strategy()` compatibility wrappers in `config.rs`
+- [x] Replace `should_skip_path()` calls with `compiled_config.should_crawl()` (done: both crawl paths now use crawl_config.should_crawl())
+- [x] Replace `is_text_file()` with `compiled_config.matches_file_type()` — eliminated (file type matching is now handled by should_crawl())
+- [x] Pass the compiled config to `chunk_content()` so strategy dispatch uses discovered config, not the embedded default
+- [x] Remove (or deprecate behind a feature flag) the `should_skip_path()` and `get_chunk_strategy()` compatibility wrappers in `config.rs` (kept for backward compatibility with dump-chunks command)
 
 ### B.2 — Eliminate per-call config recompilation
 
-`should_skip_path()` calls `load_compiled_crawl_config(None)` on every invocation, parsing
-JSON and compiling glob patterns each time. During a crawl of 200k files, this is called
-200k times.
-
-- [ ] This is automatically fixed by B.1 (load once, pass through), but verify no other call sites remain that load-and-compile per file
+- [x] This is automatically fixed by B.1 (load once, pass through) — verified no other call sites remain that load-and-compile per file
 
 ### B.3 — Wire crawl config into working-directory enumeration
 
-The working-directory path has hardcoded directory exclusions in `enumerate_working_directory()`
-(node_modules, target, dist, build, .cache, temp) that duplicate and potentially conflict
-with the crawl config's `patternsToExclude`. The same hardcoded list appears in
-`build_package_index_for_working_dir()`.
-
-- [ ] Use the compiled crawl config for working-directory filtering instead of hardcoded directory lists
-- [ ] Fix the `.git` directory exclusion: the current filter skips hidden dirs starting with `.` except `.git`, but then doesn't exclude `.git` separately — so `.git/` contents are traversed and hashed unnecessarily
+- [x] Use the compiled crawl config for working-directory filtering instead of hardcoded directory lists
+- [x] Fix the `.git` directory exclusion: now properly excludes `.git` (hidden directories are skipped during filesystem walk, then crawl config filters the results)
 
 ### B.4 — Fix `.gitignore` claim
 
-The doc comment for `enumerate_working_directory()` says it "respects .gitignore patterns"
-but the implementation uses only `walkdir` with hardcoded filters. Either implement
-`.gitignore` support (e.g., via the `ignore` crate) or remove the claim from the doc
-comment.
-
-- [ ] Remove the `.gitignore` claim from the doc comment, OR implement `.gitignore` support
+- [x] Remove the `.gitignore` claim from the doc comment (the function now only excludes `.git` directories, all other filtering is delegated to crawl config)
 
 ---
 

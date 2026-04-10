@@ -154,6 +154,7 @@ fn extract_heading_text(line: &str) -> Option<String> {
 }
 
 /// Split an oversized section into smaller chunks
+#[allow(clippy::too_many_arguments)]
 fn split_oversized_section(
     lines: &[&str],
     start_line: usize,
@@ -244,6 +245,7 @@ fn split_oversized_section(
 }
 
 /// Fallback: split by lines when other methods fail
+#[allow(clippy::too_many_arguments)]
 fn split_by_lines_fallback(
     lines: &[&str],
     start_line: usize,

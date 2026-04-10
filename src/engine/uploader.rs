@@ -140,7 +140,9 @@ pub struct LabelMetadata {
 }
 
 /// Information about a file for incremental sync
+/// Note: Fields are currently unused but kept for future incremental sync implementation
 #[derive(Debug, Clone)]
+#[allow(dead_code)]
 pub struct FileSyncInfo {
     pub content_hash: String,
     pub file_complete: bool,
@@ -302,6 +304,7 @@ impl QdrantUploader {
     /// Get all points for a specific catalog
     /// Returns a map of file path → FileSyncInfo (content_hash and file_complete)
     /// Only queries chunk #1 per file for efficiency
+    #[allow(dead_code)]
     pub fn get_catalog_files(
         &self,
         catalog: &str,
@@ -810,6 +813,7 @@ impl QdrantUploader {
     }
 
     /// Get label metadata by label_id
+    #[allow(dead_code)]
     pub fn get_label_metadata(&self, label_id: &str) -> Result<Option<LabelMetadata>> {
         // Convert label_id to UUID the same way upsert_label_metadata does
         let point_id = super::util::string_to_uuid(label_id);
@@ -908,13 +912,13 @@ impl QdrantUploader {
 
         let sentinel_response: SentinelResponse = response.json()?;
 
-        if let Some(point) = sentinel_response.result.points.first() {
-            if point.payload.file_complete {
-                return Ok(Some(FileSyncInfo {
-                    content_hash: point.payload.content_hash.clone(),
-                    file_complete: true,
-                }));
-            }
+        if let Some(point) = sentinel_response.result.points.first()
+            && point.payload.file_complete
+        {
+            return Ok(Some(FileSyncInfo {
+                content_hash: point.payload.content_hash.clone(),
+                file_complete: true,
+            }));
         }
 
         Ok(None)
@@ -1360,6 +1364,7 @@ impl QdrantUploader {
 
 /// A point retrieved by ID (no score, unlike SearchResult)
 #[derive(Debug, Deserialize)]
+#[allow(dead_code)]
 pub struct PointResult {
     pub id: QdrantId,
     pub payload: PointPayload,

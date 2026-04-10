@@ -354,6 +354,7 @@ pub fn load_compiled_crawl_config(repo_path: Option<&Path>) -> Result<CompiledCr
 /// Get the embedded default crawl config.
 ///
 /// Useful for debugging or generating a starter config file.
+#[allow(dead_code)]
 pub fn get_default_crawl_config() -> CrawlConfig {
     CrawlConfig::from_json(DEFAULT_CRAWL_CONFIG_JSON)
         .expect("Embedded default config should be valid")

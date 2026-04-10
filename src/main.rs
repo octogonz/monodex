@@ -6,6 +6,7 @@
 mod engine;
 
 use clap::{Parser, Subcommand};
+use crossbeam_channel::{Receiver, Sender};
 use engine::{
     ParallelEmbedder, SMALL_CHUNK_CHARS,
     chunker::{ChunkContext, chunk_content},
@@ -21,6 +22,12 @@ use engine::{
 };
 use std::collections::{HashMap, HashSet};
 use std::path::PathBuf;
+
+/// Type alias for the embedding channel (reduces type complexity)
+type EmbedChannel = (
+    Sender<(engine::Chunk, Vec<f32>)>,
+    Receiver<(engine::Chunk, Vec<f32>)>,
+);
 
 /// Qdrant configuration
 #[derive(Debug, serde::Deserialize)]
@@ -454,7 +461,7 @@ fn run_crawl_label(
     commit: &str,
     _incremental_warnings: bool,
 ) -> anyhow::Result<()> {
-    use crossbeam_channel::{Receiver, Sender, unbounded};
+    use crossbeam_channel::unbounded;
     use engine::util::{CHUNKER_ID, EMBEDDER_ID, compute_file_id};
     use rayon::prelude::*;
     use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
@@ -696,10 +703,7 @@ fn run_crawl_label(
             println!("  (Checkpoints every 60s - safe to CTRL+C)");
             let embed_start = std::time::Instant::now();
 
-            let (embed_tx, embed_rx): (
-                Sender<(engine::Chunk, Vec<f32>)>,
-                Receiver<(engine::Chunk, Vec<f32>)>,
-            ) = unbounded();
+            let (embed_tx, embed_rx): EmbedChannel = unbounded();
             let processed = Arc::new(AtomicUsize::new(0));
             let stop_flag = Arc::new(AtomicBool::new(false));
             let last_upload_time = Arc::new(Mutex::new(std::time::Instant::now()));
@@ -1097,7 +1101,7 @@ fn run_crawl_working_dir(
     label_name: &str,
     _incremental_warnings: bool,
 ) -> anyhow::Result<()> {
-    use crossbeam_channel::{Receiver, Sender, unbounded};
+    use crossbeam_channel::unbounded;
     use engine::util::{CHUNKER_ID, EMBEDDER_ID, compute_file_id};
     use rayon::prelude::*;
     use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
@@ -1333,10 +1337,7 @@ fn run_crawl_working_dir(
             println!("  (Checkpoints every 60s - safe to CTRL+C)");
             let embed_start = std::time::Instant::now();
 
-            let (embed_tx, embed_rx): (
-                Sender<(engine::Chunk, Vec<f32>)>,
-                Receiver<(engine::Chunk, Vec<f32>)>,
-            ) = unbounded();
+            let (embed_tx, embed_rx): EmbedChannel = unbounded();
             let processed = Arc::new(AtomicUsize::new(0));
             let stop_flag = Arc::new(AtomicBool::new(false));
             let last_upload_time = Arc::new(Mutex::new(std::time::Instant::now()));
@@ -1778,12 +1779,11 @@ fn parse_file_id_with_selector(s: &str) -> anyhow::Result<(String, ChunkSelector
         // Parse selector
         if selector == "end" {
             // Invalid: ":end" without start
-            return Err(anyhow::anyhow!(
+            Err(anyhow::anyhow!(
                 "Invalid selector ':end'. Use ':N-end' format."
-            ));
-        } else if selector.ends_with("-end") {
+            ))
+        } else if let Some(start_str) = selector.strip_suffix("-end") {
             // :N-end format
-            let start_str = &selector[..selector.len() - 4];
             let start: usize = start_str
                 .parse()
                 .map_err(|_| anyhow::anyhow!("Invalid chunk number in selector '{}'", selector))?;
@@ -2221,7 +2221,7 @@ fn run_audit_chunks(count: usize, dir: String) -> anyhow::Result<()> {
 
     // Random sample
     let mut rng = rand::rng();
-    let sample: Vec<_> = ts_files.sample(&mut rng, count).into_iter().collect();
+    let sample: Vec<_> = ts_files.sample(&mut rng, count).collect();
 
     // Compute quality scores using AST-only mode (allow_fallback=false)
     // This measures how well the AST-based chunker performs, without fallback
@@ -2229,7 +2229,7 @@ fn run_audit_chunks(count: usize, dir: String) -> anyhow::Result<()> {
     let mut results: Vec<_> = sample
         .into_iter()
         .filter_map(|path| {
-            let source = std::fs::read_to_string(&path).ok()?;
+            let source = std::fs::read_to_string(path).ok()?;
             let file_name = path.file_name()?.to_string_lossy().to_string();
             let config = PartitionConfig {
                 file_name,

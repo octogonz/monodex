@@ -213,12 +213,11 @@ pub fn build_package_index_for_commit(repo_path: &Path, commit: &str) -> Result<
 
     let mut index = PackageIndex::new();
     for (dir_path, blob_id) in package_json_entries {
-        if let Ok(obj) = repo.find_object(blob_id) {
-            if let Ok(blob) = obj.try_into_blob() {
-                if let Some(name) = extract_package_name_from_bytes(&blob.data) {
-                    index.package_name_by_dir.insert(dir_path, name);
-                }
-            }
+        if let Ok(obj) = repo.find_object(blob_id)
+            && let Ok(blob) = obj.try_into_blob()
+            && let Some(name) = extract_package_name_from_bytes(&blob.data)
+        {
+            index.package_name_by_dir.insert(dir_path, name);
         }
     }
 
@@ -360,10 +359,10 @@ pub fn build_package_index_for_working_dir(repo_path: &Path) -> Result<PackageIn
             .map(|p| p.to_string_lossy().replace('\\', "/"))
             .unwrap_or_default();
 
-        if let Ok(content) = std::fs::read(path) {
-            if let Some(name) = extract_package_name_from_bytes(&content) {
-                index.package_name_by_dir.insert(dir_path, name);
-            }
+        if let Ok(content) = std::fs::read(path)
+            && let Some(name) = extract_package_name_from_bytes(&content)
+        {
+            index.package_name_by_dir.insert(dir_path, name);
         }
     }
 

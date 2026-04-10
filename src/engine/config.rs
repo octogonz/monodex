@@ -27,6 +27,7 @@ use super::crawl_config::load_compiled_crawl_config;
 /// # Returns
 ///
 /// `true` if the file should be skipped, `false` if it should be indexed
+#[allow(dead_code)]
 pub fn should_skip_path(path: &str) -> bool {
     // Use embedded default for backward compatibility
     let config = load_compiled_crawl_config(None).expect("Embedded config should be valid");

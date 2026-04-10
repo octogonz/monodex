@@ -139,7 +139,7 @@ pub fn chunk_content(content: &str, ctx: &ChunkContext, target_size: usize) -> R
                 .into_iter()
                 .enumerate()
                 .map(|(i, p)| {
-                    Chunk::from_partitioned(p, &file_id, &ctx, i + 1, 0) // chunk_count set later
+                    Chunk::from_partitioned(p, &file_id, ctx, i + 1, 0) // chunk_count set later
                 })
                 .collect();
 
@@ -171,7 +171,7 @@ pub fn chunk_content(content: &str, ctx: &ChunkContext, target_size: usize) -> R
                 .into_iter()
                 .enumerate()
                 .map(|(i, p)| {
-                    Chunk::from_partitioned(p, &file_id, &ctx, i + 1, 0) // chunk_count set later
+                    Chunk::from_partitioned(p, &file_id, ctx, i + 1, 0) // chunk_count set later
                 })
                 .collect();
 

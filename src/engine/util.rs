@@ -52,6 +52,7 @@ pub fn compute_file_id(
 /// # Arguments
 /// * `file_id` - The file's semantic identity (16-char hex string)
 /// * `chunk_ordinal` - 1-indexed position of the chunk in the file
+///
 /// Convert any string to a deterministic UUID for Qdrant compatibility
 pub fn string_to_uuid(input: &str) -> String {
     let mut hasher = XxHash64::with_seed(0);
@@ -67,7 +68,7 @@ pub fn string_to_uuid(input: &str) -> String {
     format!(
         "{:08x}-{:04x}-{:04x}-{:04x}-{:012x}",
         (hash1 >> 32) as u32,
-        (hash1 >> 16) as u16 & 0xFFFF,
+        ((hash1 >> 16) as u16),
         hash1 as u16,
         (hash2 >> 48) as u16,
         hash2 & 0xFFFFFFFFFFFF

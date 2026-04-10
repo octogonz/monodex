@@ -527,17 +527,17 @@ In `src/engine/git_ops.rs`:
 
 ---
 
-## Phase 9: Markdown Heading-Based Chunking
+## Phase 9: Markdown Heading-Based Chunking ✅ PARTIAL
 
 **Goal:** Implement proper heading-based chunking for markdown files.
 
-### 11.1 Design Markdown Chunking Algorithm
+### 9.1 Design Markdown Chunking Algorithm ✅ COMPLETE
 
-- [ ] Analyze markdown structure:
+- [x] Analyze markdown structure:
   - Heading hierarchy (H1-H6)
   - Code blocks, lists, tables
   - Link/reference sections
-- [ ] Design chunk boundaries:
+- [x] Design chunk boundaries:
   - Split at heading boundaries (each section becomes a chunk)
   - Handle nested headings (H2 under H1)
   - Include parent heading context in breadcrumbs
@@ -546,11 +546,12 @@ In `src/engine/git_ops.rs`:
   - Code blocks (preserve as single unit?)
   - Front matter (YAML metadata)
 
-### 10.2 Implement Markdown Chunker
+### 9.2 Implement Markdown Chunker ✅ COMPLETE
 
-- [ ] Add `markdown` tree-sitter parser or custom parser
-- [ ] Implement `chunk_markdown(content, file_id, ctx, target_size)` function
-- [ ] Generate chunks with:
+- [x] Add custom markdown parser in `markdown_partitioner.rs`
+- [x] Implement `partition_markdown(content, config, file_path, catalog)` function
+- [x] Wire `partition_markdown()` into `chunk_content()` for the `Markdown` strategy branch
+- [x] Generate chunks with:
   - Heading breadcrumb context
   - Section boundaries
   - Proper line numbers

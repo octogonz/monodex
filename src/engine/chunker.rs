@@ -4,6 +4,7 @@
 //! based on their file type and content structure.
 
 use super::config::{ChunkingStrategy, get_chunk_strategy};
+use super::markdown_partitioner::partition_markdown;
 use super::partitioner::{PartitionConfig, PartitionedChunk, partition_typescript};
 use super::util::{CHUNKER_ID, EMBEDDER_ID, compute_file_id, compute_hash, compute_point_id};
 use anyhow::Result;
@@ -153,8 +154,36 @@ pub fn chunk_content(content: &str, ctx: &ChunkContext, target_size: usize) -> R
             Ok(chunks)
         }
         ChunkingStrategy::Markdown => {
-            // TODO: Implement heading-based splitting
-            chunk_by_lines(content, &file_id, ctx, target_size, "markdown")
+            let file_name = std::path::Path::new(&ctx.relative_path)
+                .file_name()
+                .map(|n| n.to_string_lossy().to_string())
+                .unwrap_or_else(|| ctx.relative_path.to_string());
+
+            let config = PartitionConfig {
+                target_size,
+                file_name,
+                package_name: ctx.package_name.clone(),
+                ..Default::default()
+            };
+
+            let partitioned = partition_markdown(content, &config, &ctx.source_uri, &ctx.catalog);
+            let mut chunks: Vec<Chunk> = partitioned
+                .into_iter()
+                .enumerate()
+                .map(|(i, p)| {
+                    Chunk::from_partitioned(p, &file_id, &ctx, i + 1, 0) // chunk_count set later
+                })
+                .collect();
+
+            // Assign chunk ordinals (1-indexed, sorted by start_line)
+            chunks.sort_by_key(|c| c.start_line);
+            let chunk_count = chunks.len();
+            for (i, chunk) in chunks.iter_mut().enumerate() {
+                chunk.chunk_ordinal = i + 1;
+                chunk.chunk_count = chunk_count;
+            }
+
+            Ok(chunks)
         }
         ChunkingStrategy::LineBased => chunk_by_lines(content, &file_id, ctx, target_size, "text"),
         ChunkingStrategy::Skip => Ok(Vec::new()),

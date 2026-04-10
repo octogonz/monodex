@@ -458,7 +458,9 @@ fn run_crawl_label(
         .get(catalog_name)
         .ok_or_else(|| anyhow::anyhow!("Catalog '{}' not found in config", catalog_name))?;
 
-    let repo_path = std::path::Path::new(&catalog_config.path);
+    // D.5: Expand tilde in catalog path
+    let expanded_path = shellexpand::tilde(&catalog_config.path);
+    let repo_path = std::path::Path::new(expanded_path.as_ref());
     println!("Repository: {}", repo_path.display());
     println!("Type: {}", catalog_config.r#type);
     println!("Collection: {}", config.qdrant.collection);
@@ -907,27 +909,33 @@ fn run_crawl_label(
             let embedding_failures_clone = Arc::clone(&embedding_failures);
             let num_workers = embedder.num_workers();
 
-            all_chunks.into_par_iter().enumerate().for_each(|(idx, chunk)| {
-                let worker_index = idx % num_workers;
-                match embedder.encode(&chunk.text, worker_index) {
-                    Ok(embedding) => {
-                        let _ = embed_tx.send((chunk, embedding));
-                        processed_clone.fetch_add(1, Ordering::Relaxed);
+            all_chunks
+                .into_par_iter()
+                .enumerate()
+                .for_each(|(idx, chunk)| {
+                    let worker_index = idx % num_workers;
+                    match embedder.encode(&chunk.text, worker_index) {
+                        Ok(embedding) => {
+                            let _ = embed_tx.send((chunk, embedding));
+                            processed_clone.fetch_add(1, Ordering::Relaxed);
+                        }
+                        Err(e) => {
+                            // A.4: Log embedding failures (not silently dropped)
+                            eprintln!(
+                                "\n[{}] ❌ Embedding failed for {}:{} - {}",
+                                chrono_timestamp(),
+                                chunk.relative_path,
+                                chunk.chunk_ordinal,
+                                e
+                            );
+                            let mut failures = embedding_failures_clone.lock().unwrap();
+                            failures.push(format!(
+                                "{}:{}: {}",
+                                chunk.relative_path, chunk.chunk_ordinal, e
+                            ));
+                        }
                     }
-                    Err(e) => {
-                        // A.4: Log embedding failures (not silently dropped)
-                        eprintln!(
-                            "\n[{}] ❌ Embedding failed for {}:{} - {}",
-                            chrono_timestamp(),
-                            chunk.relative_path,
-                            chunk.chunk_ordinal,
-                            e
-                        );
-                        let mut failures = embedding_failures_clone.lock().unwrap();
-                        failures.push(format!("{}:{}: {}", chunk.relative_path, chunk.chunk_ordinal, e));
-                    }
-                }
-            });
+                });
 
             // Signal completion
             stop_flag.store(true, Ordering::Relaxed);
@@ -958,7 +966,10 @@ fn run_crawl_label(
                 println!();
                 println!(
                     "  ⚠️  Encountered {} embedding failures, {} upload failures, {} file-complete failures, {} label-add failures",
-                    embedding_failures_count, upload_failures_count, file_complete_failures_count, label_add_failures_count
+                    embedding_failures_count,
+                    upload_failures_count,
+                    file_complete_failures_count,
+                    label_add_failures_count
                 );
                 println!("      These files may not be searchable. Check logs above for details.");
             }
@@ -981,7 +992,8 @@ fn run_crawl_label(
         println!("  Run the crawl again to complete indexing and trigger cleanup.");
     } else {
         println!("🧹 Phase 4: Label reassignment cleanup...");
-        let all_touched: HashSet<String> = existing_files.union(&touched_file_ids).cloned().collect();
+        let all_touched: HashSet<String> =
+            existing_files.union(&touched_file_ids).cloned().collect();
 
         // Create a new uploader for cleanup (the previous one was moved into the uploader thread)
         let cleanup_uploader =
@@ -1036,7 +1048,10 @@ fn run_crawl_label(
         );
         println!("  New files indexed: {}", new_count);
         println!("  Existing files detected: {}", existing_count);
-        println!("  Existing files updated successfully: {}", existing_files.len());
+        println!(
+            "  Existing files updated successfully: {}",
+            existing_files.len()
+        );
         println!("  Total failures: {}", total_failures);
         println!();
         println!("  This crawl is marked as incomplete. Re-run to complete indexing.");
@@ -1048,7 +1063,10 @@ fn run_crawl_label(
         );
         println!("  New files indexed: {}", new_count);
         println!("  Existing files detected: {}", existing_count);
-        println!("  Existing files updated successfully: {}", existing_files.len());
+        println!(
+            "  Existing files updated successfully: {}",
+            existing_files.len()
+        );
     }
 
     // Report any critical failures (these are captured during the embed phase)
@@ -1083,7 +1101,9 @@ fn run_crawl_working_dir(
         .get(catalog_name)
         .ok_or_else(|| anyhow::anyhow!("Catalog '{}' not found in config", catalog_name))?;
 
-    let repo_path = std::path::Path::new(&catalog_config.path);
+    // D.5: Expand tilde in catalog path
+    let expanded_path = shellexpand::tilde(&catalog_config.path);
+    let repo_path = std::path::Path::new(expanded_path.as_ref());
     println!("Repository: {}", repo_path.display());
     println!("Type: {}", catalog_config.r#type);
     println!("Collection: {}", config.qdrant.collection);
@@ -1121,7 +1141,10 @@ fn run_crawl_working_dir(
     // Enumerate working directory files
     println!("📂 Enumerating working directory...");
     let files = enumerate_working_directory(repo_path)?;
-    println!("Found {} files in working directory (before crawl config filtering)", files.len());
+    println!(
+        "Found {} files in working directory (before crawl config filtering)",
+        files.len()
+    );
     println!();
 
     // Build package index from working directory
@@ -1506,26 +1529,32 @@ fn run_crawl_working_dir(
             let embedding_failures_clone = Arc::clone(&embedding_failures);
             let num_workers = embedder.num_workers();
 
-            all_chunks.into_par_iter().enumerate().for_each(|(idx, chunk)| {
-                let worker_index = idx % num_workers;
-                match embedder.encode(&chunk.text, worker_index) {
-                    Ok(embedding) => {
-                        let _ = embed_tx.send((chunk, embedding));
-                        processed_clone.fetch_add(1, Ordering::Relaxed);
+            all_chunks
+                .into_par_iter()
+                .enumerate()
+                .for_each(|(idx, chunk)| {
+                    let worker_index = idx % num_workers;
+                    match embedder.encode(&chunk.text, worker_index) {
+                        Ok(embedding) => {
+                            let _ = embed_tx.send((chunk, embedding));
+                            processed_clone.fetch_add(1, Ordering::Relaxed);
+                        }
+                        Err(e) => {
+                            eprintln!(
+                                "\n[{}] ❌ Embedding failed for {}:{} - {}",
+                                chrono_timestamp(),
+                                chunk.relative_path,
+                                chunk.chunk_ordinal,
+                                e
+                            );
+                            let mut failures = embedding_failures_clone.lock().unwrap();
+                            failures.push(format!(
+                                "{}:{}: {}",
+                                chunk.relative_path, chunk.chunk_ordinal, e
+                            ));
+                        }
                     }
-                    Err(e) => {
-                        eprintln!(
-                            "\n[{}] ❌ Embedding failed for {}:{} - {}",
-                            chrono_timestamp(),
-                            chunk.relative_path,
-                            chunk.chunk_ordinal,
-                            e
-                        );
-                        let mut failures = embedding_failures_clone.lock().unwrap();
-                        failures.push(format!("{}:{}: {}", chunk.relative_path, chunk.chunk_ordinal, e));
-                    }
-                }
-            });
+                });
 
             stop_flag.store(true, Ordering::Relaxed);
             progress_thread.join().ok();
@@ -1555,7 +1584,10 @@ fn run_crawl_working_dir(
                 println!();
                 println!(
                     "  ⚠️  Encountered {} embedding failures, {} upload failures, {} file-complete failures, {} label-add failures",
-                    embedding_failures_count, upload_failures_count, file_complete_failures_count, label_add_failures_count
+                    embedding_failures_count,
+                    upload_failures_count,
+                    file_complete_failures_count,
+                    label_add_failures_count
                 );
                 println!("      These files may not be searchable. Check logs above for details.");
             }
@@ -1577,7 +1609,8 @@ fn run_crawl_working_dir(
         println!("  Run the crawl again to complete indexing and trigger cleanup.");
     } else {
         println!("🧹 Phase 4: Label reassignment cleanup...");
-        let all_touched: HashSet<String> = existing_files.union(&touched_file_ids).cloned().collect();
+        let all_touched: HashSet<String> =
+            existing_files.union(&touched_file_ids).cloned().collect();
 
         let cleanup_uploader =
             QdrantUploader::new(&config.qdrant.collection, config.qdrant.url.as_deref())?;
@@ -1623,7 +1656,10 @@ fn run_crawl_working_dir(
         );
         println!("  New files indexed: {}", new_count);
         println!("  Existing files detected: {}", existing_count);
-        println!("  Existing files updated successfully: {}", existing_files.len());
+        println!(
+            "  Existing files updated successfully: {}",
+            existing_files.len()
+        );
         println!("  Total failures: {}", total_failures);
         println!();
         println!("  This crawl is marked as incomplete. Re-run to complete indexing.");
@@ -1635,7 +1671,10 @@ fn run_crawl_working_dir(
         );
         println!("  New files indexed: {}", new_count);
         println!("  Existing files detected: {}", existing_count);
-        println!("  Existing files updated successfully: {}", existing_files.len());
+        println!(
+            "  Existing files updated successfully: {}",
+            existing_files.len()
+        );
     }
 
     Ok(())

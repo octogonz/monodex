@@ -444,7 +444,7 @@ Create a `monodex-crawl.json` file:
 | Strategy | Description |
 |----------|-------------|
 | `typescript` | AST-based semantic chunking (TS/TSX) |
-| `markdown` | Split by heading hierarchy (TODO: currently line-based) |
+| `markdown` | Split by heading hierarchy |
 | `lineBased` | Generic line-based chunking |
 
 **Evaluation rule:**

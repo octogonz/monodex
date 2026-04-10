@@ -4,10 +4,10 @@
 //! from Git commits without touching the working tree, as well as
 //! enumerating files from the working directory for indexing uncommitted changes.
 
-use anyhow::{anyhow, Result};
+use anyhow::{Result, anyhow};
+use gix::ObjectId;
 use gix::objs::TreeRefIter;
 use gix::traverse::tree::Recorder;
-use gix::ObjectId;
 use serde::Deserialize;
 use sha2::{Digest, Sha256};
 use std::collections::HashMap;
@@ -393,7 +393,10 @@ mod tests {
     fn test_read_blob_content_current_repo() {
         let repo_path = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
         let entries = enumerate_commit_tree(&repo_path, "HEAD").expect("Failed to enumerate");
-        let readme = entries.iter().find(|e| e.relative_path == "README.md").unwrap();
+        let readme = entries
+            .iter()
+            .find(|e| e.relative_path == "README.md")
+            .unwrap();
         let content = read_blob_content(&repo_path, &readme.blob_id).expect("Failed to read blob");
         let content_str = String::from_utf8_lossy(&content);
         assert!(content_str.contains("Monodex"));
@@ -402,7 +405,8 @@ mod tests {
     #[test]
     fn test_build_package_index() {
         let repo_path = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
-        let _index = build_package_index_for_commit(&repo_path, "HEAD").expect("Failed to build index");
+        let _index =
+            build_package_index_for_commit(&repo_path, "HEAD").expect("Failed to build index");
     }
 
     #[test]
@@ -412,7 +416,9 @@ mod tests {
             "libraries/node-core-library".to_string(),
             "@rushstack/node-core-library".to_string(),
         );
-        index.package_name_by_dir.insert("".to_string(), "root-package".to_string());
+        index
+            .package_name_by_dir
+            .insert("".to_string(), "root-package".to_string());
 
         assert_eq!(
             index.find_package_name("libraries/node-core-library/src/JsonFile.ts"),
@@ -478,8 +484,8 @@ mod tests {
     #[test]
     fn test_enumerate_working_directory() {
         let repo_path = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
-        let entries = enumerate_working_directory(&repo_path)
-            .expect("Failed to enumerate working directory");
+        let entries =
+            enumerate_working_directory(&repo_path).expect("Failed to enumerate working directory");
         assert!(!entries.is_empty(), "Should have found some files");
         // README.md should be found (it's in the gitignore exclusion list but we only skip .git)
         // Actually README.md is a regular file that should be found

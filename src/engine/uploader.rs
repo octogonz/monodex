@@ -1365,7 +1365,6 @@ pub struct PointResult {
     pub payload: PointPayload,
 }
 
-
 #[cfg(test)]
 mod tests {
     use super::*;

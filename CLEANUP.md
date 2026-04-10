@@ -263,7 +263,7 @@ The example config uses `~/projects/...` for catalog paths, but the code passes 
 string to `Path::new()` without shell expansion. Users who copy the example will get
 "path not found" errors.
 
-- [ ] Apply `shellexpand::tilde()` to `catalog_config.path` (it's already used for config and context file paths)
+- [x] Apply `shellexpand::tilde()` to `catalog_config.path` (it's already used for config and context file paths)
 
 ### D.6 — Fix `get_file_sentinel` signature mismatch
 
@@ -281,9 +281,9 @@ Markdown support is currently described three different ways across the docs:
 - `markdown_partitioner.rs` exists with tests and snapshots
 - `chunker.rs` still uses line-based splitting
 
-- [ ] Wire `partition_markdown()` into `chunk_content()` for the `Markdown` strategy branch
-- [ ] Update README to remove the "TODO" hedge
-- [ ] Update DEV_PLAN Phase 9 to mark the basic implementation as complete, with remaining items for sub-chunking, front matter, etc.
+- [x] Wire `partition_markdown()` into `chunk_content()` for the `Markdown` strategy branch
+- [x] Update README to remove the "TODO" hedge
+- [x] Update DEV_PLAN Phase 9 to mark the basic implementation as complete, with remaining items for sub-chunking, front matter, etc.
 
 ### D.8 — Fix README architecture section
 

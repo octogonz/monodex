@@ -136,7 +136,7 @@ pub struct LabelMetadata {
 }
 ```
 
-**Point ID:** The `label_id` string is used directly as the point ID, allowing direct lookup.
+**Point ID:** The `label_id` string is converted to a UUID via `string_to_uuid()` for Qdrant compatibility, allowing deterministic lookup. Both `upsert_label_metadata()` and `get_label_metadata()` use this same conversion.
 
 **Vector:** Metadata points store a zero-vector of exactly 768 dimensions (matching the collection's vector size): `[0.0; 768]`. Qdrant requires vectors for all points, but these points are never used in similarity search. The dimension MUST match the collection's configured vector size to avoid insertion errors.
 
@@ -145,11 +145,11 @@ pub struct LabelMetadata {
 - Metadata points are few (one per label) compared to millions of chunks
 - Query code filters by `source_type` when needed
 
-**ID semantics note:** This introduces mixed point ID semantics:
-- Chunks: hash-derived hex strings (e.g., `700a4ba232fe9ddc`)
-- Labels: meaningful strings (e.g., `rushstack:main`)
+**ID semantics note:** Both chunks and labels use UUID-shaped strings derived deterministically from their content:
+- Chunks: `string_to_uuid(format!("{}:{}", file_id, chunk_ordinal))`
+- Labels: `string_to_uuid(label_id)`
 
-Both are valid Qdrant string IDs. The tradeoff is less uniformity, but direct label lookup is convenient.
+This provides uniformity in point ID format while maintaining deterministic lookup for both types.
 
 ### Qdrant Point IDs
 

@@ -827,9 +827,11 @@ impl QdrantUploader {
 
     /// Get label metadata by label_id
     pub fn get_label_metadata(&self, label_id: &str) -> Result<Option<LabelMetadata>> {
+        // Convert label_id to UUID the same way upsert_label_metadata does
+        let point_id = super::util::string_to_uuid(label_id);
         let endpoint = format!(
             "{}/collections/{}/points/{}",
-            self.url, self.collection, label_id
+            self.url, self.collection, point_id
         );
 
         let response = self.client.get(&endpoint).send()?;

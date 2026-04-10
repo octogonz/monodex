@@ -44,8 +44,8 @@
         "type": {
           "type": "string",
           "description": "Catalog type",
-          "enum": ["monorepo", "folder"],
-          "examples": ["monorepo", "folder"]
+          "enum": ["monorepo"],
+          "examples": ["monorepo"]
         },
         "path": {
           "type": "string",

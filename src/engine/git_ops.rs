@@ -248,11 +248,13 @@ pub fn build_package_index_for_commit(repo_path: &Path, commit: &str) -> Result<
                 .unwrap_or_default();
 
             if filename == b"package.json" {
-                let dir_path = filepath_bytes
-                    .rsplit(|b| *b == b'/')
-                    .nth(1)
-                    .map(|s| String::from_utf8_lossy(s).into_owned())
-                    .unwrap_or_default();
+                // Extract directory path by removing "/package.json" from the filepath
+                let filepath_str = String::from_utf8_lossy(filepath_bytes);
+                let dir_path = filepath_str
+                    .strip_suffix("/package.json")
+                    .or_else(|| filepath_str.strip_suffix("package.json"))
+                    .unwrap_or("")
+                    .to_string();
                 Some((dir_path, entry.oid))
             } else {
                 None

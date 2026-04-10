@@ -6,6 +6,20 @@ preceding each batch of work items.
 
 ---
 
+## Decisions (for future sessions)
+
+These clarifications were made during the review process:
+
+1. **Priority order**: Work through categories A→B→C→D→E→F unless there's a specific reason to reorder.
+
+2. **A.2 Label metadata ID strategy**: Use UUID-derived point IDs consistently. Keep `string_to_uuid()` derivation for both `upsert_label_metadata()` and `get_label_metadata()`. DESIGN.md has been updated to reflect this.
+
+3. **A.7 Package index bug**: This was elevated to Category A (done) because it impacts breadcrumb quality for all nested packages in a monorepo.
+
+4. **D.4 "folder" catalog type**: Removed from docs/schema for now (not implemented). Can be re-added later if needed.
+
+---
+
 ## A. Crawl Correctness
 
 These are the highest-priority items. They affect whether the crawl produces correct,
@@ -25,10 +39,10 @@ losing previously-reachable content.
 The working-directory crawl path has a second problem: it has no failure tracking at all
 (the `Arc<Mutex<Vec<String>>>` pattern used in the commit-based path was not carried over).
 
-- [ ] Track upload, file-complete, and label-add failures in both `run_crawl_label()` and `run_crawl_working_dir()`
-- [ ] Skip label reassignment cleanup if any failures occurred during the crawl
-- [ ] Skip setting `crawl_complete = true` if any failures occurred
-- [ ] Add a summary line at the end reporting whether the crawl was fully successful or partial
+- [x] Track upload, file-complete, and label-add failures in both `run_crawl_label()` and `run_crawl_working_dir()`
+- [x] Skip label reassignment cleanup if any failures occurred during the crawl
+- [x] Skip setting `crawl_complete = true` if any failures occurred
+- [x] Add a summary line at the end reporting whether the crawl was fully successful or partial
 
 ### A.2 — Label metadata identity mismatch
 
@@ -40,8 +54,8 @@ the raw string. These will never match. Additionally, if label names contain `/`
 The DESIGN doc says label IDs are used "directly as the point ID," but the implementation
 diverges.
 
-- [ ] Choose one ID strategy: either use raw `label_id` strings consistently (and URL-encode when needed), or use `string_to_uuid()` consistently for both read and write
-- [ ] Update the DESIGN doc to match whichever strategy is chosen
+- [x] Choose one ID strategy: either use raw `label_id` strings consistently (and URL-encode when needed), or use `string_to_uuid()` consistently for both read and write
+- [x] Update the DESIGN doc to match whichever strategy is chosen
 - [ ] Verify that `get_label_metadata()` actually works with a round-trip test
 
 ### A.3 — Existing-file label-add failures treated as "touched"
@@ -51,7 +65,7 @@ before calling `add_label_to_file_chunks()`. If that call fails, the file is sti
 `existing_files`, so cleanup skips it — but the label was never actually added. The file
 becomes invisible to search under that label.
 
-- [ ] Only add to `existing_files` after `add_label_to_file_chunks()` succeeds, or track label-add failures separately and exclude failed files from the cleanup's "touched" set
+- [x] Only add to `existing_files` after `add_label_to_file_chunks()` succeeds, or track label-add failures separately and exclude failed files from the cleanup's "touched" set
 
 ### A.4 — Embedding failures are silently dropped
 
@@ -59,9 +73,9 @@ becomes invisible to search under that label.
 fails, the chunk vanishes with no log entry, no error counter, and no indication in the
 final summary. This applies to both crawl paths.
 
-- [ ] Log embedding failures with the file path / chunk info
-- [ ] Count embedding failures and include them in the crawl summary
-- [ ] Consider whether embedding failures should prevent `crawl_complete = true`
+- [x] Log embedding failures with the file path / chunk info
+- [x] Count embedding failures and include them in the crawl summary
+- [x] Consider whether embedding failures should prevent `crawl_complete = true`
 
 ### A.5 — All parallel embeddings use worker_index=0
 
@@ -70,7 +84,7 @@ both crawl paths pass `worker_index = 0` for every chunk. Despite using `rayon::
 all chunks contend on a single `Mutex<(Session, Tokenizer)>`, partially negating the
 benefit of the worker pool.
 
-- [ ] Pass the rayon thread index or chunk index modulo `num_workers` instead of hardcoded `0`
+- [x] Pass the rayon thread index or chunk index modulo `num_workers` instead of hardcoded `0`
 
 ### A.6 — `--commit` and `--working-dir` mutual exclusion is not enforced
 
@@ -78,7 +92,7 @@ The doc comments say these flags are mutually exclusive, but clap is not configu
 enforce it. Since `--commit` has `default_value = "HEAD"`, passing `--working-dir` silently
 ignores whatever commit was specified.
 
-- [ ] Add `#[arg(long, conflicts_with = "commit")]` to `working_dir`, or remove the `default_value` from `commit` and handle the default in code
+- [x] Add `#[arg(long, conflicts_with = "commit")]` to `working_dir`, or remove the `default_value` from `commit` and handle the default in code
 
 ### A.7 — Package index extracts only the leaf directory name, not the full path
 
@@ -93,7 +107,7 @@ resolution to fail for essentially every nested package in a monorepo, falling b
 the catalog name instead of the correct package name. Since monorepo package attribution
 is the core breadcrumb feature, this is a significant correctness bug.
 
-- [ ] Fix the directory extraction to produce the full relative path (strip only the trailing `/package.json` from the filepath)
+- [x] Fix the directory extraction to produce the full relative path (strip only the trailing `/package.json` from the filepath)
 - [ ] Ensure `find_package_name()` and the index use the same path format (repo-relative, `/`-separated)
 - [ ] Add a test case with nested packages (e.g., `libraries/node-core-library/package.json`) to verify correct resolution
 
@@ -113,8 +127,8 @@ completely ignored during actual crawls, and Phase 8 completion is overstated.
 
 ### B.1 — Wire crawl config into the crawl flow
 
-- [ ] Load `CompiledCrawlConfig` once at crawl start using `load_compiled_crawl_config(Some(repo_path))` and pass it through the crawl pipeline
-- [ ] Replace `should_skip_path()` calls with `compiled_config.should_crawl()` 
+- [x] Load `CompiledCrawlConfig` once at crawl start using `load_compiled_crawl_config(Some(repo_path))` and pass it through the crawl pipeline
+- [ ] Replace `should_skip_path()` calls with `compiled_config.should_crawl()` (partially done: main crawl filtering updated, but working-dir enumeration still uses `should_skip_path`)
 - [ ] Replace `is_text_file()` with `compiled_config.matches_file_type()` — eliminate the separate extension list entirely
 - [ ] Pass the compiled config to `chunk_content()` so strategy dispatch uses discovered config, not the embedded default
 - [ ] Remove (or deprecate behind a feature flag) the `should_skip_path()` and `get_chunk_strategy()` compatibility wrappers in `config.rs`
@@ -255,7 +269,7 @@ The README, config schema, and example config all support `type: "folder"` and d
 distinct behavior (using parent folder name as package identifier). The implementation
 never branches on catalog type — it always uses package.json-based resolution.
 
-- [ ] Either implement folder catalog semantics (use parent folder name when no package.json found), or remove `folder` from the docs/schema until implemented, and validate that `type` is `"monorepo"` in config loading
+- [x] Either implement folder catalog semantics (use parent folder name when no package.json found), or remove `folder` from the docs/schema until implemented, and validate that `type` is `"monorepo"` in config loading
 
 ### D.5 — Fix tilde expansion for catalog paths
 

@@ -167,13 +167,12 @@ Create `~/.config/monodex/config.json`:
 | ---------------------- | -------- | ---------------------------------------------------- |
 | `qdrant.url`           | No       | Qdrant server URL (default: `http://localhost:6333`) |
 | `qdrant.collection`    | Yes      | Qdrant collection name                               |
-| `catalogs.<name>.type` | Yes      | Catalog type: `"monorepo"` or `"folder"`             |
+| `catalogs.<name>.type` | Yes      | Catalog type: `"monorepo"`                           |
 | `catalogs.<name>.path` | Yes      | Absolute path to the repository root                 |
 
 **Catalog types:**
 
 - **`monorepo`**: Walks upward to find the nearest `package.json` for package name resolution. Breadcrumbs show `@scope/package-name:File.ts:Symbol`.
-- **`folder`**: Uses the parent folder name as the package identifier. Breadcrumbs show `folder-name:File.ts:Symbol`.
 
 ### Label-Based Indexing
 

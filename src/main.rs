@@ -10,6 +10,7 @@ use engine::{
     ParallelEmbedder, SMALL_CHUNK_CHARS,
     chunker::{ChunkContext, chunk_content},
     config::should_skip_path,
+    crawl_config::load_compiled_crawl_config,
     git_ops::{
         build_package_index_for_commit, build_package_index_for_working_dir, enumerate_commit_tree,
         enumerate_working_directory, read_blob_content, read_working_file_content,
@@ -89,12 +90,12 @@ enum Commands {
         /// Git commit to crawl (defaults to HEAD)
         /// Supports branch names, tags, or commit SHA
         /// Mutually exclusive with --working-dir
-        #[arg(long, default_value = "HEAD")]
+        #[arg(long, default_value = "HEAD", conflicts_with = "working_dir")]
         commit: String,
 
         /// Crawl the working directory instead of a Git commit.
         /// Indexes uncommitted changes. Mutually exclusive with --commit.
-        #[arg(long, default_value_t = false)]
+        #[arg(long, default_value_t = false, conflicts_with = "commit")]
         working_dir: bool,
 
         /// Allow files with chunking warnings to participate in incremental skipping
@@ -470,6 +471,10 @@ fn run_crawl_label(
     println!("Label ID: {}", label_id);
     println!();
 
+    // B.1: Load repo-specific crawl configuration
+    let crawl_config = load_compiled_crawl_config(Some(repo_path))?;
+    println!("Loaded crawl configuration for repository");
+
     // Initialize uploader
     let uploader = QdrantUploader::new(&config.qdrant.collection, config.qdrant.url.as_deref())?;
 
@@ -503,12 +508,11 @@ fn run_crawl_label(
     println!("Package index built successfully");
     println!();
 
-    // Step 3: Filter files (skip non-text, excluded paths)
+    // Step 3: Filter files using crawl config (B.1: now uses repo-specific config)
     println!("📂 Filtering files...");
     let files_to_process: Vec<_> = files
         .iter()
-        .filter(|f| !should_skip_path(&f.relative_path))
-        .filter(|f| is_text_file(&f.relative_path))
+        .filter(|f| crawl_config.should_crawl(&f.relative_path))
         .cloned()
         .collect();
     println!(
@@ -561,6 +565,8 @@ fn run_crawl_label(
     println!();
 
     // Step 5: Add label to existing files
+    // Track files that successfully got the label added
+    let mut label_add_success_files: HashSet<String> = HashSet::new();
     if !existing_files.is_empty() {
         println!(
             "🏷️  Adding label to {} existing files...",
@@ -568,16 +574,27 @@ fn run_crawl_label(
         );
         for file_id in &existing_files {
             if let Err(e) = uploader.add_label_to_file_chunks(file_id, &label_id) {
-                eprintln!("  ⚠️  Failed to add label to file {}: {}", file_id, e);
+                eprintln!("  ❌ Failed to add label to file {}: {}", file_id, e);
+            } else {
+                // Only track as successfully added after the call succeeds (A.3)
+                label_add_success_files.insert(file_id.clone());
             }
         }
         println!("  Done.");
         println!();
     }
+    // Replace existing_files with only the successful ones for cleanup logic
+    let existing_files: HashSet<String> = label_add_success_files;
 
     // Step 6: Index new files
     let mut all_chunks: Vec<engine::Chunk> = Vec::new();
     let mut touched_file_ids: HashSet<String> = HashSet::new();
+
+    // A.1/A.4: Failure tracking - declared at function scope for cleanup logic
+    let upload_failures: Arc<Mutex<Vec<String>>> = Arc::new(Mutex::new(Vec::new()));
+    let file_complete_failures: Arc<Mutex<Vec<String>>> = Arc::new(Mutex::new(Vec::new()));
+    let label_add_failures: Arc<Mutex<Vec<String>>> = Arc::new(Mutex::new(Vec::new()));
+    let embedding_failures: Arc<Mutex<Vec<String>>> = Arc::new(Mutex::new(Vec::new()));
 
     if !new_files.is_empty() {
         // Initialize parallel embedder
@@ -708,12 +725,7 @@ fn run_crawl_label(
             // Wrap uploader in Arc<Mutex>
             let uploader = Arc::new(Mutex::new(uploader));
 
-            // Failure tracking for the uploader thread
-            let upload_failures: Arc<Mutex<Vec<String>>> = Arc::new(Mutex::new(Vec::new()));
-            let file_complete_failures: Arc<Mutex<Vec<String>>> = Arc::new(Mutex::new(Vec::new()));
-            let label_add_failures: Arc<Mutex<Vec<String>>> = Arc::new(Mutex::new(Vec::new()));
-
-            // Uploader thread
+            // Uploader thread (failure tracking vars already declared at function scope)
             let stop_uploader = Arc::clone(&stop_flag);
             let last_upload_time_clone = Arc::clone(&last_upload_time);
             let uploader_clone = Arc::clone(&uploader);
@@ -891,14 +903,30 @@ fn run_crawl_label(
                 }
             });
 
-            // Parallel embedding
+            // Parallel embedding (A.5: use proper worker_index, A.4: track embedding failures)
             let processed_clone = Arc::clone(&processed);
-            let _stop_clone = Arc::clone(&stop_flag);
+            let embedding_failures_clone = Arc::clone(&embedding_failures);
+            let num_workers = embedder.num_workers();
 
-            all_chunks.into_par_iter().for_each(|chunk| {
-                if let Ok(embedding) = embedder.encode(&chunk.text, 0) {
-                    let _ = embed_tx.send((chunk, embedding));
-                    processed_clone.fetch_add(1, Ordering::Relaxed);
+            all_chunks.into_par_iter().enumerate().for_each(|(idx, chunk)| {
+                let worker_index = idx % num_workers;
+                match embedder.encode(&chunk.text, worker_index) {
+                    Ok(embedding) => {
+                        let _ = embed_tx.send((chunk, embedding));
+                        processed_clone.fetch_add(1, Ordering::Relaxed);
+                    }
+                    Err(e) => {
+                        // A.4: Log embedding failures (not silently dropped)
+                        eprintln!(
+                            "\n[{}] ❌ Embedding failed for {}:{} - {}",
+                            chrono_timestamp(),
+                            chunk.relative_path,
+                            chunk.chunk_ordinal,
+                            e
+                        );
+                        let mut failures = embedding_failures_clone.lock().unwrap();
+                        failures.push(format!("{}:{}: {}", chunk.relative_path, chunk.chunk_ordinal, e));
+                    }
                 }
             });
 
@@ -916,19 +944,22 @@ fn run_crawl_label(
                 rate
             );
 
-            // Report any failures from the uploader thread
+            // Report any failures from embedding/upload pipeline
             let upload_failures_count = upload_failures.lock().unwrap().len();
             let file_complete_failures_count = file_complete_failures.lock().unwrap().len();
             let label_add_failures_count = label_add_failures.lock().unwrap().len();
+            let embedding_failures_count = embedding_failures.lock().unwrap().len();
 
-            if upload_failures_count > 0
-                || file_complete_failures_count > 0
-                || label_add_failures_count > 0
-            {
+            let total_failures = upload_failures_count
+                + file_complete_failures_count
+                + label_add_failures_count
+                + embedding_failures_count;
+
+            if total_failures > 0 {
                 println!();
                 println!(
-                    "  ⚠️  Encountered {} upload failures, {} file-complete failures, {} label-add failures",
-                    upload_failures_count, file_complete_failures_count, label_add_failures_count
+                    "  ⚠️  Encountered {} embedding failures, {} upload failures, {} file-complete failures, {} label-add failures",
+                    embedding_failures_count, upload_failures_count, file_complete_failures_count, label_add_failures_count
                 );
                 println!("      These files may not be searchable. Check logs above for details.");
             }
@@ -936,26 +967,40 @@ fn run_crawl_label(
         }
     }
 
-    // Step 7: Label reassignment cleanup (only after successful crawl)
-    // Remove label from chunks that were NOT touched in this crawl
-    println!("🧹 Phase 4: Label reassignment cleanup...");
-    let all_touched: HashSet<String> = existing_files.union(&touched_file_ids).cloned().collect();
+    // A.1: Compute total failures across all phases
+    let total_failures = upload_failures.lock().unwrap().len()
+        + file_complete_failures.lock().unwrap().len()
+        + label_add_failures.lock().unwrap().len()
+        + embedding_failures.lock().unwrap().len();
+    let had_failures = total_failures > 0;
 
-    // Create a new uploader for cleanup (the previous one was moved into the uploader thread)
-    let cleanup_uploader =
-        QdrantUploader::new(&config.qdrant.collection, config.qdrant.url.as_deref())?;
-    match cleanup_uploader.remove_label_from_chunks(&label_id, &all_touched) {
-        Ok(processed) => {
-            println!("  Processed {} chunks for label cleanup", processed);
-        }
-        Err(e) => {
-            eprintln!("  ⚠️ Label cleanup failed: {}", e);
+    // Step 7: Label reassignment cleanup (A.1: ONLY after fully successful crawl)
+    // Remove label from chunks that were NOT touched in this crawl
+    if had_failures {
+        println!("🧹 Phase 4: SKIPPING label reassignment cleanup (crawl had failures)");
+        println!("  This is intentional - cleanup should only run after successful crawls.");
+        println!("  Run the crawl again to complete indexing and trigger cleanup.");
+    } else {
+        println!("🧹 Phase 4: Label reassignment cleanup...");
+        let all_touched: HashSet<String> = existing_files.union(&touched_file_ids).cloned().collect();
+
+        // Create a new uploader for cleanup (the previous one was moved into the uploader thread)
+        let cleanup_uploader =
+            QdrantUploader::new(&config.qdrant.collection, config.qdrant.url.as_deref())?;
+        match cleanup_uploader.remove_label_from_chunks(&label_id, &all_touched) {
+            Ok(processed) => {
+                println!("  Processed {} chunks for label cleanup", processed);
+            }
+            Err(e) => {
+                eprintln!("  ⚠️ Label cleanup failed: {}", e);
+            }
         }
     }
     println!();
 
-    // Step 8: Update label metadata
+    // Step 8: Update label metadata (A.1: set crawl_complete=false if failures occurred)
     println!("📝 Updating label metadata...");
+    let crawl_complete = !had_failures;
     let metadata = LabelMetadata {
         source_type: "label-metadata".to_string(),
         catalog: catalog_name.to_string(),
@@ -963,7 +1008,7 @@ fn run_crawl_label(
         label_name: label_name.to_string(),
         commit_oid: commit_oid.clone(),
         source_kind: "git-commit".to_string(),
-        crawl_complete: true,
+        crawl_complete,
         updated_at_unix_secs: std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
             .unwrap()
@@ -975,32 +1020,42 @@ fn run_crawl_label(
     // For now, create a new one
     let uploader = QdrantUploader::new(&config.qdrant.collection, config.qdrant.url.as_deref())?;
     uploader.upsert_label_metadata(&metadata)?;
-    println!("  Label metadata saved.");
+    if crawl_complete {
+        println!("  Label metadata saved.");
+    } else {
+        println!("  Label metadata saved (crawl_complete=false due to failures).");
+    }
     println!();
 
     // Summary
     let total_elapsed = total_start.elapsed();
-    println!("✅ Crawl complete!");
-    println!(
-        "  Total time: {}",
-        format_duration(total_elapsed.as_secs_f64())
-    );
-    println!("  New files indexed: {}", new_count);
-    println!("  Existing files updated: {}", existing_count);
+    if had_failures {
+        println!("⚠️  Crawl completed with errors!");
+        println!(
+            "  Total time: {}",
+            format_duration(total_elapsed.as_secs_f64())
+        );
+        println!("  New files indexed: {}", new_count);
+        println!("  Existing files detected: {}", existing_count);
+        println!("  Existing files updated successfully: {}", existing_files.len());
+        println!("  Total failures: {}", total_failures);
+        println!();
+        println!("  This crawl is marked as incomplete. Re-run to complete indexing.");
+    } else {
+        println!("✅ Crawl complete!");
+        println!(
+            "  Total time: {}",
+            format_duration(total_elapsed.as_secs_f64())
+        );
+        println!("  New files indexed: {}", new_count);
+        println!("  Existing files detected: {}", existing_count);
+        println!("  Existing files updated successfully: {}", existing_files.len());
+    }
 
     // Report any critical failures (these are captured during the embed phase)
     // Note: upload_failures, file_complete_failures, label_add_failures are only
     // populated inside the embedder branch, so we need to handle the case where
     // they don't exist. For now, we track failures inline during processing.
-
-    // Track if there were any errors during the crawl
-    let error_count = 0;
-    // Count blob read failures and chunk failures from earlier phases
-    // (These are tracked via eprintln, not captured in counters yet)
-
-    if error_count > 0 {
-        println!("  ⚠️  Files with errors: {} (see logs above)", error_count);
-    }
 
     Ok(())
 }
@@ -1041,6 +1096,10 @@ fn run_crawl_working_dir(
     println!("Label ID: {}", label_id);
     println!();
 
+    // B.1: Load repo-specific crawl configuration
+    let crawl_config = load_compiled_crawl_config(Some(repo_path))?;
+    println!("Loaded crawl configuration for repository");
+
     // Initialize uploader
     let uploader = QdrantUploader::new(&config.qdrant.collection, config.qdrant.url.as_deref())?;
 
@@ -1072,11 +1131,11 @@ fn run_crawl_working_dir(
     println!("Package index built successfully");
     println!();
 
-    // Filter files
+    // Filter files using compiled crawl config
     println!("📂 Filtering files...");
     let files_to_process: Vec<_> = files
         .iter()
-        .filter(|f| is_text_file(&f.relative_path))
+        .filter(|f| crawl_config.should_crawl(&f.relative_path))
         .cloned()
         .collect();
     println!(
@@ -1133,6 +1192,8 @@ fn run_crawl_working_dir(
     println!();
 
     // Add label to existing files
+    // A.3: Track files that successfully got the label added
+    let mut label_add_success_files: HashSet<String> = HashSet::new();
     if !existing_files.is_empty() {
         println!(
             "🏷️  Adding label to {} existing files...",
@@ -1140,16 +1201,26 @@ fn run_crawl_working_dir(
         );
         for file_id in &existing_files {
             if let Err(e) = uploader.add_label_to_file_chunks(file_id, &label_id) {
-                eprintln!("  ⚠️  Failed to add label to file {}: {}", file_id, e);
+                eprintln!("  ❌ Failed to add label to file {}: {}", file_id, e);
+            } else {
+                label_add_success_files.insert(file_id.clone());
             }
         }
         println!("  Done.");
         println!();
     }
+    // Replace existing_files with only the successful ones
+    let existing_files: HashSet<String> = label_add_success_files;
 
     // Index new files
     let mut all_chunks: Vec<engine::Chunk> = Vec::new();
     let mut touched_file_ids: HashSet<String> = HashSet::new();
+
+    // A.1/A.4: Failure tracking - declared at function scope for cleanup logic
+    let upload_failures: Arc<Mutex<Vec<String>>> = Arc::new(Mutex::new(Vec::new()));
+    let file_complete_failures: Arc<Mutex<Vec<String>>> = Arc::new(Mutex::new(Vec::new()));
+    let label_add_failures: Arc<Mutex<Vec<String>>> = Arc::new(Mutex::new(Vec::new()));
+    let embedding_failures: Arc<Mutex<Vec<String>>> = Arc::new(Mutex::new(Vec::new()));
 
     if !new_files.is_empty() {
         println!("⚙️  Loading embedding model...");
@@ -1271,6 +1342,11 @@ fn run_crawl_working_dir(
             let uploader_clone = Arc::clone(&uploader);
             let label_id_clone = label_id.clone();
 
+            // Failure tracking clones (vars already declared at function scope)
+            let upload_failures_clone = Arc::clone(&upload_failures);
+            let file_complete_failures_clone = Arc::clone(&file_complete_failures);
+            let label_add_failures_clone = Arc::clone(&label_add_failures);
+
             let uploader_thread = std::thread::spawn(move || {
                 let mut accumulated: Vec<(engine::Chunk, Vec<f32>)> = Vec::new();
                 let mut expected_count: HashMap<String, usize> = HashMap::new();
@@ -1308,6 +1384,14 @@ fn run_crawl_working_dir(
                         let uploader_guard = uploader_clone.lock().unwrap();
                         if let Err(e) = uploader_guard.upload_batch(&accumulated) {
                             eprintln!("[{}] ❌ Upload failed: {}", chrono_timestamp(), e);
+                            // A.1: Track upload failures
+                            let mut failures = upload_failures_clone.lock().unwrap();
+                            for (chunk, _) in &accumulated {
+                                let file_id = &chunk.file_id;
+                                if !failures.iter().any(|f| f.starts_with(file_id)) {
+                                    failures.push(format!("{}: {}", file_id, e));
+                                }
+                            }
                         } else {
                             let mut files_in_batch: HashMap<String, usize> = HashMap::new();
                             for (chunk, _) in &accumulated {
@@ -1333,6 +1417,11 @@ fn run_crawl_working_dir(
                                         chrono_timestamp(),
                                         e
                                     );
+                                    // A.1: Track file complete failures
+                                    file_complete_failures_clone
+                                        .lock()
+                                        .unwrap()
+                                        .push(format!("{}: {}", file_id, e));
                                 }
                                 if let Err(e) = uploader_guard
                                     .add_label_to_file_chunks(file_id, &label_id_clone)
@@ -1342,6 +1431,11 @@ fn run_crawl_working_dir(
                                         chrono_timestamp(),
                                         e
                                     );
+                                    // A.1: Track label add failures
+                                    label_add_failures_clone
+                                        .lock()
+                                        .unwrap()
+                                        .push(format!("{}: {}", file_id, e));
                                 }
                             }
                         }
@@ -1360,6 +1454,14 @@ fn run_crawl_working_dir(
                             let uploader_guard = uploader_clone.lock().unwrap();
                             if let Err(e) = uploader_guard.upload_batch(&accumulated) {
                                 eprintln!("[{}] ❌ Final upload failed: {}", chrono_timestamp(), e);
+                                // A.1: Track upload failures
+                                let mut failures = upload_failures_clone.lock().unwrap();
+                                for (chunk, _) in &accumulated {
+                                    let file_id = &chunk.file_id;
+                                    if !failures.iter().any(|f| f.starts_with(file_id)) {
+                                        failures.push(format!("{}: {}", file_id, e));
+                                    }
+                                }
                             } else {
                                 for file_id in accumulated
                                     .iter()
@@ -1372,6 +1474,10 @@ fn run_crawl_working_dir(
                                             chrono_timestamp(),
                                             e
                                         );
+                                        file_complete_failures_clone
+                                            .lock()
+                                            .unwrap()
+                                            .push(format!("{}: {}", file_id, e));
                                     }
                                     if let Err(e) = uploader_guard
                                         .add_label_to_file_chunks(&file_id, &label_id_clone)
@@ -1381,6 +1487,10 @@ fn run_crawl_working_dir(
                                             chrono_timestamp(),
                                             e
                                         );
+                                        label_add_failures_clone
+                                            .lock()
+                                            .unwrap()
+                                            .push(format!("{}: {}", file_id, e));
                                     }
                                 }
                             }
@@ -1392,11 +1502,29 @@ fn run_crawl_working_dir(
                 }
             });
 
+            // A.4, A.5: Track embedding failures and use proper worker_index
             let processed_clone = Arc::clone(&processed);
-            all_chunks.into_par_iter().for_each(|chunk| {
-                if let Ok(embedding) = embedder.encode(&chunk.text, 0) {
-                    let _ = embed_tx.send((chunk, embedding));
-                    processed_clone.fetch_add(1, Ordering::Relaxed);
+            let embedding_failures_clone = Arc::clone(&embedding_failures);
+            let num_workers = embedder.num_workers();
+
+            all_chunks.into_par_iter().enumerate().for_each(|(idx, chunk)| {
+                let worker_index = idx % num_workers;
+                match embedder.encode(&chunk.text, worker_index) {
+                    Ok(embedding) => {
+                        let _ = embed_tx.send((chunk, embedding));
+                        processed_clone.fetch_add(1, Ordering::Relaxed);
+                    }
+                    Err(e) => {
+                        eprintln!(
+                            "\n[{}] ❌ Embedding failed for {}:{} - {}",
+                            chrono_timestamp(),
+                            chunk.relative_path,
+                            chunk.chunk_ordinal,
+                            e
+                        );
+                        let mut failures = embedding_failures_clone.lock().unwrap();
+                        failures.push(format!("{}:{}: {}", chunk.relative_path, chunk.chunk_ordinal, e));
+                    }
                 }
             });
 
@@ -1412,24 +1540,58 @@ fn run_crawl_working_dir(
                 format_duration(embed_elapsed.as_secs_f64()),
                 rate
             );
+
+            // Report any failures from embedding/upload pipeline
+            let upload_failures_count = upload_failures.lock().unwrap().len();
+            let file_complete_failures_count = file_complete_failures.lock().unwrap().len();
+            let label_add_failures_count = label_add_failures.lock().unwrap().len();
+            let embedding_failures_count = embedding_failures.lock().unwrap().len();
+
+            let total_failures = upload_failures_count
+                + file_complete_failures_count
+                + label_add_failures_count
+                + embedding_failures_count;
+
+            if total_failures > 0 {
+                println!();
+                println!(
+                    "  ⚠️  Encountered {} embedding failures, {} upload failures, {} file-complete failures, {} label-add failures",
+                    embedding_failures_count, upload_failures_count, file_complete_failures_count, label_add_failures_count
+                );
+                println!("      These files may not be searchable. Check logs above for details.");
+            }
             println!();
         }
     }
 
-    // Label reassignment cleanup
-    println!("🧹 Phase 4: Label reassignment cleanup...");
-    let all_touched: HashSet<String> = existing_files.union(&touched_file_ids).cloned().collect();
+    // A.1: Compute total failures and skip cleanup if any occurred
+    let total_failures = upload_failures.lock().unwrap().len()
+        + file_complete_failures.lock().unwrap().len()
+        + label_add_failures.lock().unwrap().len()
+        + embedding_failures.lock().unwrap().len();
+    let had_failures = total_failures > 0;
 
-    let cleanup_uploader =
-        QdrantUploader::new(&config.qdrant.collection, config.qdrant.url.as_deref())?;
-    match cleanup_uploader.remove_label_from_chunks(&label_id, &all_touched) {
-        Ok(processed) => println!("  Processed {} chunks for label cleanup", processed),
-        Err(e) => eprintln!("  ⚠️ Label cleanup failed: {}", e),
+    // Label reassignment cleanup (A.1: ONLY after fully successful crawl)
+    if had_failures {
+        println!("🧹 Phase 4: SKIPPING label reassignment cleanup (crawl had failures)");
+        println!("  This is intentional - cleanup should only run after successful crawls.");
+        println!("  Run the crawl again to complete indexing and trigger cleanup.");
+    } else {
+        println!("🧹 Phase 4: Label reassignment cleanup...");
+        let all_touched: HashSet<String> = existing_files.union(&touched_file_ids).cloned().collect();
+
+        let cleanup_uploader =
+            QdrantUploader::new(&config.qdrant.collection, config.qdrant.url.as_deref())?;
+        match cleanup_uploader.remove_label_from_chunks(&label_id, &all_touched) {
+            Ok(processed) => println!("  Processed {} chunks for label cleanup", processed),
+            Err(e) => eprintln!("  ⚠️ Label cleanup failed: {}", e),
+        }
     }
     println!();
 
-    // Update label metadata
+    // Update label metadata (A.1: set crawl_complete=false if failures occurred)
     println!("📝 Updating label metadata...");
+    let crawl_complete = !had_failures;
     let metadata = LabelMetadata {
         source_type: "label-metadata".to_string(),
         catalog: catalog_name.to_string(),
@@ -1437,7 +1599,7 @@ fn run_crawl_working_dir(
         label_name: label_name.to_string(),
         commit_oid: "".to_string(),
         source_kind: "working-directory".to_string(),
-        crawl_complete: true,
+        crawl_complete,
         updated_at_unix_secs: std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
             .unwrap()
@@ -1446,17 +1608,36 @@ fn run_crawl_working_dir(
 
     let uploader = QdrantUploader::new(&config.qdrant.collection, config.qdrant.url.as_deref())?;
     uploader.upsert_label_metadata(&metadata)?;
-    println!("  Label metadata saved.");
+    if crawl_complete {
+        println!("  Label metadata saved.");
+    } else {
+        println!("  Label metadata saved (crawl_complete=false due to failures).");
+    }
     println!();
 
     let total_elapsed = total_start.elapsed();
-    println!("✅ Working directory crawl complete!");
-    println!(
-        "  Total time: {}",
-        format_duration(total_elapsed.as_secs_f64())
-    );
-    println!("  New files indexed: {}", new_count);
-    println!("  Existing files updated: {}", existing_count);
+    if had_failures {
+        println!("⚠️  Working directory crawl completed with errors!");
+        println!(
+            "  Total time: {}",
+            format_duration(total_elapsed.as_secs_f64())
+        );
+        println!("  New files indexed: {}", new_count);
+        println!("  Existing files detected: {}", existing_count);
+        println!("  Existing files updated successfully: {}", existing_files.len());
+        println!("  Total failures: {}", total_failures);
+        println!();
+        println!("  This crawl is marked as incomplete. Re-run to complete indexing.");
+    } else {
+        println!("✅ Working directory crawl complete!");
+        println!(
+            "  Total time: {}",
+            format_duration(total_elapsed.as_secs_f64())
+        );
+        println!("  New files indexed: {}", new_count);
+        println!("  Existing files detected: {}", existing_count);
+        println!("  Existing files updated successfully: {}", existing_files.len());
+    }
 
     Ok(())
 }

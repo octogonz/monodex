@@ -27,7 +27,7 @@ actionable.
 
 These are the highest-priority items because they affect whether a crawl can be trusted.
 
-### A.1 — Existing-file label-add failures still do not count as crawl failure
+### A.1 — Existing-file label-add failures still do not count as crawl failure ✅ FIXED
 
 The shared crawl pipeline improved failure tracking, but there is still a correctness hole
 for already-indexed files.
@@ -41,11 +41,11 @@ already-indexed files.
 That is a real data-visibility bug: the crawl may claim success while some files were not
 actually attached to the label.
 
-- [ ] Ensure failures from `add_label_to_file_chunks()` on already-indexed files are added to `CrawlFailures`
-- [ ] Make those failures participate in the same `had_failures` / partial-crawl logic as upload and embedding failures
-- [ ] Confirm the end-of-crawl summary reports these failures explicitly
+- [x] Ensure failures from `add_label_to_file_chunks()` on already-indexed files are added to `CrawlFailures`
+- [x] Make those failures participate in the same `had_failures` / partial-crawl logic as upload and embedding failures
+- [x] Confirm the end-of-crawl summary reports these failures explicitly
 
-### A.2 — Cleanup failure does not block `crawl_complete`
+### A.2 — Cleanup failure does not block `crawl_complete` ✅ FIXED
 
 The current logic skips cleanup when earlier crawl failures happened, which is good.
 However, if label reassignment cleanup itself fails (`remove_label_from_chunks()`), the
@@ -55,9 +55,9 @@ This violates the intended semantics that label cleanup only completes after a f
 successful crawl transition. A failed cleanup means the label state may still be
 inconsistent.
 
-- [ ] Treat label-cleanup failure as crawl failure for completion semantics
-- [ ] Do not set `crawl_complete = true` when cleanup fails
-- [ ] Report cleanup failure in the final crawl summary as a first-class failure mode
+- [x] Treat label-cleanup failure as crawl failure for completion semantics
+- [x] Do not set `crawl_complete = true` when cleanup fails
+- [x] Report cleanup failure in the final crawl summary as a first-class failure mode
 
 ---
 
@@ -66,7 +66,7 @@ inconsistent.
 The crawl config system itself is sound, but there are still places where actual behavior
 does not match the intended architecture.
 
-### B.1 — Chunking strategy dispatch still ignores discovered crawl config
+### B.1 — Chunking strategy dispatch still ignores discovered crawl config ✅ FIXED
 
 Both crawl paths now load `CompiledCrawlConfig` and use it for `should_crawl()` filtering.
 But chunking still goes through `chunk_content()` → `get_chunk_strategy()` →
@@ -78,12 +78,12 @@ but not reliably how it is chunked. For example, a repo can override a file type
 
 This is the most important remaining config-wiring bug.
 
-- [ ] Pass `CompiledCrawlConfig` (or the resolved strategy) into `chunk_content()`
-- [ ] Remove strategy dispatch from the legacy default-config wrapper on the hot crawl path
-- [ ] Keep any default-config fallback only for commands that truly have no repo context (e.g. ad hoc tooling)
+- [x] Pass `CompiledCrawlConfig` (or the resolved strategy) into `chunk_content()`
+- [x] Remove strategy dispatch from the legacy default-config wrapper on the hot crawl path
+- [x] Keep any default-config fallback only for commands that truly have no repo context (e.g. ad hoc tooling)
 - [ ] Add a regression test proving that a repo-local `monodex-crawl.json` strategy override actually changes chunking behavior during a real crawl path
 
-### B.2 — Working-directory enumeration still hard-filters hidden paths
+### B.2 — Working-directory enumeration still hard-filters hidden paths ✅ FIXED
 
 The working-directory crawl now uses crawl config for file filtering, but filesystem
 enumeration still excludes all dot-prefixed entries up front. That means hidden files and
@@ -96,10 +96,11 @@ but the enumerator still imposes hardcoded filtering before config gets a chance
 Also, some comments now claim only `.git` is excluded, which is no longer an accurate
 description of the actual behavior.
 
-- [ ] Decide whether working-dir enumeration should exclude only `.git` by default, or whether broader hidden-path exclusion is intentional
-- [ ] Align the implementation with that decision
-- [ ] If crawl config is intended to own inclusion policy, stop pre-filtering all dot-prefixed entries before config evaluation
-- [ ] Update stale comments/docstrings so they describe the actual enumeration behavior
+- [x] Decide whether working-dir enumeration should exclude only `.git` by default, or whether broader hidden-path exclusion is intentional
+  - **Decision**: Broader hidden-path exclusion is intentional. Hidden directories like `.cache`, `.temp`, `.idea`, `.vscode` typically contain build artifacts, editor configs, or temporary files that shouldn't be indexed.
+- [x] Align the implementation with that decision
+  - **Implementation**: Behavior unchanged, comments updated to accurately describe the actual behavior.
+- [x] Update stale comments/docstrings so they describe the actual enumeration behavior
 
 ---
 

@@ -978,7 +978,9 @@ fn run_crawl_label(
 
     // Step 5: Add label to existing files
     // Track files that successfully got the label added
+    // Also track failures for A.1 - existing file label-add failures must count toward crawl failure
     let mut label_add_success_files: HashSet<String> = HashSet::new();
+    let mut existing_file_label_add_failures: Vec<String> = Vec::new();
     if !existing_files.is_empty() {
         println!(
             "🏷️  Adding label to {} existing files...",
@@ -987,12 +989,19 @@ fn run_crawl_label(
         for file_id in &existing_files {
             if let Err(e) = uploader.add_label_to_file_chunks(file_id, &label_id) {
                 eprintln!("  ❌ Failed to add label to file {}: {}", file_id, e);
+                existing_file_label_add_failures.push(format!("{}: {}", file_id, e));
             } else {
                 // Only track as successfully added after the call succeeds (A.3)
                 label_add_success_files.insert(file_id.clone());
             }
         }
         println!("  Done.");
+        if !existing_file_label_add_failures.is_empty() {
+            println!(
+                "  ⚠️  Failed to add label to {} existing files",
+                existing_file_label_add_failures.len()
+            );
+        }
         println!();
     }
     // Replace existing_files with only the successful ones for cleanup logic
@@ -1003,10 +1012,7 @@ fn run_crawl_label(
     let mut touched_file_ids: HashSet<String> = HashSet::new();
 
     if !new_files.is_empty() {
-        println!(
-            "📦 Phase 2: Chunking {} new files...",
-            new_count
-        );
+        println!("📦 Phase 2: Chunking {} new files...", new_count);
 
         for (idx, (relative_path, blob_id)) in new_files.iter().enumerate() {
             print!(
@@ -1055,8 +1061,9 @@ fn run_crawl_label(
                 source_uri: format!("{}:{}", repo_path.display(), relative_path),
             };
 
-            // Chunk the content
-            match chunk_content(&content_str, &ctx, 6000) {
+            // Chunk the content - B.1: pass strategy from discovered crawl config
+            let strategy = crawl_config.get_strategy(relative_path);
+            match chunk_content(&content_str, &ctx, 6000, strategy) {
                 Ok(chunks) => {
                     if !chunks.is_empty() {
                         touched_file_ids.insert(chunks[0].file_id.clone());
@@ -1075,18 +1082,20 @@ fn run_crawl_label(
     }
 
     // Phase 3: Run the shared embed/upload pipeline (handles empty chunks gracefully)
-    let (pipeline_file_ids, pipeline_failures) = run_embed_upload_pipeline(
-        all_chunks,
-        uploader,
-        &label_id,
-    )?;
+    let (pipeline_file_ids, pipeline_failures) =
+        run_embed_upload_pipeline(all_chunks, uploader, &label_id)?;
 
     // Merge file IDs from pipeline with those tracked during chunking
     touched_file_ids.extend(pipeline_file_ids);
-    let had_failures = pipeline_failures.has_failures();
+
+    // A.1: Include existing-file label-add failures in the failure check
+    let has_existing_file_failures = !existing_file_label_add_failures.is_empty();
+    let had_failures = pipeline_failures.has_failures() || has_existing_file_failures;
 
     // Step 7: Label reassignment cleanup (A.1: ONLY after fully successful crawl)
     // Remove label from chunks that were NOT touched in this crawl
+    // A.2: Track cleanup failure separately
+    let mut cleanup_failed = false;
     if had_failures {
         println!("🧹 Phase 4: SKIPPING label reassignment cleanup (crawl had failures)");
         println!("  This is intentional - cleanup should only run after successful crawls.");
@@ -1104,15 +1113,18 @@ fn run_crawl_label(
                 println!("  Processed {} chunks for label cleanup", processed);
             }
             Err(e) => {
-                eprintln!("  ⚠️ Label cleanup failed: {}", e);
+                // A.2: Cleanup failure should block crawl_complete
+                eprintln!("  ❌ Label cleanup failed: {}", e);
+                cleanup_failed = true;
             }
         }
     }
     println!();
 
     // Step 8: Update label metadata (A.1: set crawl_complete=false if failures occurred)
+    // A.2: Also set crawl_complete=false if cleanup failed
     println!("📝 Updating label metadata...");
-    let crawl_complete = !had_failures;
+    let crawl_complete = !had_failures && !cleanup_failed;
     let metadata = LabelMetadata {
         source_type: "label-metadata".to_string(),
         catalog: catalog_name.to_string(),
@@ -1141,7 +1153,7 @@ fn run_crawl_label(
 
     // Summary
     let total_elapsed = total_start.elapsed();
-    if had_failures {
+    if had_failures || cleanup_failed {
         println!("⚠️  Crawl completed with errors!");
         println!(
             "  Total time: {}",
@@ -1153,7 +1165,17 @@ fn run_crawl_label(
             "  Existing files updated successfully: {}",
             existing_files.len()
         );
-        println!("  Total failures: {}", pipeline_failures.total());
+        let total_failures = pipeline_failures.total() + existing_file_label_add_failures.len();
+        println!("  Total failures: {}", total_failures);
+        if has_existing_file_failures {
+            println!(
+                "  - Existing file label-add failures: {}",
+                existing_file_label_add_failures.len()
+            );
+        }
+        if cleanup_failed {
+            println!("  - Label cleanup failed (crawl not marked complete)");
+        }
         println!();
         println!("  This crawl is marked as incomplete. Re-run to complete indexing.");
     } else {
@@ -1311,8 +1333,9 @@ fn run_crawl_working_dir(
     println!();
 
     // Add label to existing files
-    // A.3: Track files that successfully got the label added
+    // A.1/A.3: Track files that successfully got the label added, and track failures
     let mut label_add_success_files: HashSet<String> = HashSet::new();
+    let mut existing_file_label_add_failures: Vec<String> = Vec::new();
     if !existing_files.is_empty() {
         println!(
             "🏷️  Adding label to {} existing files...",
@@ -1321,11 +1344,18 @@ fn run_crawl_working_dir(
         for file_id in &existing_files {
             if let Err(e) = uploader.add_label_to_file_chunks(file_id, &label_id) {
                 eprintln!("  ❌ Failed to add label to file {}: {}", file_id, e);
+                existing_file_label_add_failures.push(format!("{}: {}", file_id, e));
             } else {
                 label_add_success_files.insert(file_id.clone());
             }
         }
         println!("  Done.");
+        if !existing_file_label_add_failures.is_empty() {
+            println!(
+                "  ⚠️  Failed to add label to {} existing files",
+                existing_file_label_add_failures.len()
+            );
+        }
         println!();
     }
     // Replace existing_files with only the successful ones
@@ -1336,10 +1366,7 @@ fn run_crawl_working_dir(
     let mut touched_file_ids: HashSet<String> = HashSet::new();
 
     if !new_files.is_empty() {
-        println!(
-            "📦 Phase 2: Chunking {} new files...",
-            new_count
-        );
+        println!("📦 Phase 2: Chunking {} new files...", new_count);
 
         for (idx, (relative_path, content_hash)) in new_files.iter().enumerate() {
             print!(
@@ -1380,8 +1407,9 @@ fn run_crawl_working_dir(
                 source_uri: format!("{}:{}", repo_path.display(), relative_path),
             };
 
-            // Chunk the content
-            match chunk_content(&content_str, &ctx, 6000) {
+            // Chunk the content - B.1: pass strategy from discovered crawl config
+            let strategy = crawl_config.get_strategy(relative_path);
+            match chunk_content(&content_str, &ctx, 6000, strategy) {
                 Ok(chunks) => {
                     if !chunks.is_empty() {
                         touched_file_ids.insert(chunks[0].file_id.clone());
@@ -1400,17 +1428,19 @@ fn run_crawl_working_dir(
     }
 
     // Phase 3: Run the shared embed/upload pipeline (handles empty chunks gracefully)
-    let (pipeline_file_ids, pipeline_failures) = run_embed_upload_pipeline(
-        all_chunks,
-        uploader,
-        &label_id,
-    )?;
+    let (pipeline_file_ids, pipeline_failures) =
+        run_embed_upload_pipeline(all_chunks, uploader, &label_id)?;
 
     // Merge file IDs from pipeline with those tracked during chunking
     touched_file_ids.extend(pipeline_file_ids);
-    let had_failures = pipeline_failures.has_failures();
+
+    // A.1: Include existing-file label-add failures in the failure check
+    let has_existing_file_failures = !existing_file_label_add_failures.is_empty();
+    let had_failures = pipeline_failures.has_failures() || has_existing_file_failures;
 
     // Step 7: Label reassignment cleanup (A.1: ONLY after fully successful crawl)
+    // A.2: Track cleanup failure separately
+    let mut cleanup_failed = false;
     if had_failures {
         println!("🧹 Phase 4: SKIPPING label reassignment cleanup (crawl had failures)");
         println!("  This is intentional - cleanup should only run after successful crawls.");
@@ -1424,14 +1454,19 @@ fn run_crawl_working_dir(
             QdrantUploader::new(&config.qdrant.collection, config.qdrant.url.as_deref())?;
         match cleanup_uploader.remove_label_from_chunks(&label_id, &all_touched) {
             Ok(processed) => println!("  Processed {} chunks for label cleanup", processed),
-            Err(e) => eprintln!("  ⚠️ Label cleanup failed: {}", e),
+            Err(e) => {
+                // A.2: Cleanup failure should block crawl_complete
+                eprintln!("  ❌ Label cleanup failed: {}", e);
+                cleanup_failed = true;
+            }
         }
     }
     println!();
 
     // Update label metadata (A.1: set crawl_complete=false if failures occurred)
+    // A.2: Also set crawl_complete=false if cleanup failed
     println!("📝 Updating label metadata...");
-    let crawl_complete = !had_failures;
+    let crawl_complete = !had_failures && !cleanup_failed;
     let metadata = LabelMetadata {
         source_type: "label-metadata".to_string(),
         catalog: catalog_name.to_string(),
@@ -1456,7 +1491,7 @@ fn run_crawl_working_dir(
     println!();
 
     let total_elapsed = total_start.elapsed();
-    if had_failures {
+    if had_failures || cleanup_failed {
         println!("⚠️  Working directory crawl completed with errors!");
         println!(
             "  Total time: {}",
@@ -1468,7 +1503,17 @@ fn run_crawl_working_dir(
             "  Existing files updated successfully: {}",
             existing_files.len()
         );
-        println!("  Total failures: {}", pipeline_failures.total());
+        let total_failures = pipeline_failures.total() + existing_file_label_add_failures.len();
+        println!("  Total failures: {}", total_failures);
+        if has_existing_file_failures {
+            println!(
+                "  - Existing file label-add failures: {}",
+                existing_file_label_add_failures.len()
+            );
+        }
+        if cleanup_failed {
+            println!("  - Label cleanup failed (crawl not marked complete)");
+        }
         println!();
         println!("  This crawl is marked as incomplete. Re-run to complete indexing.");
     } else {

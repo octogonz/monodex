@@ -13,9 +13,7 @@
 //!
 //! See `crawl_config.rs` for the full implementation.
 
-use std::path::Path;
-
-use super::crawl_config::{CompiledCrawlConfig, load_compiled_crawl_config};
+use super::crawl_config::load_compiled_crawl_config;
 
 /// Determines if a file should be skipped during indexing
 ///

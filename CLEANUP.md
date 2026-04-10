@@ -189,9 +189,9 @@ Fix opportunistically when touching adjacent code; not worth a standalone work i
 
 ### C.4 — Remove unused dependencies
 
-- [ ] Remove `ndarray` from Cargo.toml (not imported anywhere)
-- [ ] Remove `uuid` from Cargo.toml (UUIDs are generated via custom `string_to_uuid()`, not the crate)
-- [ ] Remove `serde_bytes` from Cargo.toml (not imported anywhere)
+- [x] Remove `ndarray` from Cargo.toml (not imported anywhere)
+- [x] Remove `uuid` from Cargo.toml (UUIDs are generated via custom `string_to_uuid()`, not the crate)
+- [x] Remove `serde_bytes` from Cargo.toml (not imported anywhere)
 
 ### C.5 — Remove or mark legacy Qdrant methods
 

@@ -473,9 +473,12 @@ impl QdrantUploader {
         let response = self.client.put(&endpoint).json(&request_body).send()?;
 
         if !response.status().is_success() {
+            let status = response.status();
+            let body = response.text().unwrap_or_else(|_| "<unable to read body>".to_string());
             return Err(anyhow!(
-                "Qdrant upsert failed with HTTP status: {}",
-                response.status()
+                "Qdrant upsert failed with HTTP status {}: {}",
+                status,
+                body
             ));
         }
 

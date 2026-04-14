@@ -755,9 +755,9 @@ fn run_embed_upload_pipeline(
                                     .push(format!("{}: {}", file_id, e));
                             }
                         }
+                        accumulated.clear();
                     }
                 }
-                accumulated.clear();
             }
 
             if stop_uploader.load(Ordering::Relaxed) && embed_rx.is_empty() {

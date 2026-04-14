@@ -184,6 +184,7 @@ Create `~/.config/monodex/config.json`:
 | ---------------------- | -------- | ---------------------------------------------------- |
 | `qdrant.url`           | No       | Qdrant server URL (default: `http://localhost:6333`) |
 | `qdrant.collection`    | Yes      | Qdrant collection name                               |
+| `qdrant.maxUploadBytes`| No       | Max upload payload size in bytes (default: 30MB)     |
 | `catalogs.<name>.type` | Yes      | Catalog type: `"monorepo"`                           |
 | `catalogs.<name>.path` | Yes      | Absolute path to the repository root                 |
 

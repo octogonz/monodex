@@ -1040,6 +1040,7 @@ fn run_crawl_label(
         &config.qdrant.collection,
         config.qdrant.url.as_deref(),
         debug,
+        config.qdrant.get_max_upload_bytes(),
     )?;
 
     // Step 1: Resolve commit to full SHA and write in-progress metadata
@@ -1262,6 +1263,7 @@ fn run_crawl_label(
             &config.qdrant.collection,
             config.qdrant.url.as_deref(),
             debug,
+            config.qdrant.get_max_upload_bytes(),
         )?;
         match cleanup_uploader.remove_label_from_chunks(&label_id, &all_touched) {
             Ok(processed) => {
@@ -1301,6 +1303,7 @@ fn run_crawl_label(
         &config.qdrant.collection,
         config.qdrant.url.as_deref(),
         debug,
+        config.qdrant.get_max_upload_bytes(),
     )?;
     uploader.upsert_label_metadata(&metadata)?;
     if crawl_complete {
@@ -1403,6 +1406,7 @@ fn run_crawl_working_dir(
         &config.qdrant.collection,
         config.qdrant.url.as_deref(),
         debug,
+        config.qdrant.get_max_upload_bytes(),
     )?;
 
     // Write in-progress metadata
@@ -1618,6 +1622,7 @@ fn run_crawl_working_dir(
             &config.qdrant.collection,
             config.qdrant.url.as_deref(),
             debug,
+            config.qdrant.get_max_upload_bytes(),
         )?;
         match cleanup_uploader.remove_label_from_chunks(&label_id, &all_touched) {
             Ok(processed) => println!("  Processed {} chunks for label cleanup", processed),
@@ -1652,6 +1657,7 @@ fn run_crawl_working_dir(
         &config.qdrant.collection,
         config.qdrant.url.as_deref(),
         debug,
+        config.qdrant.get_max_upload_bytes(),
     )?;
     uploader.upsert_label_metadata(&metadata)?;
     if crawl_complete {
@@ -1725,6 +1731,7 @@ fn run_search(
         &config.qdrant.collection,
         config.qdrant.url.as_deref(),
         debug,
+        config.qdrant.get_max_upload_bytes(),
     )?;
 
     // Extract catalog from label_id (format: catalog:label)
@@ -1889,6 +1896,7 @@ fn run_view(
         &config.qdrant.collection,
         config.qdrant.url.as_deref(),
         debug,
+        config.qdrant.get_max_upload_bytes(),
     )?;
 
     // Collect all results with their original selectors for display
@@ -2011,6 +2019,7 @@ fn run_purge(config: &Config, catalog: Option<&str>, all: bool, debug: bool) -> 
         &config.qdrant.collection,
         config.qdrant.url.as_deref(),
         debug,
+        config.qdrant.get_max_upload_bytes(),
     )?;
 
     if all {

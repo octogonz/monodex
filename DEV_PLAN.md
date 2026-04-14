@@ -640,7 +640,7 @@ In `src/engine/git_ops.rs`:
 - [x] Use `AtomicBool` flag for graceful shutdown instead of `std::process::exit`
 - [x] Test: Use the 3700-chunk threshold hack to reproduce, verify error is clear
 
-### BF.3 Implement Rewind Upload Algorithm
+### BF.3 Implement Rewind Upload Algorithm ✅ COMPLETE
 
 **Goal:** Ensure all batches stay under `maxUploadBytes` by iteratively subdividing and uploading.
 
@@ -675,19 +675,23 @@ fn upload_batch_with_rewind(points, max_bytes):
 - Never sends a request exceeding the limit
 
 **Implementation:**
-- [ ] Add `upload_batch_with_rewind` method to `QdrantUploader`
-- [ ] Pass `max_bytes` from config (or default 30MB)
-- [ ] Serialize to `Vec<u8>` first, check size before sending
-- [ ] Use `reqwest::Body::from(bytes)` to send pre-serialized data
-- [ ] Log each sub-batch upload progress
-- [ ] Update callers in `main.rs` to use new method
-- [ ] Remove the 3700-chunk threshold hack from `main.rs`
+- [x] Add `upload_batch_with_rewind` method to `QdrantUploader` (renamed to `upload_batch`)
+- [x] Pass `max_bytes` from config (or default 30MB)
+- [x] Serialize to `Vec<u8>` first, check size before sending
+- [x] Use `reqwest::Body::from(bytes)` to send pre-serialized data
+- [x] Log each sub-batch upload progress
+- [x] Update callers in `main.rs` to use new method
+- [x] Remove the 3700-chunk threshold hack from `main.rs` (none existed)
 
-### BF.4 Document New Setting
+### BF.4 Document New Setting ✅ COMPLETE
 
-- [ ] Update README.md to document `maxUploadBytes` in the config file section
-- [ ] Note that default is 30MB, which is safely under Qdrant's 32MB WAL limit
-- [ ] Explain when users might need to adjust this (custom Qdrant config)
+- [x] Update README.md to document `maxUploadBytes` in the config file section
+- [x] Note that default is 30MB, which is safely under Qdrant's 32MB WAL limit
+- [x] Explain when users might need to adjust this (custom Qdrant config)
+
+### BF.5 Print Catalog+Label in Command Output
+
+Commands like `crawl`, `search`, and `view` should print their catalog and label concisely in the output so users know what they're operating on, especially when using the `monodex use` default.
 
 ---
 

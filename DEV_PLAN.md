@@ -750,6 +750,10 @@ Monodex currently does AST-aware chunking only for TypeScript/TSX. Other languag
 
 ## Notes
 
+### Pull Requests
+
+When making a pull request, add a bullet under "## Unreleased" in CHANGELOG.md describing the change from an end-user perspective. See CHANGELOG.md for the version history and publishing instructions.
+
 ### Dependencies
 
 - `gix` crate for Git operations (pure Rust, avoids subprocess overhead)

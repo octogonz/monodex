@@ -622,13 +622,13 @@ In `src/engine/git_ops.rs`:
 
 **Issue:** Qdrant has a 32MB payload limit for HTTP requests. Large batches (3700+ chunks) exceed this limit, causing HTTP 400 errors. The original error handling swallowed these errors and did not retry, resulting in data loss and confusing output.
 
-### BF.1 Add maxUploadBytes Config Setting
+### BF.1 Add maxUploadBytes Config Setting ✅ COMPLETE
 
-- [ ] Add `maxUploadBytes` field to the `qdrant` section in `~/.config/monodex/config.json`
-- [ ] Default value: 30MB (30 * 1024 * 1024 bytes) if omitted
-- [ ] Update `src/engine/config.rs` to parse this field
-- [ ] Update JSON schema in `src/engine/config.rs` (or schema file if separate)
-- [ ] Update unit test for config parsing to include this field
+- [x] Add `maxUploadBytes` field to the `qdrant` section in `~/.config/monodex/config.json`
+- [x] Default value: 30MB (30 * 1024 * 1024 bytes) if omitted
+- [x] Update `src/main.rs` to parse this field (added to `QdrantConfig` struct)
+- [x] Update JSON schema in `schemas/config.schema.json`
+- [x] Update unit test for config parsing to include this field
 
 ### BF.2 Improve Upload Error Handling
 

@@ -104,6 +104,21 @@ impl CrawlFailures {
 struct QdrantConfig {
     url: Option<String>,
     collection: String,
+    /// Maximum upload payload size in bytes (default: 30MB)
+    /// Qdrant has a 32MB limit; we default to 30MB for safety margin
+    #[serde(rename = "maxUploadBytes")]
+    max_upload_bytes: Option<usize>,
+}
+
+impl QdrantConfig {
+    /// Default max upload size: 30MB (safely under Qdrant's 32MB limit)
+    const DEFAULT_MAX_UPLOAD_BYTES: usize = 30 * 1024 * 1024;
+
+    /// Get the configured max upload bytes, or the default
+    fn get_max_upload_bytes(&self) -> usize {
+        self.max_upload_bytes
+            .unwrap_or(Self::DEFAULT_MAX_UPLOAD_BYTES)
+    }
 }
 
 /// Catalog configuration
@@ -2325,5 +2340,58 @@ mod tests {
 
         let config = load_config(&config_path).unwrap();
         assert_eq!(config.catalogs.get("sparo").unwrap().r#type, "monorepo");
+    }
+
+    #[test]
+    fn test_load_config_accepts_max_upload_bytes() {
+        let dir = tempdir().unwrap();
+        let config_path = dir.path().join("config.json");
+        let mut file = std::fs::File::create(&config_path).unwrap();
+
+        writeln!(
+            file,
+            r#"{{
+                "qdrant": {{ "collection": "test", "maxUploadBytes": 20971520 }},
+                "catalogs": {{
+                    "sparo": {{
+                        "type": "monorepo",
+                        "path": "/tmp/sparo"
+                    }}
+                }}
+            }}"#
+        )
+        .unwrap();
+
+        let config = load_config(&config_path).unwrap();
+        assert_eq!(config.qdrant.max_upload_bytes, Some(20971520));
+        assert_eq!(config.qdrant.get_max_upload_bytes(), 20971520);
+    }
+
+    #[test]
+    fn test_load_config_max_upload_bytes_defaults() {
+        let dir = tempdir().unwrap();
+        let config_path = dir.path().join("config.json");
+        let mut file = std::fs::File::create(&config_path).unwrap();
+
+        writeln!(
+            file,
+            r#"{{
+                "qdrant": {{ "collection": "test" }},
+                "catalogs": {{
+                    "sparo": {{
+                        "type": "monorepo",
+                        "path": "/tmp/sparo"
+                    }}
+                }}
+            }}"#
+        )
+        .unwrap();
+
+        let config = load_config(&config_path).unwrap();
+        assert_eq!(config.qdrant.max_upload_bytes, None);
+        assert_eq!(
+            config.qdrant.get_max_upload_bytes(),
+            30 * 1024 * 1024 // 30MB default
+        );
     }
 }

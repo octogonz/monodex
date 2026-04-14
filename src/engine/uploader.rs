@@ -62,6 +62,7 @@ pub struct QdrantUploader {
     client: Client,
     url: String,
     collection: String,
+    debug: bool,
 }
 
 /// Request body for Qdrant upsert operation
@@ -223,7 +224,7 @@ pub struct SearchResult {
 
 impl QdrantUploader {
     /// Creates a new Qdrant uploader
-    pub fn new(collection: &str, qdrant_url: Option<&str>) -> Result<Self> {
+    pub fn new(collection: &str, qdrant_url: Option<&str>, debug: bool) -> Result<Self> {
         let url = qdrant_url.unwrap_or(DEFAULT_QDRANT_URL).to_string();
 
         // Use a longer timeout to accommodate wait=true operations
@@ -236,6 +237,7 @@ impl QdrantUploader {
             client,
             url,
             collection: collection.to_string(),
+            debug,
         })
     }
 
@@ -470,11 +472,31 @@ impl QdrantUploader {
             self.url, self.collection
         );
 
+        if self.debug {
+            let json_body = serde_json::to_string_pretty(&request_body)
+                .unwrap_or_else(|_| "<unable to serialize>".to_string());
+            eprintln!("[DEBUG] Request endpoint: {}", endpoint);
+            eprintln!(
+                "[DEBUG] Request body (first 5000 chars): {}",
+                json_body.chars().take(5000).collect::<String>()
+            );
+            eprintln!(
+                "[DEBUG] Total request points: {}",
+                request_body.points.len()
+            );
+        }
+
         let response = self.client.put(&endpoint).json(&request_body).send()?;
 
         if !response.status().is_success() {
             let status = response.status();
-            let body = response.text().unwrap_or_else(|_| "<unable to read body>".to_string());
+            let body = response
+                .text()
+                .unwrap_or_else(|_| "<unable to read body>".to_string());
+            if self.debug {
+                eprintln!("[DEBUG] Response status: {}", status);
+                eprintln!("[DEBUG] Response body: {}", body);
+            }
             return Err(anyhow!(
                 "Qdrant upsert failed with HTTP status {}: {}",
                 status,
@@ -484,6 +506,14 @@ impl QdrantUploader {
 
         // Parse response with error observability for malformed responses
         let response_text = response.text()?;
+
+        if self.debug {
+            eprintln!(
+                "[DEBUG] Response body (first 2000 chars): {}",
+                response_text.chars().take(2000).collect::<String>()
+            );
+        }
+
         let upsert_response: UpsertResponse = match serde_json::from_str(&response_text) {
             Ok(r) => r,
             Err(e) => {

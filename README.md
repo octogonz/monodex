@@ -128,12 +128,29 @@ The collection uses:
 # Use a custom config file location
 monodex --config /path/to/config.json search --text "query"
 
+# Enable verbose debug logging for network requests
+monodex --debug crawl --catalog myrepo --label main
+
 # Show help for any command
 monodex --help
 monodex crawl --help
 
 # Show version
 monodex --version
+```
+
+### Debug Mode
+
+The `--debug` flag enables verbose logging for troubleshooting:
+
+- Logs HTTP request/response details for Qdrant API calls
+- Shows batch sizes and payload sizes during uploads
+- Useful for diagnosing connectivity or payload issues
+
+Example:
+
+```bash
+monodex --debug crawl --catalog sparo --label main
 ```
 
 ### Configuration

@@ -149,6 +149,10 @@ struct Cli {
     #[arg(long)]
     config: Option<PathBuf>,
 
+    /// Enable verbose debug logging for network requests and other operations
+    #[arg(long, global = true)]
+    debug: bool,
+
     #[command(subcommand)]
     command: Commands,
 }
@@ -453,7 +457,13 @@ fn main() -> anyhow::Result<()> {
                 resolve_label_id(label.as_deref(), catalog.as_deref())?;
 
             if working_dir {
-                run_crawl_working_dir(&config, &catalog_name, &label_name, incremental_warnings)?;
+                run_crawl_working_dir(
+                    &config,
+                    &catalog_name,
+                    &label_name,
+                    incremental_warnings,
+                    cli.debug,
+                )?;
             } else {
                 run_crawl_label(
                     &config,
@@ -461,11 +471,12 @@ fn main() -> anyhow::Result<()> {
                     &label_name,
                     &commit,
                     incremental_warnings,
+                    cli.debug,
                 )?;
             }
         }
         Commands::Purge { catalog, all } => {
-            run_purge(&config, catalog.as_deref(), all)?;
+            run_purge(&config, catalog.as_deref(), all, cli.debug)?;
         }
         Commands::DumpChunks {
             file,
@@ -482,7 +493,14 @@ fn main() -> anyhow::Result<()> {
             label,
             catalog,
         } => {
-            run_search(&config, &text, limit, label.as_deref(), catalog.as_deref())?;
+            run_search(
+                &config,
+                &text,
+                limit,
+                label.as_deref(),
+                catalog.as_deref(),
+                cli.debug,
+            )?;
         }
         Commands::View {
             id,
@@ -490,7 +508,14 @@ fn main() -> anyhow::Result<()> {
             full_paths,
             chunks_only,
         } => {
-            run_view(&config, &id, label.as_deref(), full_paths, chunks_only)?;
+            run_view(
+                &config,
+                &id,
+                label.as_deref(),
+                full_paths,
+                chunks_only,
+                cli.debug,
+            )?;
         }
         Commands::AuditChunks { count, dir } => {
             run_audit_chunks(count, dir)?;
@@ -904,6 +929,7 @@ fn run_crawl_label(
     label_name: &str,
     commit: &str,
     _incremental_warnings: bool,
+    debug: bool,
 ) -> anyhow::Result<()> {
     use engine::util::{CHUNKER_ID, EMBEDDER_ID, compute_file_id};
 
@@ -937,7 +963,11 @@ fn run_crawl_label(
     println!("Loaded crawl configuration for repository");
 
     // Initialize uploader
-    let uploader = QdrantUploader::new(&config.qdrant.collection, config.qdrant.url.as_deref())?;
+    let uploader = QdrantUploader::new(
+        &config.qdrant.collection,
+        config.qdrant.url.as_deref(),
+        debug,
+    )?;
 
     // Step 1: Resolve commit to full SHA and write in-progress metadata
     println!("📦 Resolving commit...");
@@ -1155,8 +1185,11 @@ fn run_crawl_label(
             existing_files.union(&touched_file_ids).cloned().collect();
 
         // Create a new uploader for cleanup (the previous one was moved into the uploader thread)
-        let cleanup_uploader =
-            QdrantUploader::new(&config.qdrant.collection, config.qdrant.url.as_deref())?;
+        let cleanup_uploader = QdrantUploader::new(
+            &config.qdrant.collection,
+            config.qdrant.url.as_deref(),
+            debug,
+        )?;
         match cleanup_uploader.remove_label_from_chunks(&label_id, &all_touched) {
             Ok(processed) => {
                 println!("  Processed {} chunks for label cleanup", processed);
@@ -1191,7 +1224,11 @@ fn run_crawl_label(
     // Get uploader back from Arc<Mutex>
     // Note: This is a bit awkward - we need to get the uploader back
     // For now, create a new one
-    let uploader = QdrantUploader::new(&config.qdrant.collection, config.qdrant.url.as_deref())?;
+    let uploader = QdrantUploader::new(
+        &config.qdrant.collection,
+        config.qdrant.url.as_deref(),
+        debug,
+    )?;
     uploader.upsert_label_metadata(&metadata)?;
     if crawl_complete {
         println!("  Label metadata saved.");
@@ -1255,6 +1292,7 @@ fn run_crawl_working_dir(
     catalog_name: &str,
     label_name: &str,
     _incremental_warnings: bool,
+    debug: bool,
 ) -> anyhow::Result<()> {
     use engine::util::{CHUNKER_ID, EMBEDDER_ID, compute_file_id};
 
@@ -1288,7 +1326,11 @@ fn run_crawl_working_dir(
     println!("Loaded crawl configuration for repository");
 
     // Initialize uploader
-    let uploader = QdrantUploader::new(&config.qdrant.collection, config.qdrant.url.as_deref())?;
+    let uploader = QdrantUploader::new(
+        &config.qdrant.collection,
+        config.qdrant.url.as_deref(),
+        debug,
+    )?;
 
     // Write in-progress metadata
     let in_progress_metadata = LabelMetadata {
@@ -1499,8 +1541,11 @@ fn run_crawl_working_dir(
         let all_touched: HashSet<String> =
             existing_files.union(&touched_file_ids).cloned().collect();
 
-        let cleanup_uploader =
-            QdrantUploader::new(&config.qdrant.collection, config.qdrant.url.as_deref())?;
+        let cleanup_uploader = QdrantUploader::new(
+            &config.qdrant.collection,
+            config.qdrant.url.as_deref(),
+            debug,
+        )?;
         match cleanup_uploader.remove_label_from_chunks(&label_id, &all_touched) {
             Ok(processed) => println!("  Processed {} chunks for label cleanup", processed),
             Err(e) => {
@@ -1530,7 +1575,11 @@ fn run_crawl_working_dir(
             .as_secs(),
     };
 
-    let uploader = QdrantUploader::new(&config.qdrant.collection, config.qdrant.url.as_deref())?;
+    let uploader = QdrantUploader::new(
+        &config.qdrant.collection,
+        config.qdrant.url.as_deref(),
+        debug,
+    )?;
     uploader.upsert_label_metadata(&metadata)?;
     if crawl_complete {
         println!("  Label metadata saved.");
@@ -1589,6 +1638,7 @@ fn run_search(
     limit: usize,
     label: Option<&str>,
     catalog: Option<&str>,
+    debug: bool,
 ) -> anyhow::Result<()> {
     // Resolve label ID from explicit flag or default context
     let (label_id, _, _) = resolve_label_id(label, catalog)?;
@@ -1598,7 +1648,11 @@ fn run_search(
     let embedding = embedder.encode(text, 0)?;
 
     // Query Qdrant with label filter
-    let uploader = QdrantUploader::new(&config.qdrant.collection, config.qdrant.url.as_deref())?;
+    let uploader = QdrantUploader::new(
+        &config.qdrant.collection,
+        config.qdrant.url.as_deref(),
+        debug,
+    )?;
 
     // Extract catalog from label_id (format: catalog:label)
     let catalog = label_id.split(':').next().unwrap_or("");
@@ -1739,6 +1793,7 @@ fn run_view(
     label: Option<&str>,
     show_full_paths: bool,
     chunks_only: bool,
+    debug: bool,
 ) -> anyhow::Result<()> {
     if id_specs.is_empty() {
         return Err(anyhow::anyhow!(
@@ -1757,7 +1812,11 @@ fn run_view(
     }
 
     // Query Qdrant
-    let uploader = QdrantUploader::new(&config.qdrant.collection, config.qdrant.url.as_deref())?;
+    let uploader = QdrantUploader::new(
+        &config.qdrant.collection,
+        config.qdrant.url.as_deref(),
+        debug,
+    )?;
 
     // Collect all results with their original selectors for display
     let mut all_results: Vec<(String, ChunkSelector, Vec<PointResult>)> = Vec::new();
@@ -1874,8 +1933,12 @@ fn run_view(
 }
 
 /// Run purge command (delete all chunks from a catalog or entire collection)
-fn run_purge(config: &Config, catalog: Option<&str>, all: bool) -> anyhow::Result<()> {
-    let uploader = QdrantUploader::new(&config.qdrant.collection, config.qdrant.url.as_deref())?;
+fn run_purge(config: &Config, catalog: Option<&str>, all: bool, debug: bool) -> anyhow::Result<()> {
+    let uploader = QdrantUploader::new(
+        &config.qdrant.collection,
+        config.qdrant.url.as_deref(),
+        debug,
+    )?;
 
     if all {
         println!(

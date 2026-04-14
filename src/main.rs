@@ -17,7 +17,7 @@ use engine::{
         resolve_commit_oid,
     },
     partitioner::{ChunkQualityReport, PartitionConfig, PartitionDebug, partition_typescript},
-    uploader::{LabelMetadata, PointResult, QdrantUploader},
+    uploader::{LabelMetadata, PointResult, QdrantUploader, is_payload_limit_error},
     util::compute_label_id,
 };
 use std::collections::{HashMap, HashSet};
@@ -659,6 +659,7 @@ fn run_embed_upload_pipeline(
     let (embed_tx, embed_rx): EmbedChannel = unbounded();
     let processed = Arc::new(AtomicUsize::new(0));
     let stop_flag = Arc::new(AtomicBool::new(false));
+    let fatal_error = Arc::new(AtomicBool::new(false));
     let last_upload_time = Arc::new(Mutex::new(std::time::Instant::now()));
 
     // Progress reporter thread
@@ -702,6 +703,7 @@ fn run_embed_upload_pipeline(
 
     // Uploader thread
     let stop_uploader = Arc::clone(&stop_flag);
+    let fatal_error_uploader = Arc::clone(&fatal_error);
     let last_upload_time_clone = Arc::clone(&last_upload_time);
     let uploader_clone = Arc::clone(&uploader);
     let label_id_clone = label_id.to_string();
@@ -735,7 +737,7 @@ fn run_embed_upload_pipeline(
                 accumulated.push(embedded);
             }
 
-            if should_upload && !accumulated.is_empty() {
+            if should_upload {
                 let count = accumulated.len();
                 eprintln!(
                     "[{}] Uploading checkpoint ({} chunks)...",
@@ -746,6 +748,30 @@ fn run_embed_upload_pipeline(
                 let uploader_guard = uploader_clone.lock().unwrap();
                 match uploader_guard.upload_batch(&accumulated) {
                     Err(e) => {
+                        // Check for payload limit error - this is fatal, must abort
+                        let error_msg = e.to_string();
+                        if is_payload_limit_error(&error_msg) {
+                            eprintln!();
+                            eprintln!(
+                                "═══════════════════════════════════════════════════════════════"
+                            );
+                            eprintln!("FATAL: {}", error_msg);
+                            eprintln!();
+                            eprintln!("Batch size: {} chunks", accumulated.len());
+                            eprintln!(
+                                "This error occurs when a single upload batch exceeds Qdrant's"
+                            );
+                            eprintln!(
+                                "payload size limit. The batch subdivision algorithm should have"
+                            );
+                            eprintln!("prevented this. Please report this as a bug.");
+                            eprintln!(
+                                "═══════════════════════════════════════════════════════════════"
+                            );
+                            fatal_error_uploader.store(true, Ordering::Relaxed);
+                            break;
+                        }
+
                         eprintln!("[{}] ❌ Upload failed: {}", chrono_timestamp(), e);
                         let mut failures = upload_failures_clone.lock().unwrap();
                         for (chunk, _) in &accumulated {
@@ -754,6 +780,7 @@ fn run_embed_upload_pipeline(
                                 failures.push(format!("{}: {}", file_id, e));
                             }
                         }
+                        accumulated.clear(); // Clear even on non-fatal error to avoid re-upload loop
                     }
                     Ok(_) => {
                         let mut files_in_batch: HashMap<String, usize> = HashMap::new();
@@ -845,6 +872,30 @@ fn run_embed_upload_pipeline(
                             }
                         }
                         Err(e) => {
+                            // Check for payload limit error - this is fatal, must abort
+                            let error_msg = e.to_string();
+                            if is_payload_limit_error(&error_msg) {
+                                eprintln!();
+                                eprintln!(
+                                    "═══════════════════════════════════════════════════════════════"
+                                );
+                                eprintln!("FATAL: {}", error_msg);
+                                eprintln!();
+                                eprintln!("Batch size: {} chunks", accumulated.len());
+                                eprintln!(
+                                    "This error occurs when a single upload batch exceeds Qdrant's"
+                                );
+                                eprintln!(
+                                    "payload size limit. The batch subdivision algorithm should have"
+                                );
+                                eprintln!("prevented this. Please report this as a bug.");
+                                eprintln!(
+                                    "═══════════════════════════════════════════════════════════════"
+                                );
+                                fatal_error_uploader.store(true, Ordering::Relaxed);
+                                break;
+                            }
+
                             eprintln!("[{}] ❌ Final upload failed: {}", chrono_timestamp(), e);
                             let mut failures = upload_failures_clone.lock().unwrap();
                             for (chunk, _) in &accumulated {
@@ -899,6 +950,13 @@ fn run_embed_upload_pipeline(
     stop_flag.store(true, Ordering::Relaxed);
     progress_thread.join().ok();
     uploader_thread.join().ok();
+
+    // Check for fatal error from uploader thread
+    if fatal_error.load(Ordering::Relaxed) {
+        return Err(anyhow::anyhow!(
+            "Fatal upload error: payload limit exceeded. Crawl aborted."
+        ));
+    }
 
     let embed_elapsed = embed_start.elapsed();
     let rate = total_chunks as f64 / embed_elapsed.as_secs_f64().max(0.001);

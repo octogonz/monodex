@@ -9,6 +9,12 @@ use serde::{Deserialize, Serialize};
 
 const DEFAULT_QDRANT_URL: &str = "http://localhost:6333";
 
+/// Check if an error response from Qdrant indicates a payload size limit error.
+/// These errors require batch subdivision and are not recoverable with retry.
+pub fn is_payload_limit_error(body: &str) -> bool {
+    body.contains("Payload error") && body.contains("larger than allowed")
+}
+
 /// Custom deserializer for active_label_ids that handles both formats:
 /// - Normal array: `["label1", "label2"]`
 /// - Qdrant values wrapper: `{"values": ["label1", "label2"]}`
@@ -463,6 +469,7 @@ impl QdrantUploader {
             })
             .collect();
 
+        let point_count = points.len();
         let request_body = UpsertRequest { points };
 
         // Use wait=true to ensure points are fully indexed before subsequent reads
@@ -497,6 +504,16 @@ impl QdrantUploader {
                 eprintln!("[DEBUG] Response status: {}", status);
                 eprintln!("[DEBUG] Response body: {}", body);
             }
+
+            // Check for payload limit error - this is a fatal error requiring batch subdivision
+            if is_payload_limit_error(&body) {
+                return Err(anyhow!(
+                    "Qdrant payload limit exceeded: {}. Batch size: {} chunks.",
+                    body,
+                    point_count
+                ));
+            }
+
             return Err(anyhow!(
                 "Qdrant upsert failed with HTTP status {}: {}",
                 status,
@@ -1336,5 +1353,31 @@ mod tests {
         assert_eq!(upsert_point_id, get_point_id);
         assert_eq!(upsert_point_id.len(), 36);
         assert!(upsert_point_id.contains('-'));
+    }
+
+    #[test]
+    fn test_is_payload_limit_error_detects_qdrant_error() {
+        // Real Qdrant error response
+        let body = r#"{"status":{"error":"Payload error: JSON payload (36704120 bytes) is larger than allowed (limit: 33554432 bytes)."},"time":0.0}"#;
+        assert!(is_payload_limit_error(body));
+
+        // Also works with plain text format
+        let text = "Payload error: JSON payload (36704120 bytes) is larger than allowed (limit: 33554432 bytes).";
+        assert!(is_payload_limit_error(text));
+    }
+
+    #[test]
+    fn test_is_payload_limit_error_rejects_other_errors() {
+        // Connection error
+        let body = r#"{"status":{"error":"Connection refused"}}"#;
+        assert!(!is_payload_limit_error(body));
+
+        // Different payload error
+        let body = r#"{"status":{"error":"Invalid payload format"}}"#;
+        assert!(!is_payload_limit_error(body));
+
+        // Unrelated error
+        let body = r#"{"status":{"error":"Collection not found"}}"#;
+        assert!(!is_payload_limit_error(body));
     }
 }

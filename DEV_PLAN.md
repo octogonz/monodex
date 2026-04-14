@@ -630,13 +630,15 @@ In `src/engine/git_ops.rs`:
 - [x] Update JSON schema in `schemas/config.schema.json`
 - [x] Update unit test for config parsing to include this field
 
-### BF.2 Improve Upload Error Handling
+### BF.2 Improve Upload Error Handling ✅ COMPLETE
 
-- [ ] When Qdrant returns HTTP 400 with payload size error, abort the crawl immediately
-- [ ] Print clear error message: "Upload failed: Payload size (X bytes) exceeds Qdrant limit (Y bytes)"
-- [ ] Terminate process with non-zero exit code
-- [ ] Remove the unconditional `accumulated.clear()` that loses data on upload failure
-- [ ] Test: Use the 3700-chunk threshold hack to reproduce, verify error is clear
+- [x] When Qdrant returns HTTP 400 with payload size error, abort the crawl immediately
+- [x] Print clear error message with Qdrant's original payload limit error message
+- [x] Terminate process with non-zero exit code (via error propagation, not process::exit)
+- [x] Remove the unconditional `accumulated.clear()` that loses data on upload failure
+- [x] Add `is_payload_limit_error()` helper to detect Qdrant payload limit errors
+- [x] Use `AtomicBool` flag for graceful shutdown instead of `std::process::exit`
+- [x] Test: Use the 3700-chunk threshold hack to reproduce, verify error is clear
 
 ### BF.3 Implement Rewind Upload Algorithm
 

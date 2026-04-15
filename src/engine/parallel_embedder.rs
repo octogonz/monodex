@@ -27,11 +27,11 @@ static MODEL_CACHE: Mutex<Option<(PathBuf, PathBuf)>> = Mutex::new(None);
 /// Get or download the model files (thread-safe, only downloads once)
 fn get_model_files() -> Result<(PathBuf, PathBuf)> {
     let mut cache = MODEL_CACHE.lock().unwrap();
-    
+
     if let Some(ref paths) = *cache {
         return Ok(paths.clone());
     }
-    
+
     // Download model files from HuggingFace (cached locally after first download)
     let api = Api::new()?;
     let repo = Repo::new(MODEL_ID.to_string(), RepoType::Model);
@@ -42,7 +42,7 @@ fn get_model_files() -> Result<(PathBuf, PathBuf)> {
 
     let paths = (tokenizer_path, onnx_path);
     *cache = Some(paths.clone());
-    
+
     Ok(paths)
 }
 

@@ -618,6 +618,49 @@ In `src/engine/git_ops.rs`:
 
 ---
 
+## Bug Fixes: Working Directory Hash Incompatibility
+
+**Issue:** The `--working-dir` feature uses a different content hash format than Git commit crawls, preventing incremental skipping between the two modes. The same file with identical content will have different `file_id` values, resulting in duplicate chunks stored in Qdrant and wasted embedding compute.
+
+**Root Cause Analysis:**
+
+The `file_id` is computed as:
+```
+file_id = xxhash(embedder_id + chunker_id + blob_id + relative_path)
+```
+
+The `blob_id` component differs by crawl source:
+
+| Source | Hash Format | Example |
+|--------|-------------|---------|
+| Git commit crawl | Git blob SHA-1 (40 hex chars) | `8aba78c0c132f6f0adc6fe28dd6818966087ec05` |
+| Working directory crawl | SHA-256 with prefix | `sha256:a1b2c3d4...` (64 hex chars + prefix) |
+
+**Code Locations:**
+- `monodex/src/engine/git_ops.rs:84-140` - `enumerate_commit_tree()` returns `FileEntry { blob_id }` where `blob_id` is Git's 40-char hex SHA-1
+- `monodex/src/engine/git_ops.rs:260-310` - `enumerate_working_directory()` returns `WorkingDirEntry { content_hash }` where `content_hash` is `sha256:...` format
+- `monodex/src/engine/git_ops.rs:317-324` - `compute_content_hash()` computes SHA-256 with `sha256:` prefix
+- `monodex/src/engine/util.rs:32-46` - `compute_file_id()` uses `blob_id` as input
+- `monodex/src/main.rs:1465` - Working dir uses `content_hash` as `blob_id` parameter
+
+**Fix Options:**
+1. Change `compute_content_hash()` to compute Git-compatible blob SHA-1 (format: `sha1("blob <size>\0<content>")`)
+2. Compute both hashes and use the Git blob SHA-1 as the `blob_id` for `file_id` computation only
+
+**Impact:**
+- No incremental skipping between commit and working-dir crawls
+- Duplicate chunks stored for same content
+- Wasted embedding API calls
+
+### BF.WD.1 Use Git-Compatible Blob Hash for Working Directory
+
+- [ ] Change `compute_content_hash()` to output Git blob SHA-1 format (40 hex chars, no prefix)
+- [ ] Update `WorkingDirEntry` field name from `content_hash` to `blob_id` for consistency
+- [ ] Test: crawl HEAD, then crawl --working-dir with no changes, verify 0 new files indexed
+- [ ] Test: crawl HEAD, make a change, crawl --working-dir, verify only changed file indexed
+
+---
+
 ## Bug Fixes: Qdrant Upload Payload Limit
 
 **Issue:** Qdrant has a 32MB payload limit for HTTP requests. Large batches (3700+ chunks) exceed this limit, causing HTTP 400 errors. The original error handling swallowed these errors and did not retry, resulting in data loss and confusing output.

@@ -17,6 +17,8 @@
 
 `monodex` is a CLI tool that indexes Rush monorepo source code and documentation into a Qdrant vector database for scalable semantic search. It supports **label-based indexing**, allowing you to maintain multiple queryable snapshots (branches, commits) within a single catalog.
 
+See [CHANGELOG.md](./CHANGELOG.md) for release history.
+
 ### Features
 
 - **Label-based indexing**: Maintain multiple queryable filesets (branches, commits) within a catalog
@@ -128,12 +130,29 @@ The collection uses:
 # Use a custom config file location
 monodex --config /path/to/config.json search --text "query"
 
+# Enable verbose debug logging for network requests
+monodex --debug crawl --catalog myrepo --label main
+
 # Show help for any command
 monodex --help
 monodex crawl --help
 
 # Show version
 monodex --version
+```
+
+### Debug Mode
+
+The `--debug` flag enables verbose logging for troubleshooting:
+
+- Logs HTTP request/response details for Qdrant API calls
+- Shows batch sizes and payload sizes during uploads
+- Useful for diagnosing connectivity or payload issues
+
+Example:
+
+```bash
+monodex --debug crawl --catalog sparo --label main
 ```
 
 ### Configuration
@@ -163,12 +182,13 @@ Create `~/.config/monodex/config.json`:
 
 **Fields:**
 
-| Field                  | Required | Description                                          |
-| ---------------------- | -------- | ---------------------------------------------------- |
-| `qdrant.url`           | No       | Qdrant server URL (default: `http://localhost:6333`) |
-| `qdrant.collection`    | Yes      | Qdrant collection name                               |
-| `catalogs.<name>.type` | Yes      | Catalog type: `"monorepo"`                           |
-| `catalogs.<name>.path` | Yes      | Absolute path to the repository root                 |
+| Field                   | Required | Description                                          |
+| ----------------------- | -------- | ---------------------------------------------------- |
+| `qdrant.url`            | No       | Qdrant server URL (default: `http://localhost:6333`) |
+| `qdrant.collection`     | Yes      | Qdrant collection name                               |
+| `qdrant.maxUploadBytes` | No       | Max upload payload size in bytes (default: 30MB)     |
+| `catalogs.<name>.type`  | Yes      | Catalog type: `"monorepo"`                           |
+| `catalogs.<name>.path`  | Yes      | Absolute path to the repository root                 |
 
 **Catalog types:**
 
@@ -303,6 +323,8 @@ monodex purge --all
 
 ## Development
 
+When making a pull request, add a bullet under "## Unreleased" in [CHANGELOG.md](./CHANGELOG.md) describing the change from an end-user perspective. See CHANGELOG.md for the version history and publishing instructions.
+
 Run CI checks using [Just](https://github.com/casey/just) (recommended):
 
 ```bash
@@ -399,11 +421,11 @@ No merging occurs — exactly one config is used.
 
 JSON schemas are available in the `schemas/` directory for IDE autocomplete and validation. Copy the appropriate schema file to your project or reference it locally:
 
-| Config File | Schema File |
-|-------------|-------------|
-| `config.json` | `schemas/config.schema.json` |
-| `monodex-crawl.json` | `schemas/crawl.schema.json` |
-| `context.json` | `schemas/context.schema.json` |
+| Config File          | Schema File                   |
+| -------------------- | ----------------------------- |
+| `config.json`        | `schemas/config.schema.json`  |
+| `monodex-crawl.json` | `schemas/crawl.schema.json`   |
+| `context.json`       | `schemas/context.schema.json` |
 
 Create a `monodex-crawl.json` file:
 
@@ -423,29 +445,26 @@ Create a `monodex-crawl.json` file:
     "**/*.test.ts",
     "**/*.spec.ts"
   ],
-  "patternsToKeep": [
-    "src/",
-    "test/"
-  ]
+  "patternsToKeep": ["src/", "test/"]
 }
 ```
 
 **Fields:**
 
-| Field | Type | Description |
-|-------|------|-------------|
-| `version` | number | Must be `1` |
-| `fileTypes` | object | Maps file extension to chunking strategy |
-| `patternsToExclude` | array | Glob patterns for paths to skip |
-| `patternsToKeep` | array | Glob patterns that override exclusions |
+| Field               | Type   | Description                              |
+| ------------------- | ------ | ---------------------------------------- |
+| `version`           | number | Must be `1`                              |
+| `fileTypes`         | object | Maps file extension to chunking strategy |
+| `patternsToExclude` | array  | Glob patterns for paths to skip          |
+| `patternsToKeep`    | array  | Glob patterns that override exclusions   |
 
 **Chunking strategies:**
 
-| Strategy | Description |
-|----------|-------------|
+| Strategy     | Description                          |
+| ------------ | ------------------------------------ |
 | `typescript` | AST-based semantic chunking (TS/TSX) |
-| `markdown` | Split by heading hierarchy |
-| `lineBased` | Generic line-based chunking |
+| `markdown`   | Split by heading hierarchy           |
+| `lineBased`  | Generic line-based chunking          |
 
 **Evaluation rule:**
 

@@ -22,6 +22,13 @@
           "type": "string",
           "description": "Qdrant collection name for storing embeddings",
           "examples": ["my_monorepo", "code_index"]
+        },
+        "maxUploadBytes": {
+          "type": "integer",
+          "description": "Maximum upload payload size in bytes (default: 31457280 = 30MB). Qdrant has a 32MB limit; this setting provides a safety margin.",
+          "default": 31457280,
+          "minimum": 1048576,
+          "examples": [31457280, 20971520]
         }
       }
     },

@@ -17,7 +17,7 @@ use engine::{
         resolve_commit_oid,
     },
     partitioner::{ChunkQualityReport, PartitionConfig, PartitionDebug, partition_typescript},
-    uploader::{LabelMetadata, PointResult, QdrantUploader},
+    uploader::{LabelMetadata, PointResult, QdrantUploader, is_payload_limit_error},
     util::compute_label_id,
 };
 use std::collections::{HashMap, HashSet};
@@ -104,6 +104,21 @@ impl CrawlFailures {
 struct QdrantConfig {
     url: Option<String>,
     collection: String,
+    /// Maximum upload payload size in bytes (default: 30MB)
+    /// Qdrant has a 32MB limit; we default to 30MB for safety margin
+    #[serde(rename = "maxUploadBytes")]
+    max_upload_bytes: Option<usize>,
+}
+
+impl QdrantConfig {
+    /// Default max upload size: 30MB (safely under Qdrant's 32MB limit)
+    const DEFAULT_MAX_UPLOAD_BYTES: usize = 30 * 1024 * 1024;
+
+    /// Get the configured max upload bytes, or the default
+    fn get_max_upload_bytes(&self) -> usize {
+        self.max_upload_bytes
+            .unwrap_or(Self::DEFAULT_MAX_UPLOAD_BYTES)
+    }
 }
 
 /// Catalog configuration
@@ -148,6 +163,10 @@ struct Cli {
     /// Config file path (default: ~/.config/monodex/config.json)
     #[arg(long)]
     config: Option<PathBuf>,
+
+    /// Enable verbose debug logging for network requests and other operations
+    #[arg(long, global = true)]
+    debug: bool,
 
     #[command(subcommand)]
     command: Commands,
@@ -453,7 +472,13 @@ fn main() -> anyhow::Result<()> {
                 resolve_label_id(label.as_deref(), catalog.as_deref())?;
 
             if working_dir {
-                run_crawl_working_dir(&config, &catalog_name, &label_name, incremental_warnings)?;
+                run_crawl_working_dir(
+                    &config,
+                    &catalog_name,
+                    &label_name,
+                    incremental_warnings,
+                    cli.debug,
+                )?;
             } else {
                 run_crawl_label(
                     &config,
@@ -461,11 +486,12 @@ fn main() -> anyhow::Result<()> {
                     &label_name,
                     &commit,
                     incremental_warnings,
+                    cli.debug,
                 )?;
             }
         }
         Commands::Purge { catalog, all } => {
-            run_purge(&config, catalog.as_deref(), all)?;
+            run_purge(&config, catalog.as_deref(), all, cli.debug)?;
         }
         Commands::DumpChunks {
             file,
@@ -482,7 +508,14 @@ fn main() -> anyhow::Result<()> {
             label,
             catalog,
         } => {
-            run_search(&config, &text, limit, label.as_deref(), catalog.as_deref())?;
+            run_search(
+                &config,
+                &text,
+                limit,
+                label.as_deref(),
+                catalog.as_deref(),
+                cli.debug,
+            )?;
         }
         Commands::View {
             id,
@@ -490,7 +523,14 @@ fn main() -> anyhow::Result<()> {
             full_paths,
             chunks_only,
         } => {
-            run_view(&config, &id, label.as_deref(), full_paths, chunks_only)?;
+            run_view(
+                &config,
+                &id,
+                label.as_deref(),
+                full_paths,
+                chunks_only,
+                cli.debug,
+            )?;
         }
         Commands::AuditChunks { count, dir } => {
             run_audit_chunks(count, dir)?;
@@ -619,6 +659,7 @@ fn run_embed_upload_pipeline(
     let (embed_tx, embed_rx): EmbedChannel = unbounded();
     let processed = Arc::new(AtomicUsize::new(0));
     let stop_flag = Arc::new(AtomicBool::new(false));
+    let fatal_error = Arc::new(AtomicBool::new(false));
     let last_upload_time = Arc::new(Mutex::new(std::time::Instant::now()));
 
     // Progress reporter thread
@@ -662,6 +703,7 @@ fn run_embed_upload_pipeline(
 
     // Uploader thread
     let stop_uploader = Arc::clone(&stop_flag);
+    let fatal_error_uploader = Arc::clone(&fatal_error);
     let last_upload_time_clone = Arc::clone(&last_upload_time);
     let uploader_clone = Arc::clone(&uploader);
     let label_id_clone = label_id.to_string();
@@ -695,7 +737,7 @@ fn run_embed_upload_pipeline(
                 accumulated.push(embedded);
             }
 
-            if should_upload && !accumulated.is_empty() {
+            if should_upload {
                 let count = accumulated.len();
                 eprintln!(
                     "[{}] Uploading checkpoint ({} chunks)...",
@@ -706,6 +748,30 @@ fn run_embed_upload_pipeline(
                 let uploader_guard = uploader_clone.lock().unwrap();
                 match uploader_guard.upload_batch(&accumulated) {
                     Err(e) => {
+                        // Check for payload limit error - this is fatal, must abort
+                        let error_msg = e.to_string();
+                        if is_payload_limit_error(&error_msg) {
+                            eprintln!();
+                            eprintln!(
+                                "═══════════════════════════════════════════════════════════════"
+                            );
+                            eprintln!("FATAL: {}", error_msg);
+                            eprintln!();
+                            eprintln!("Batch size: {} chunks", accumulated.len());
+                            eprintln!(
+                                "This error occurs when a single upload batch exceeds Qdrant's"
+                            );
+                            eprintln!(
+                                "payload size limit. The batch subdivision algorithm should have"
+                            );
+                            eprintln!("prevented this. Please report this as a bug.");
+                            eprintln!(
+                                "═══════════════════════════════════════════════════════════════"
+                            );
+                            fatal_error_uploader.store(true, Ordering::Relaxed);
+                            break;
+                        }
+
                         eprintln!("[{}] ❌ Upload failed: {}", chrono_timestamp(), e);
                         let mut failures = upload_failures_clone.lock().unwrap();
                         for (chunk, _) in &accumulated {
@@ -714,6 +780,7 @@ fn run_embed_upload_pipeline(
                                 failures.push(format!("{}: {}", file_id, e));
                             }
                         }
+                        accumulated.clear(); // Clear even on non-fatal error to avoid re-upload loop
                     }
                     Ok(_) => {
                         let mut files_in_batch: HashMap<String, usize> = HashMap::new();
@@ -755,9 +822,9 @@ fn run_embed_upload_pipeline(
                                     .push(format!("{}: {}", file_id, e));
                             }
                         }
+                        accumulated.clear();
                     }
                 }
-                accumulated.clear();
             }
 
             if stop_uploader.load(Ordering::Relaxed) && embed_rx.is_empty() {
@@ -805,6 +872,30 @@ fn run_embed_upload_pipeline(
                             }
                         }
                         Err(e) => {
+                            // Check for payload limit error - this is fatal, must abort
+                            let error_msg = e.to_string();
+                            if is_payload_limit_error(&error_msg) {
+                                eprintln!();
+                                eprintln!(
+                                    "═══════════════════════════════════════════════════════════════"
+                                );
+                                eprintln!("FATAL: {}", error_msg);
+                                eprintln!();
+                                eprintln!("Batch size: {} chunks", accumulated.len());
+                                eprintln!(
+                                    "This error occurs when a single upload batch exceeds Qdrant's"
+                                );
+                                eprintln!(
+                                    "payload size limit. The batch subdivision algorithm should have"
+                                );
+                                eprintln!("prevented this. Please report this as a bug.");
+                                eprintln!(
+                                    "═══════════════════════════════════════════════════════════════"
+                                );
+                                fatal_error_uploader.store(true, Ordering::Relaxed);
+                                break;
+                            }
+
                             eprintln!("[{}] ❌ Final upload failed: {}", chrono_timestamp(), e);
                             let mut failures = upload_failures_clone.lock().unwrap();
                             for (chunk, _) in &accumulated {
@@ -860,6 +951,13 @@ fn run_embed_upload_pipeline(
     progress_thread.join().ok();
     uploader_thread.join().ok();
 
+    // Check for fatal error from uploader thread
+    if fatal_error.load(Ordering::Relaxed) {
+        return Err(anyhow::anyhow!(
+            "Fatal upload error: payload limit exceeded. Crawl aborted."
+        ));
+    }
+
     let embed_elapsed = embed_start.elapsed();
     let rate = total_chunks as f64 / embed_elapsed.as_secs_f64().max(0.001);
     println!(
@@ -904,6 +1002,7 @@ fn run_crawl_label(
     label_name: &str,
     commit: &str,
     _incremental_warnings: bool,
+    debug: bool,
 ) -> anyhow::Result<()> {
     use engine::util::{CHUNKER_ID, EMBEDDER_ID, compute_file_id};
 
@@ -937,7 +1036,12 @@ fn run_crawl_label(
     println!("Loaded crawl configuration for repository");
 
     // Initialize uploader
-    let uploader = QdrantUploader::new(&config.qdrant.collection, config.qdrant.url.as_deref())?;
+    let uploader = QdrantUploader::new(
+        &config.qdrant.collection,
+        config.qdrant.url.as_deref(),
+        debug,
+        config.qdrant.get_max_upload_bytes(),
+    )?;
 
     // Step 1: Resolve commit to full SHA and write in-progress metadata
     println!("📦 Resolving commit...");
@@ -1155,8 +1259,12 @@ fn run_crawl_label(
             existing_files.union(&touched_file_ids).cloned().collect();
 
         // Create a new uploader for cleanup (the previous one was moved into the uploader thread)
-        let cleanup_uploader =
-            QdrantUploader::new(&config.qdrant.collection, config.qdrant.url.as_deref())?;
+        let cleanup_uploader = QdrantUploader::new(
+            &config.qdrant.collection,
+            config.qdrant.url.as_deref(),
+            debug,
+            config.qdrant.get_max_upload_bytes(),
+        )?;
         match cleanup_uploader.remove_label_from_chunks(&label_id, &all_touched) {
             Ok(processed) => {
                 println!("  Processed {} chunks for label cleanup", processed);
@@ -1191,7 +1299,12 @@ fn run_crawl_label(
     // Get uploader back from Arc<Mutex>
     // Note: This is a bit awkward - we need to get the uploader back
     // For now, create a new one
-    let uploader = QdrantUploader::new(&config.qdrant.collection, config.qdrant.url.as_deref())?;
+    let uploader = QdrantUploader::new(
+        &config.qdrant.collection,
+        config.qdrant.url.as_deref(),
+        debug,
+        config.qdrant.get_max_upload_bytes(),
+    )?;
     uploader.upsert_label_metadata(&metadata)?;
     if crawl_complete {
         println!("  Label metadata saved.");
@@ -1255,6 +1368,7 @@ fn run_crawl_working_dir(
     catalog_name: &str,
     label_name: &str,
     _incremental_warnings: bool,
+    debug: bool,
 ) -> anyhow::Result<()> {
     use engine::util::{CHUNKER_ID, EMBEDDER_ID, compute_file_id};
 
@@ -1288,7 +1402,12 @@ fn run_crawl_working_dir(
     println!("Loaded crawl configuration for repository");
 
     // Initialize uploader
-    let uploader = QdrantUploader::new(&config.qdrant.collection, config.qdrant.url.as_deref())?;
+    let uploader = QdrantUploader::new(
+        &config.qdrant.collection,
+        config.qdrant.url.as_deref(),
+        debug,
+        config.qdrant.get_max_upload_bytes(),
+    )?;
 
     // Write in-progress metadata
     let in_progress_metadata = LabelMetadata {
@@ -1499,8 +1618,12 @@ fn run_crawl_working_dir(
         let all_touched: HashSet<String> =
             existing_files.union(&touched_file_ids).cloned().collect();
 
-        let cleanup_uploader =
-            QdrantUploader::new(&config.qdrant.collection, config.qdrant.url.as_deref())?;
+        let cleanup_uploader = QdrantUploader::new(
+            &config.qdrant.collection,
+            config.qdrant.url.as_deref(),
+            debug,
+            config.qdrant.get_max_upload_bytes(),
+        )?;
         match cleanup_uploader.remove_label_from_chunks(&label_id, &all_touched) {
             Ok(processed) => println!("  Processed {} chunks for label cleanup", processed),
             Err(e) => {
@@ -1530,7 +1653,12 @@ fn run_crawl_working_dir(
             .as_secs(),
     };
 
-    let uploader = QdrantUploader::new(&config.qdrant.collection, config.qdrant.url.as_deref())?;
+    let uploader = QdrantUploader::new(
+        &config.qdrant.collection,
+        config.qdrant.url.as_deref(),
+        debug,
+        config.qdrant.get_max_upload_bytes(),
+    )?;
     uploader.upsert_label_metadata(&metadata)?;
     if crawl_complete {
         println!("  Label metadata saved.");
@@ -1589,6 +1717,7 @@ fn run_search(
     limit: usize,
     label: Option<&str>,
     catalog: Option<&str>,
+    debug: bool,
 ) -> anyhow::Result<()> {
     // Resolve label ID from explicit flag or default context
     let (label_id, _, _) = resolve_label_id(label, catalog)?;
@@ -1598,7 +1727,12 @@ fn run_search(
     let embedding = embedder.encode(text, 0)?;
 
     // Query Qdrant with label filter
-    let uploader = QdrantUploader::new(&config.qdrant.collection, config.qdrant.url.as_deref())?;
+    let uploader = QdrantUploader::new(
+        &config.qdrant.collection,
+        config.qdrant.url.as_deref(),
+        debug,
+        config.qdrant.get_max_upload_bytes(),
+    )?;
 
     // Extract catalog from label_id (format: catalog:label)
     let catalog = label_id.split(':').next().unwrap_or("");
@@ -1739,6 +1873,7 @@ fn run_view(
     label: Option<&str>,
     show_full_paths: bool,
     chunks_only: bool,
+    debug: bool,
 ) -> anyhow::Result<()> {
     if id_specs.is_empty() {
         return Err(anyhow::anyhow!(
@@ -1757,7 +1892,12 @@ fn run_view(
     }
 
     // Query Qdrant
-    let uploader = QdrantUploader::new(&config.qdrant.collection, config.qdrant.url.as_deref())?;
+    let uploader = QdrantUploader::new(
+        &config.qdrant.collection,
+        config.qdrant.url.as_deref(),
+        debug,
+        config.qdrant.get_max_upload_bytes(),
+    )?;
 
     // Collect all results with their original selectors for display
     let mut all_results: Vec<(String, ChunkSelector, Vec<PointResult>)> = Vec::new();
@@ -1874,8 +2014,13 @@ fn run_view(
 }
 
 /// Run purge command (delete all chunks from a catalog or entire collection)
-fn run_purge(config: &Config, catalog: Option<&str>, all: bool) -> anyhow::Result<()> {
-    let uploader = QdrantUploader::new(&config.qdrant.collection, config.qdrant.url.as_deref())?;
+fn run_purge(config: &Config, catalog: Option<&str>, all: bool, debug: bool) -> anyhow::Result<()> {
+    let uploader = QdrantUploader::new(
+        &config.qdrant.collection,
+        config.qdrant.url.as_deref(),
+        debug,
+        config.qdrant.get_max_upload_bytes(),
+    )?;
 
     if all {
         println!(
@@ -2262,5 +2407,58 @@ mod tests {
 
         let config = load_config(&config_path).unwrap();
         assert_eq!(config.catalogs.get("sparo").unwrap().r#type, "monorepo");
+    }
+
+    #[test]
+    fn test_load_config_accepts_max_upload_bytes() {
+        let dir = tempdir().unwrap();
+        let config_path = dir.path().join("config.json");
+        let mut file = std::fs::File::create(&config_path).unwrap();
+
+        writeln!(
+            file,
+            r#"{{
+                "qdrant": {{ "collection": "test", "maxUploadBytes": 20971520 }},
+                "catalogs": {{
+                    "sparo": {{
+                        "type": "monorepo",
+                        "path": "/tmp/sparo"
+                    }}
+                }}
+            }}"#
+        )
+        .unwrap();
+
+        let config = load_config(&config_path).unwrap();
+        assert_eq!(config.qdrant.max_upload_bytes, Some(20971520));
+        assert_eq!(config.qdrant.get_max_upload_bytes(), 20971520);
+    }
+
+    #[test]
+    fn test_load_config_max_upload_bytes_defaults() {
+        let dir = tempdir().unwrap();
+        let config_path = dir.path().join("config.json");
+        let mut file = std::fs::File::create(&config_path).unwrap();
+
+        writeln!(
+            file,
+            r#"{{
+                "qdrant": {{ "collection": "test" }},
+                "catalogs": {{
+                    "sparo": {{
+                        "type": "monorepo",
+                        "path": "/tmp/sparo"
+                    }}
+                }}
+            }}"#
+        )
+        .unwrap();
+
+        let config = load_config(&config_path).unwrap();
+        assert_eq!(config.qdrant.max_upload_bytes, None);
+        assert_eq!(
+            config.qdrant.get_max_upload_bytes(),
+            30 * 1024 * 1024 // 30MB default
+        );
     }
 }

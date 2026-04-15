@@ -618,9 +618,84 @@ In `src/engine/git_ops.rs`:
 
 ---
 
-## Upcoming Features
+## Bug Fixes: Qdrant Upload Payload Limit
 
-These items represent valuable capabilities for future development phases, informed by the tool's stated goal of being the primary way an AI agent learns about a codebase.
+**Issue:** Qdrant has a 32MB payload limit for HTTP requests. Large batches (3700+ chunks) exceed this limit, causing HTTP 400 errors. The original error handling swallowed these errors and did not retry, resulting in data loss and confusing output.
+
+### BF.1 Add maxUploadBytes Config Setting ✅ COMPLETE
+
+- [x] Add `maxUploadBytes` field to the `qdrant` section in `~/.config/monodex/config.json`
+- [x] Default value: 30MB (30 * 1024 * 1024 bytes) if omitted
+- [x] Update `src/main.rs` to parse this field (added to `QdrantConfig` struct)
+- [x] Update JSON schema in `schemas/config.schema.json`
+- [x] Update unit test for config parsing to include this field
+
+### BF.2 Improve Upload Error Handling ✅ COMPLETE
+
+- [x] When Qdrant returns HTTP 400 with payload size error, abort the crawl immediately
+- [x] Print clear error message with Qdrant's original payload limit error message
+- [x] Terminate process with non-zero exit code (via error propagation, not process::exit)
+- [x] Remove the unconditional `accumulated.clear()` that loses data on upload failure
+- [x] Add `is_payload_limit_error()` helper to detect Qdrant payload limit errors
+- [x] Use `AtomicBool` flag for graceful shutdown instead of `std::process::exit`
+- [x] Test: Use the 3700-chunk threshold hack to reproduce, verify error is clear
+
+### BF.3 Implement Rewind Upload Algorithm ✅ COMPLETE
+
+**Goal:** Ensure all batches stay under `maxUploadBytes` by iteratively subdividing and uploading.
+
+**Algorithm (Rewind approach):**
+```
+fn upload_batch_with_rewind(points, max_bytes):
+    remaining = points
+    while remaining is not empty:
+        buffer = serialize(remaining)
+        if buffer.size <= max_bytes:
+            send buffer
+            return success  // all done
+        else:
+            // Rewind: don't send, split and upload first half recursively
+            mid = remaining.len() / 2
+            upload_batch_with_rewind(remaining[0..mid], max_bytes)
+            remaining = remaining[mid..]  // continue loop with remainder
+```
+
+**Example with 77 items (70MB total, 30MB limit):**
+1. Serialize 1..77 → 70MB → too big, rewind
+2. Serialize 1..38 → 36MB → too big, rewind
+3. Serialize 1..19 → 18MB → OK, upload 1..19
+4. Serialize 20..77 → 45MB → too big, rewind
+5. Serialize 20..48 → 22MB → OK, upload 20..48
+6. Serialize 49..77 → 24MB → OK, upload 49..77
+7. Done (3 uploads)
+
+**Key characteristics:**
+- After a successful upload, resume with ALL remaining items (not just the other half of the subtree)
+- Potentially fewer total uploads than pure recursive subdivision
+- Never sends a request exceeding the limit
+
+**Implementation:**
+- [x] Add `upload_batch_with_rewind` method to `QdrantUploader` (renamed to `upload_batch`)
+- [x] Pass `max_bytes` from config (or default 30MB)
+- [x] Serialize to `Vec<u8>` first, check size before sending
+- [x] Use `reqwest::Body::from(bytes)` to send pre-serialized data
+- [x] Log each sub-batch upload progress
+- [x] Update callers in `main.rs` to use new method
+- [x] Remove the 3700-chunk threshold hack from `main.rs` (none existed)
+
+### BF.4 Document New Setting ✅ COMPLETE
+
+- [x] Update README.md to document `maxUploadBytes` in the config file section
+- [x] Note that default is 30MB, which is safely under Qdrant's 32MB WAL limit
+- [x] Explain when users might need to adjust this (custom Qdrant config)
+
+### BF.5 Print Catalog+Label in Command Output
+
+Commands like `crawl`, `search`, and `view` should print their catalog and label concisely in the output so users know what they're operating on, especially when using the `monodex use` default.
+
+---
+
+## Upcoming Features
 
 ### MCP Server
 
@@ -674,6 +749,10 @@ Monodex currently does AST-aware chunking only for TypeScript/TSX. Other languag
 ---
 
 ## Notes
+
+### Pull Requests
+
+When making a pull request, add a bullet under "## Unreleased" in CHANGELOG.md describing the change from an end-user perspective. See CHANGELOG.md for the version history and publishing instructions.
 
 ### Dependencies
 

@@ -9,6 +9,12 @@ use serde::{Deserialize, Serialize};
 
 const DEFAULT_QDRANT_URL: &str = "http://localhost:6333";
 
+/// Check if an error response from Qdrant indicates a payload size limit error.
+/// These errors require batch subdivision and are not recoverable with retry.
+pub fn is_payload_limit_error(body: &str) -> bool {
+    body.contains("Payload error") && body.contains("larger than allowed")
+}
+
 /// Custom deserializer for active_label_ids that handles both formats:
 /// - Normal array: `["label1", "label2"]`
 /// - Qdrant values wrapper: `{"values": ["label1", "label2"]}`
@@ -62,6 +68,8 @@ pub struct QdrantUploader {
     client: Client,
     url: String,
     collection: String,
+    debug: bool,
+    max_upload_bytes: usize,
 }
 
 /// Request body for Qdrant upsert operation
@@ -223,7 +231,12 @@ pub struct SearchResult {
 
 impl QdrantUploader {
     /// Creates a new Qdrant uploader
-    pub fn new(collection: &str, qdrant_url: Option<&str>) -> Result<Self> {
+    pub fn new(
+        collection: &str,
+        qdrant_url: Option<&str>,
+        debug: bool,
+        max_upload_bytes: usize,
+    ) -> Result<Self> {
         let url = qdrant_url.unwrap_or(DEFAULT_QDRANT_URL).to_string();
 
         // Use a longer timeout to accommodate wait=true operations
@@ -236,6 +249,8 @@ impl QdrantUploader {
             client,
             url,
             collection: collection.to_string(),
+            debug,
+            max_upload_bytes,
         })
     }
 
@@ -402,85 +417,198 @@ impl QdrantUploader {
     }
 
     /// Uploads a batch of chunks with their embeddings
-    /// Uploads a batch of chunks with their embeddings
+    /// Uploads a batch of chunks with their embeddings using rewind algorithm.
     ///
     /// Uses the chunk's point_id() for deterministic IDs, enabling
     /// upsert-by-ID semantics for label membership updates.
+    ///
+    /// # Rewind Algorithm
+    ///
+    /// If a batch exceeds `max_upload_bytes`, it is split in half and the first half
+    /// is uploaded recursively. After successful upload, the algorithm continues with
+    /// ALL remaining chunks (not just the other half of the subtree), which may allow
+    /// fewer total uploads than pure recursive subdivision.
+    ///
+    /// # Example
+    ///
+    /// With 77 chunks (70MB total, 30MB limit):
+    /// 1. Serialize 1..77 → 70MB → too big, split
+    /// 2. Upload 1..38 recursively (may split further)
+    /// 3. Continue with 39..77 → 35MB → too big, split
+    /// 4. Upload 39..57 recursively
+    /// 5. Continue with 58..77 → uploads directly
+    /// 6. Done (potentially 3+ uploads)
     pub fn upload_batch(&self, chunks: &[(crate::engine::Chunk, Vec<f32>)]) -> Result<u64> {
         if chunks.is_empty() {
             return Ok(0);
         }
 
-        let points: Vec<Point> = chunks
+        let mut remaining: &[(_, _)] = chunks;
+        let mut last_operation_id: u64 = 0;
+        let mut batch_number: usize = 0;
+
+        while !remaining.is_empty() {
+            batch_number += 1;
+
+            // Build points from remaining chunks
+            let points = self.build_points(remaining);
+            let request_body = UpsertRequest { points };
+
+            // Serialize to check size before sending
+            let bytes = serde_json::to_vec(&request_body)?;
+
+            if bytes.len() <= self.max_upload_bytes {
+                // Fits within limit - upload directly
+                eprintln!(
+                    "[Batch {}] Uploading {} chunks ({} bytes / {:.1} MB)",
+                    batch_number,
+                    remaining.len(),
+                    bytes.len(),
+                    bytes.len() as f64 / (1024.0 * 1024.0)
+                );
+
+                last_operation_id = self.send_upload_batch(&bytes)?;
+                break;
+            }
+
+            // Batch exceeds limit - need to split
+            if remaining.len() == 1 {
+                // Fatal: single chunk exceeds limit (should never happen)
+                eprintln!();
+                eprintln!("═══════════════════════════════════════════════════════════════");
+                eprintln!("FATAL: Single chunk exceeds max_upload_bytes limit");
+                eprintln!();
+                eprintln!(
+                    "Chunk size: {} bytes ({:.1} MB)",
+                    bytes.len(),
+                    bytes.len() as f64 / (1024.0 * 1024.0)
+                );
+                eprintln!(
+                    "Limit: {} bytes ({:.1} MB)",
+                    self.max_upload_bytes,
+                    self.max_upload_bytes as f64 / (1024.0 * 1024.0)
+                );
+                eprintln!();
+                eprintln!("This is a bug - a single chunk should never exceed the upload limit.");
+                eprintln!("Please report this to the maintainers with the following details:");
+                eprintln!("  - File that caused this issue");
+                eprintln!("  - Approximate size of the file");
+                eprintln!("═══════════════════════════════════════════════════════════════");
+                return Err(anyhow!(
+                    "Single chunk ({} bytes) exceeds max_upload_bytes limit ({} bytes). This is a bug - please report to maintainers.",
+                    bytes.len(),
+                    self.max_upload_bytes
+                ));
+            }
+
+            // Rewind: split in half, upload first half recursively, continue with remainder
+            let mid = remaining.len() / 2;
+            eprintln!(
+                "[Batch {}] Batch too large ({} bytes / {:.1} MB > {:.1} MB limit), splitting {} chunks → {} + {}",
+                batch_number,
+                bytes.len(),
+                bytes.len() as f64 / (1024.0 * 1024.0),
+                self.max_upload_bytes as f64 / (1024.0 * 1024.0),
+                remaining.len(),
+                mid,
+                remaining.len() - mid
+            );
+
+            // Recursively upload first half
+            last_operation_id = self.upload_batch(&remaining[..mid])?;
+
+            // Continue loop with remainder
+            remaining = &remaining[mid..];
+        }
+
+        Ok(last_operation_id)
+    }
+
+    /// Build Point structs from chunks (helper for upload_batch)
+    fn build_points(&self, chunks: &[(crate::engine::Chunk, Vec<f32>)]) -> Vec<Point> {
+        chunks
             .iter()
-            .map(|(chunk, embedding)| {
-                Point {
-                    id: chunk.point_id(), // Deterministic ID based on file_id + chunk_ordinal
-                    vector: embedding.clone(),
-                    payload: PointPayload {
-                        text: chunk.text.clone(),
-                        source_type: chunk.source_type.clone(),
-
-                        // Label membership
-                        catalog: chunk.catalog.clone(),
-                        label_id: chunk.label_id.clone(),
-                        active_label_ids: chunk.active_label_ids.clone(),
-
-                        // Implementation identity
-                        embedder_id: chunk.embedder_id.clone(),
-                        chunker_id: chunk.chunker_id.clone(),
-
-                        // Provenance
-                        blob_id: chunk.blob_id.clone(),
-                        content_hash: chunk.content_hash.clone(),
-
-                        // File identity
-                        file_id: chunk.file_id.clone(),
-
-                        // Path context
-                        relative_path: chunk.relative_path.clone(),
-                        package_name: chunk.package_name.clone(),
-                        source_uri: chunk.source_uri.clone(),
-
-                        // Chunk metadata
-                        chunk_ordinal: chunk.chunk_ordinal,
-                        chunk_count: chunk.chunk_count,
-                        start_line: chunk.start_line,
-                        end_line: chunk.end_line,
-
-                        // Semantic context
-                        symbol_name: chunk.symbol_name.clone(),
-                        chunk_type: chunk.chunk_type.clone(),
-                        chunk_kind: chunk.chunk_kind.clone(),
-                        breadcrumb: Some(chunk.breadcrumb.clone()),
-
-                        // Sentinel
-                        file_complete: false,
-                    },
-                }
+            .map(|(chunk, embedding)| Point {
+                id: chunk.point_id(),
+                vector: embedding.clone(),
+                payload: PointPayload {
+                    text: chunk.text.clone(),
+                    source_type: chunk.source_type.clone(),
+                    catalog: chunk.catalog.clone(),
+                    label_id: chunk.label_id.clone(),
+                    active_label_ids: chunk.active_label_ids.clone(),
+                    embedder_id: chunk.embedder_id.clone(),
+                    chunker_id: chunk.chunker_id.clone(),
+                    blob_id: chunk.blob_id.clone(),
+                    content_hash: chunk.content_hash.clone(),
+                    file_id: chunk.file_id.clone(),
+                    relative_path: chunk.relative_path.clone(),
+                    package_name: chunk.package_name.clone(),
+                    source_uri: chunk.source_uri.clone(),
+                    chunk_ordinal: chunk.chunk_ordinal,
+                    chunk_count: chunk.chunk_count,
+                    start_line: chunk.start_line,
+                    end_line: chunk.end_line,
+                    symbol_name: chunk.symbol_name.clone(),
+                    chunk_type: chunk.chunk_type.clone(),
+                    chunk_kind: chunk.chunk_kind.clone(),
+                    breadcrumb: Some(chunk.breadcrumb.clone()),
+                    file_complete: false,
+                },
             })
-            .collect();
+            .collect()
+    }
 
-        let request_body = UpsertRequest { points };
-
-        // Use wait=true to ensure points are fully indexed before subsequent reads
-        // This prevents race conditions with mark_file_complete() and add_label_to_file_chunks()
+    /// Send pre-serialized upload batch to Qdrant (helper for upload_batch)
+    fn send_upload_batch(&self, bytes: &[u8]) -> Result<u64> {
         let endpoint = format!(
             "{}/collections/{}/points?wait=true",
             self.url, self.collection
         );
 
-        let response = self.client.put(&endpoint).json(&request_body).send()?;
+        if self.debug {
+            eprintln!("[DEBUG] Request endpoint: {}", endpoint);
+            eprintln!("[DEBUG] Request body size: {} bytes", bytes.len());
+        }
+
+        let response = self
+            .client
+            .put(&endpoint)
+            .body(bytes.to_vec())
+            .header("Content-Type", "application/json")
+            .send()?;
 
         if !response.status().is_success() {
+            let status = response.status();
+            let body = response
+                .text()
+                .unwrap_or_else(|_| "<unable to read body>".to_string());
+            if self.debug {
+                eprintln!("[DEBUG] Response status: {}", status);
+                eprintln!("[DEBUG] Response body: {}", body);
+            }
+
+            // Check for payload limit error
+            if is_payload_limit_error(&body) {
+                return Err(anyhow!("Qdrant payload limit exceeded: {}", body));
+            }
+
             return Err(anyhow!(
-                "Qdrant upsert failed with HTTP status: {}",
-                response.status()
+                "Qdrant upsert failed with HTTP status {}: {}",
+                status,
+                body
             ));
         }
 
-        // Parse response with error observability for malformed responses
         let response_text = response.text()?;
+
+        if self.debug {
+            eprintln!(
+                "[DEBUG] Response body (first 2000 chars): {}",
+                response_text.chars().take(2000).collect::<String>()
+            );
+        }
+
         let upsert_response: UpsertResponse = match serde_json::from_str(&response_text) {
             Ok(r) => r,
             Err(e) => {
@@ -1303,5 +1431,31 @@ mod tests {
         assert_eq!(upsert_point_id, get_point_id);
         assert_eq!(upsert_point_id.len(), 36);
         assert!(upsert_point_id.contains('-'));
+    }
+
+    #[test]
+    fn test_is_payload_limit_error_detects_qdrant_error() {
+        // Real Qdrant error response
+        let body = r#"{"status":{"error":"Payload error: JSON payload (36704120 bytes) is larger than allowed (limit: 33554432 bytes)."},"time":0.0}"#;
+        assert!(is_payload_limit_error(body));
+
+        // Also works with plain text format
+        let text = "Payload error: JSON payload (36704120 bytes) is larger than allowed (limit: 33554432 bytes).";
+        assert!(is_payload_limit_error(text));
+    }
+
+    #[test]
+    fn test_is_payload_limit_error_rejects_other_errors() {
+        // Connection error
+        let body = r#"{"status":{"error":"Connection refused"}}"#;
+        assert!(!is_payload_limit_error(body));
+
+        // Different payload error
+        let body = r#"{"status":{"error":"Invalid payload format"}}"#;
+        assert!(!is_payload_limit_error(body));
+
+        // Unrelated error
+        let body = r#"{"status":{"error":"Collection not found"}}"#;
+        assert!(!is_payload_limit_error(body));
     }
 }

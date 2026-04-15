@@ -13,12 +13,38 @@ use anyhow::Result;
 use hf_hub::{Repo, RepoType, api::sync::Api};
 use ort::session::{Session, builder::GraphOptimizationLevel};
 use ort::value::Tensor;
+use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
 use tokenizers::Tokenizer;
 
 const MODEL_ID: &str = "jinaai/jina-embeddings-v2-base-code";
 const MAX_LENGTH: usize = 8192;
 const HIDDEN_SIZE: usize = 768;
+
+/// Global cache for downloaded model files (prevents race conditions in parallel tests)
+static MODEL_CACHE: Mutex<Option<(PathBuf, PathBuf)>> = Mutex::new(None);
+
+/// Get or download the model files (thread-safe, only downloads once)
+fn get_model_files() -> Result<(PathBuf, PathBuf)> {
+    let mut cache = MODEL_CACHE.lock().unwrap();
+
+    if let Some(ref paths) = *cache {
+        return Ok(paths.clone());
+    }
+
+    // Download model files from HuggingFace (cached locally after first download)
+    let api = Api::new()?;
+    let repo = Repo::new(MODEL_ID.to_string(), RepoType::Model);
+    let api = api.repo(repo);
+
+    let tokenizer_path = api.get("tokenizer.json")?;
+    let onnx_path = api.get("onnx/model.onnx")?;
+
+    let paths = (tokenizer_path, onnx_path);
+    *cache = Some(paths.clone());
+
+    Ok(paths)
+}
 
 /// Configuration for parallel embedding
 pub struct ParallelConfig {
@@ -57,16 +83,11 @@ impl ParallelEmbedder {
 
     /// Create a new parallel embedder with custom configuration
     pub fn with_config(config: ParallelConfig) -> Result<Self> {
-        // Download model files from HuggingFace (cached locally after first download)
-        let api = Api::new()?;
-        let repo = Repo::new(MODEL_ID.to_string(), RepoType::Model);
-        let api = api.repo(repo);
-
-        let tokenizer_path = api.get("tokenizer.json")?;
-        let onnx_path = api.get("onnx/model.onnx")?;
+        // Get model files (cached globally, only downloads once)
+        let (tokenizer_path, onnx_path) = get_model_files()?;
 
         // Load base tokenizer (will be cloned for each worker)
-        let base_tokenizer = Tokenizer::from_file(&tokenizer_path)
+        let base_tokenizer = Tokenizer::from_file(tokenizer_path)
             .map_err(|e| anyhow::anyhow!("Failed to load tokenizer: {}", e))?;
 
         println!(

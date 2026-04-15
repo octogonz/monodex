@@ -736,7 +736,7 @@ fn upload_batch_with_rewind(points, max_bytes):
 
 Commands like `crawl`, `search`, and `view` should print their catalog and label concisely in the output so users know what they're operating on, especially when using the `monodex use` default.
 
-### BF.6 Require Explicit Label for Crawl Command ✅ IN PROGRESS
+### BF.6 Require Explicit Label for Crawl Command ✅ COMPLETE
 
 **Problem:** The current design allows `monodex crawl` to use the default context set by `monodex use`. This is dangerous for AI agents who might accidentally clobber an important label by running crawl without specifying intent.
 
@@ -750,31 +750,35 @@ Commands like `crawl`, `search`, and `view` should print their catalog and label
 - `--label` becomes **required** for `crawl` command (not optional)
 - `monodex use` sets defaults for **read-only** commands (`search`, `view`, `dump-chunks`)
 - The `--label` for crawl accepts just the label name (not `catalog:label`), taking catalog from saved context
-- Working directory becomes the default source (no flag needed)
-- `--commit` explicitly requests a specific commit
+- **Source must be explicit**: Either `--working-dir` OR `--commit` is required
+- No default source - crawling is expensive, users must be explicit about what they want
 
 **New CLI behavior:**
 ```bash
 # Valid:
-monodex crawl --label local              # Uses catalog from "use", crawls working dir
-monodex crawl --label local --commit HEAD # Uses catalog from "use", crawls HEAD
-monodex crawl --label main --commit abc123 # Specific commit
+monodex crawl --label local --working-dir    # Uses catalog from "use", crawls working dir
+monodex crawl --label local --commit HEAD    # Uses catalog from "use", crawls HEAD
+monodex crawl --label main --commit abc123   # Specific commit
 
 # Invalid:
-monodex crawl                            # Error: --label is required
+monodex crawl                                # Error: --label and source are required
+monodex crawl --label local                  # Error: must specify --working-dir or --commit
+monodex crawl --working-dir                  # Error: --label is required
 
 # "monodex use" still works for search/view:
 monodex use sparo local
-monodex search "query"                   # Uses sparo:local context
+monodex search "query"                       # Uses sparo:local context
 ```
 
 **Implementation:**
 - [x] Add design decision to DEV_PLAN.md
-- [ ] Update CLI argument parsing: make `--label` required for `crawl`
-- [ ] Change default source to working directory (remove `--commit` default of "HEAD")
-- [ ] Update `resolve_label_id` to require explicit label for crawl
-- [ ] Update README.md documentation
-- [ ] Test: verify `monodex crawl` without `--label` shows helpful error
+- [x] Update CLI argument parsing: make `--label` required for `crawl`
+- [x] Make source mutually required: `--working-dir` XOR `--commit` (both absent = error, both present = error)
+- [x] Remove default value from `--commit` argument
+- [x] Update `resolve_label_id` to require explicit label for crawl
+- [x] Update README.md documentation
+- [x] Test: verify `monodex crawl` without `--label` shows helpful error
+- [x] Test: verify `monodex crawl --label foo` without source shows helpful error
 
 ---
 

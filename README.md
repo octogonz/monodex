@@ -131,7 +131,7 @@ The collection uses:
 monodex --config /path/to/config.json search --text "query"
 
 # Enable verbose debug logging for network requests
-monodex --debug crawl --catalog myrepo --label main
+monodex --debug crawl --catalog myrepo --label main --commit HEAD
 
 # Show help for any command
 monodex --help
@@ -152,7 +152,7 @@ The `--debug` flag enables verbose logging for troubleshooting:
 Example:
 
 ```bash
-monodex --debug crawl --catalog sparo --label main
+monodex --debug crawl --catalog sparo --label main --commit HEAD
 ```
 
 ### Configuration
@@ -224,22 +224,24 @@ Default context is stored in `~/.config/monodex/context.json`. Explicit flags al
 ### Index a Repository
 
 ```bash
-# Index HEAD commit under the "main" label
-monodex crawl --catalog rushstack --label main
+# Index working directory changes
+monodex crawl --catalog rushstack --label working --working-dir
 
-# Index a specific commit or branch
+# Index HEAD commit under the "main" label
+monodex crawl --catalog rushstack --label main --commit HEAD
+
+# Index a specific branch
 monodex crawl --catalog rushstack --label feature-x --commit feature-branch
 
 # Index a specific commit SHA
 monodex crawl --catalog rushstack --label v1.0.0 --commit a1b2c3d4e5f6
-
-# Index uncommitted changes from the working directory
-monodex crawl --catalog rushstack --label working --working-dir
 ```
+
+**Required arguments:** The `crawl` command requires `--label` and either `--working-dir` or `--commit`. This prevents accidental overwrites of important labels.
 
 **Incremental sync:** The crawl is incremental — unchanged files are skipped. You can safely CTRL+C and resume later.
 
-**Commit-based:** Crawling reads from Git objects, not the working tree. Uncommitted changes are ignored. This ensures deterministic, reproducible indexing.
+**Commit-based:** Crawling with `--commit` reads from Git objects, not the working tree. This ensures deterministic, reproducible indexing.
 
 **Working directory mode:** Use `--working-dir` to index uncommitted changes. This reads directly from the filesystem instead of Git objects. The label metadata will show `source_kind = "working-directory"` and `commit_oid = ""`. Working directory labels are mutable — re-crawling updates the indexed content.
 
@@ -356,7 +358,7 @@ cargo test --workspace --all-targets --locked
 cargo build --release
 
 # Run with logging (use sparo for testing, not rushstack)
-RUST_LOG=debug ./target/release/monodex crawl --catalog sparo --label main
+RUST_LOG=debug ./target/release/monodex crawl --catalog sparo --label main --commit HEAD
 ```
 
 ## Architecture

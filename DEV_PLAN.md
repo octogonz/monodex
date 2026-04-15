@@ -736,6 +736,46 @@ fn upload_batch_with_rewind(points, max_bytes):
 
 Commands like `crawl`, `search`, and `view` should print their catalog and label concisely in the output so users know what they're operating on, especially when using the `monodex use` default.
 
+### BF.6 Require Explicit Label for Crawl Command ✅ IN PROGRESS
+
+**Problem:** The current design allows `monodex crawl` to use the default context set by `monodex use`. This is dangerous for AI agents who might accidentally clobber an important label by running crawl without specifying intent.
+
+**Example scenario:**
+1. `monodex use sparo main` → sets default to sparo:main
+2. Agent runs `monodex crawl` intending to index working directory
+3. But the label "main" was supposed to track the main branch, not working directory
+4. The label is now semantically corrupted (contains wrong content)
+
+**Design Change:**
+- `--label` becomes **required** for `crawl` command (not optional)
+- `monodex use` sets defaults for **read-only** commands (`search`, `view`, `dump-chunks`)
+- The `--label` for crawl accepts just the label name (not `catalog:label`), taking catalog from saved context
+- Working directory becomes the default source (no flag needed)
+- `--commit` explicitly requests a specific commit
+
+**New CLI behavior:**
+```bash
+# Valid:
+monodex crawl --label local              # Uses catalog from "use", crawls working dir
+monodex crawl --label local --commit HEAD # Uses catalog from "use", crawls HEAD
+monodex crawl --label main --commit abc123 # Specific commit
+
+# Invalid:
+monodex crawl                            # Error: --label is required
+
+# "monodex use" still works for search/view:
+monodex use sparo local
+monodex search "query"                   # Uses sparo:local context
+```
+
+**Implementation:**
+- [x] Add design decision to DEV_PLAN.md
+- [ ] Update CLI argument parsing: make `--label` required for `crawl`
+- [ ] Change default source to working directory (remove `--commit` default of "HEAD")
+- [ ] Update `resolve_label_id` to require explicit label for crawl
+- [ ] Update README.md documentation
+- [ ] Test: verify `monodex crawl` without `--label` shows helpful error
+
 ---
 
 ## Upcoming Features

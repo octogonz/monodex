@@ -618,6 +618,49 @@ In `src/engine/git_ops.rs`:
 
 ---
 
+## Bug Fixes: Working Directory Hash Incompatibility
+
+**Issue:** The `--working-dir` feature uses a different content hash format than Git commit crawls, preventing incremental skipping between the two modes. The same file with identical content will have different `file_id` values, resulting in duplicate chunks stored in Qdrant and wasted embedding compute.
+
+**Root Cause Analysis:**
+
+The `file_id` is computed as:
+```
+file_id = xxhash(embedder_id + chunker_id + blob_id + relative_path)
+```
+
+The `blob_id` component differs by crawl source:
+
+| Source | Hash Format | Example |
+|--------|-------------|---------|
+| Git commit crawl | Git blob SHA-1 (40 hex chars) | `8aba78c0c132f6f0adc6fe28dd6818966087ec05` |
+| Working directory crawl | SHA-256 with prefix | `sha256:a1b2c3d4...` (64 hex chars + prefix) |
+
+**Code Locations:**
+- `monodex/src/engine/git_ops.rs:84-140` - `enumerate_commit_tree()` returns `FileEntry { blob_id }` where `blob_id` is Git's 40-char hex SHA-1
+- `monodex/src/engine/git_ops.rs:260-310` - `enumerate_working_directory()` returns `WorkingDirEntry { content_hash }` where `content_hash` is `sha256:...` format
+- `monodex/src/engine/git_ops.rs:317-324` - `compute_content_hash()` computes SHA-256 with `sha256:` prefix
+- `monodex/src/engine/util.rs:32-46` - `compute_file_id()` uses `blob_id` as input
+- `monodex/src/main.rs:1465` - Working dir uses `content_hash` as `blob_id` parameter
+
+**Fix Options:**
+1. Change `compute_content_hash()` to compute Git-compatible blob SHA-1 (format: `sha1("blob <size>\0<content>")`)
+2. Compute both hashes and use the Git blob SHA-1 as the `blob_id` for `file_id` computation only
+
+**Impact:**
+- No incremental skipping between commit and working-dir crawls
+- Duplicate chunks stored for same content
+- Wasted embedding API calls
+
+### BF.WD.1 Use Git-Compatible Blob Hash for Working Directory
+
+- [ ] Change `compute_content_hash()` to output Git blob SHA-1 format (40 hex chars, no prefix)
+- [ ] Update `WorkingDirEntry` field name from `content_hash` to `blob_id` for consistency
+- [ ] Test: crawl HEAD, then crawl --working-dir with no changes, verify 0 new files indexed
+- [ ] Test: crawl HEAD, make a change, crawl --working-dir, verify only changed file indexed
+
+---
+
 ## Bug Fixes: Qdrant Upload Payload Limit
 
 **Issue:** Qdrant has a 32MB payload limit for HTTP requests. Large batches (3700+ chunks) exceed this limit, causing HTTP 400 errors. The original error handling swallowed these errors and did not retry, resulting in data loss and confusing output.
@@ -692,6 +735,50 @@ fn upload_batch_with_rewind(points, max_bytes):
 ### BF.5 Print Catalog+Label in Command Output
 
 Commands like `crawl`, `search`, and `view` should print their catalog and label concisely in the output so users know what they're operating on, especially when using the `monodex use` default.
+
+### BF.6 Require Explicit Label for Crawl Command ✅ COMPLETE
+
+**Problem:** The current design allows `monodex crawl` to use the default context set by `monodex use`. This is dangerous for AI agents who might accidentally clobber an important label by running crawl without specifying intent.
+
+**Example scenario:**
+1. `monodex use sparo main` → sets default to sparo:main
+2. Agent runs `monodex crawl` intending to index working directory
+3. But the label "main" was supposed to track the main branch, not working directory
+4. The label is now semantically corrupted (contains wrong content)
+
+**Design Change:**
+- `--label` becomes **required** for `crawl` command (not optional)
+- `monodex use` sets defaults for **read-only** commands (`search`, `view`, `dump-chunks`)
+- The `--label` for crawl accepts just the label name (not `catalog:label`), taking catalog from saved context
+- **Source must be explicit**: Either `--working-dir` OR `--commit` is required
+- No default source - crawling is expensive, users must be explicit about what they want
+
+**New CLI behavior:**
+```bash
+# Valid:
+monodex crawl --label local --working-dir    # Uses catalog from "use", crawls working dir
+monodex crawl --label local --commit HEAD    # Uses catalog from "use", crawls HEAD
+monodex crawl --label main --commit abc123   # Specific commit
+
+# Invalid:
+monodex crawl                                # Error: --label and source are required
+monodex crawl --label local                  # Error: must specify --working-dir or --commit
+monodex crawl --working-dir                  # Error: --label is required
+
+# "monodex use" still works for search/view:
+monodex use sparo local
+monodex search "query"                       # Uses sparo:local context
+```
+
+**Implementation:**
+- [x] Add design decision to DEV_PLAN.md
+- [x] Update CLI argument parsing: make `--label` required for `crawl`
+- [x] Make source mutually required: `--working-dir` XOR `--commit` (both absent = error, both present = error)
+- [x] Remove default value from `--commit` argument
+- [x] Update `resolve_label_id` to require explicit label for crawl
+- [x] Update README.md documentation
+- [x] Test: verify `monodex crawl` without `--label` shows helpful error
+- [x] Test: verify `monodex crawl --label foo` without source shows helpful error
 
 ---
 

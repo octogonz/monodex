@@ -5,7 +5,7 @@
 
 mod engine;
 
-use clap::{Parser, Subcommand};
+use clap::{Args, Parser, Subcommand};
 use crossbeam_channel::{Receiver, Sender};
 use engine::{
     ParallelEmbedder, SMALL_CHUNK_CHARS,
@@ -194,22 +194,14 @@ enum Commands {
         #[arg(long)]
         catalog: Option<String>,
 
-        /// Label name for this crawl (e.g., "main", "feature-x")
-        /// Uses default context if not provided.
+        /// Label name for this crawl (e.g., "main", "feature-x", "local")
+        /// REQUIRED: Must be explicitly specified to avoid accidental overwrites.
         /// Label ID will be computed as <catalog>:<label>
         #[arg(long)]
-        label: Option<String>,
+        label: String,
 
-        /// Git commit to crawl (defaults to HEAD)
-        /// Supports branch names, tags, or commit SHA
-        /// Mutually exclusive with --working-dir
-        #[arg(long, default_value = "HEAD", conflicts_with = "working_dir")]
-        commit: String,
-
-        /// Crawl the working directory instead of a Git commit.
-        /// Indexes uncommitted changes. Mutually exclusive with --commit.
-        #[arg(long, default_value_t = false, conflicts_with = "commit")]
-        working_dir: bool,
+        #[command(flatten)]
+        source: CrawlSourceArgs,
 
         /// Allow files with chunking warnings to participate in incremental skipping
         #[arg(long, default_value_t = false)]
@@ -311,6 +303,21 @@ enum Commands {
         #[arg(long)]
         dir: String,
     },
+}
+
+/// Source specification for crawl command.
+/// One of --commit or --working-dir is required.
+#[derive(Args, Clone, Debug)]
+#[group(required = true, multiple = false)]
+struct CrawlSourceArgs {
+    /// Git commit to crawl (branch name, tag, or commit SHA)
+    #[arg(long)]
+    commit: Option<String>,
+
+    /// Crawl the working directory instead of a Git commit.
+    /// Indexes uncommitted changes.
+    #[arg(long)]
+    working_dir: bool,
 }
 
 const DEFAULT_CONFIG_PATH: &str = "~/.config/monodex/config.json";
@@ -463,15 +470,14 @@ fn main() -> anyhow::Result<()> {
         Commands::Crawl {
             catalog,
             label,
-            commit,
-            working_dir,
+            source,
             incremental_warnings,
         } => {
             // Resolve label ID from explicit flags or default context
             let (_label_id, catalog_name, label_name) =
-                resolve_label_id(label.as_deref(), catalog.as_deref())?;
+                resolve_label_id(Some(&label), catalog.as_deref())?;
 
-            if working_dir {
+            if source.working_dir {
                 run_crawl_working_dir(
                     &config,
                     &catalog_name,
@@ -480,11 +486,12 @@ fn main() -> anyhow::Result<()> {
                     cli.debug,
                 )?;
             } else {
+                // Safe to unwrap: clap ArgGroup ensures one of commit/working_dir is set
                 run_crawl_label(
                     &config,
                     &catalog_name,
                     &label_name,
-                    &commit,
+                    source.commit.as_ref().unwrap(),
                     incremental_warnings,
                     cli.debug,
                 )?;

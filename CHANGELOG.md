@@ -14,6 +14,18 @@ When ready to publish:
 4. Update the "last generated" date above
 5. Remove this comment block (it will be re-added by the next PR)
 
+### Breaking changes
+
+- **crawl command now requires explicit source**: Must specify `--label` AND either `--working-dir` OR `--commit`
+  - Previously: `monodex crawl --catalog myrepo --label main` (defaulted to HEAD)
+  - Now: `monodex crawl --catalog myrepo --label main --commit HEAD`
+  - This prevents accidental overwrites of labels and makes crawl intent explicit
+  - CLI now shows proper usage: `monodex crawl --label <LABEL> <--commit <COMMIT>|--working-dir>`
+
+### Bug fixes
+
+- Document working directory hash incompatibility: `--working-dir` uses SHA-256 while `--commit` uses Git blob SHA-1, preventing incremental skipping between modes (fix pending)
+
 ## X.Y.Z
 -->
 

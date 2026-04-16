@@ -30,6 +30,7 @@ pub struct ResolvedEmbeddingConfig {
     /// Available RAM at startup (for warnings)
     pub available_ram: u64,
     /// Estimated RAM usage for the embedding process
+    #[allow(dead_code)]
     pub estimated_ram_usage: u64,
     /// Whether cgroup limits were detected (Linux only)
     pub cgroup_limited: bool,

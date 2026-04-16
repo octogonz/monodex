@@ -255,7 +255,7 @@ impl<'de> serde::Deserialize<'de> for EmbeddingSizeValue {
 struct Config {
     qdrant: QdrantConfig,
     catalogs: HashMap<String, CatalogConfig>,
-    #[serde(default)]
+    #[serde(rename = "embeddingModel", default)]
     embedding_model: EmbeddingModelConfig,
 }
 
@@ -798,21 +798,29 @@ fn resolve_embedding_config(config: &EmbeddingModelConfig) -> (usize, usize) {
 }
 
 /// Print memory status and warning if estimated usage exceeds available RAM.
-fn print_memory_warning() {
+/// Uses the resolved model_instances value to compute an accurate estimate.
+fn print_memory_warning(model_instances: usize) {
     match compute_auto_embedding_config() {
         Ok(info) => {
+            // Compute estimate based on actual resolved config, not auto-detected defaults
+            let per_instance_ram: u64 = 2 * 1024 * 1024 * 1024 + 512 * 1024 * 1024; // 2.5 GiB
+            let baseline: u64 = 512 * 1024 * 1024; // 0.5 GiB overhead
+            let estimated_usage = (model_instances as u64) * per_instance_ram + baseline;
+
             println!(
                 "Currently available system RAM: {}",
                 format_bytes(info.available_ram)
             );
             println!(
-                "Estimated embedding RAM usage: {}",
-                format_bytes(info.estimated_ram_usage)
+                "Estimated embedding RAM usage: {} ({} instance{})",
+                format_bytes(estimated_usage),
+                model_instances,
+                if model_instances > 1 { "s" } else { "" }
             );
 
-            if info.estimated_ram_usage > info.available_ram {
+            if estimated_usage > info.available_ram {
                 let excess_pct =
-                    ((info.estimated_ram_usage as f64 / info.available_ram as f64) - 1.0) * 100.0;
+                    ((estimated_usage as f64 / info.available_ram as f64) - 1.0) * 100.0;
                 eprintln!();
                 eprintln!(
                     "🚨 Warning: estimate exceeds available RAM by {:.0}%.",
@@ -867,7 +875,7 @@ fn run_embed_upload_pipeline(
     let (model_instances, threads_per_instance) = resolve_embedding_config(embedding_config);
 
     // Print memory warning before embedding
-    print_memory_warning();
+    print_memory_warning(model_instances);
 
     // Initialize parallel embedder with resolved config
     let embedder = ParallelEmbedder::with_config(engine::ParallelConfig {

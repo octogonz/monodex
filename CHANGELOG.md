@@ -27,7 +27,12 @@ Subsubheadings must be one of: Added, Changed, Fixed, Deprecated, Removed, Secur
 ### Added
 
 - **Deterministic embedding memory control**: The `embeddingModel` config section now supports `"auto"` values for `modelInstances` and `threadsPerInstance`, which are computed deterministically from system properties (total RAM, CPU cores, and Linux cgroup limits). This prevents OOM failures on memory-constrained machines while maximizing parallelism on capable hardware.
-- **Startup memory warning**: Before embedding begins, monodex prints available RAM and estimated usage. If the estimate exceeds available RAM, a warning suggests adjusting config values.
+- **Startup memory warning**: Before embedding begins, monodex prints available RAM and estimated usage (based on resolved config). If the estimate exceeds available RAM, a warning suggests adjusting config values.
+
+### Fixed
+
+- **Config field mapping**: The `embeddingModel` field in `config.json` is now correctly mapped to the Rust struct via `#[serde(rename = "embeddingModel")]`. Previously, this field was silently ignored due to snake_case/camelCase mismatch.
+- **Memory warning accuracy**: The memory warning now uses the resolved embedding config (after applying user settings) rather than auto-detected defaults, ensuring accurate estimates.
 
 ## 0.3.0 (2026-04-16)
 

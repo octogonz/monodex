@@ -1097,7 +1097,8 @@ fn run_crawl_label(
     println!("⚡ Phase 1: Checking existing chunks and collecting new files...");
 
     let mut new_files: Vec<(String, String)> = Vec::new(); // (relative_path, blob_id)
-    let mut existing_files: HashSet<String> = HashSet::new();
+    let mut existing_files_needing_label: HashSet<String> = HashSet::new(); // Files that exist but don't have this label
+    let mut existing_files_already_labeled: HashSet<String> = HashSet::new(); // Files that already have this label
     let mut new_count = 0;
     let mut existing_count = 0;
 
@@ -1111,9 +1112,15 @@ fn run_crawl_label(
 
         // Check if sentinel exists
         match uploader.get_file_sentinel(&file_id) {
-            Ok(Some(_)) => {
-                // File already indexed - just need to add label
-                existing_files.insert(file_id);
+            Ok(Some(sync_info)) => {
+                // File already indexed - check if it already has this label
+                if sync_info.active_label_ids.contains(&label_id) {
+                    // Already has the label - no action needed, but mark as touched for cleanup
+                    existing_files_already_labeled.insert(file_id);
+                } else {
+                    // Needs label added
+                    existing_files_needing_label.insert(file_id);
+                }
                 existing_count += 1;
             }
             Ok(None) => {
@@ -1134,19 +1141,25 @@ fn run_crawl_label(
 
     println!("  New files to index: {}", new_count);
     println!("  Existing files (label update only): {}", existing_count);
+    if !existing_files_already_labeled.is_empty() {
+        println!(
+            "  Existing files already labeled: {} (skipping)",
+            existing_files_already_labeled.len()
+        );
+    }
     println!();
 
-    // Step 5: Add label to existing files
+    // Step 5: Add label to existing files that need it
     // Track files that successfully got the label added
     // Also track failures for A.1 - existing file label-add failures must count toward crawl failure
     let mut label_add_success_files: HashSet<String> = HashSet::new();
     let mut existing_file_label_add_failures: Vec<String> = Vec::new();
-    if !existing_files.is_empty() {
+    if !existing_files_needing_label.is_empty() {
         println!(
             "🏷️  Adding label to {} existing files...",
-            existing_files.len()
+            existing_files_needing_label.len()
         );
-        for file_id in &existing_files {
+        for file_id in &existing_files_needing_label {
             if let Err(e) = uploader.add_label_to_file_chunks(file_id, &label_id) {
                 eprintln!("  ❌ Failed to add label to file {}: {}", file_id, e);
                 existing_file_label_add_failures.push(format!("{}: {}", file_id, e));
@@ -1164,8 +1177,11 @@ fn run_crawl_label(
         }
         println!();
     }
-    // Replace existing_files with only the successful ones for cleanup logic
-    let existing_files: HashSet<String> = label_add_success_files;
+    // Combine successfully labeled files with already-labeled files for cleanup logic
+    let existing_files: HashSet<String> = label_add_success_files
+        .union(&existing_files_already_labeled)
+        .cloned()
+        .collect();
 
     // Step 6: Index new files
     let mut all_chunks: Vec<engine::Chunk> = Vec::new();
@@ -1464,7 +1480,8 @@ fn run_crawl_working_dir(
     println!("⚡ Phase 1: Checking existing chunks and collecting new files...");
 
     let mut new_files: Vec<(String, String)> = Vec::new(); // (relative_path, blob_id)
-    let mut existing_files: HashSet<String> = HashSet::new();
+    let mut existing_files_needing_label: HashSet<String> = HashSet::new(); // Files that exist but don't have this label
+    let mut existing_files_already_labeled: HashSet<String> = HashSet::new(); // Files that already have this label
     let mut new_count = 0;
     let mut existing_count = 0;
 
@@ -1477,8 +1494,15 @@ fn run_crawl_working_dir(
         );
 
         match uploader.get_file_sentinel(&file_id) {
-            Ok(Some(_)) => {
-                existing_files.insert(file_id);
+            Ok(Some(sync_info)) => {
+                // File already indexed - check if it already has this label
+                if sync_info.active_label_ids.contains(&label_id) {
+                    // Already has the label - no action needed, but mark as touched for cleanup
+                    existing_files_already_labeled.insert(file_id);
+                } else {
+                    // Needs label added
+                    existing_files_needing_label.insert(file_id);
+                }
                 existing_count += 1;
             }
             Ok(None) => {
@@ -1498,18 +1522,24 @@ fn run_crawl_working_dir(
 
     println!("  New files to index: {}", new_count);
     println!("  Existing files (label update only): {}", existing_count);
+    if !existing_files_already_labeled.is_empty() {
+        println!(
+            "  Existing files already labeled: {} (skipping)",
+            existing_files_already_labeled.len()
+        );
+    }
     println!();
 
-    // Add label to existing files
+    // Add label to existing files that need it
     // A.1/A.3: Track files that successfully got the label added, and track failures
     let mut label_add_success_files: HashSet<String> = HashSet::new();
     let mut existing_file_label_add_failures: Vec<String> = Vec::new();
-    if !existing_files.is_empty() {
+    if !existing_files_needing_label.is_empty() {
         println!(
             "🏷️  Adding label to {} existing files...",
-            existing_files.len()
+            existing_files_needing_label.len()
         );
-        for file_id in &existing_files {
+        for file_id in &existing_files_needing_label {
             if let Err(e) = uploader.add_label_to_file_chunks(file_id, &label_id) {
                 eprintln!("  ❌ Failed to add label to file {}: {}", file_id, e);
                 existing_file_label_add_failures.push(format!("{}: {}", file_id, e));
@@ -1526,8 +1556,11 @@ fn run_crawl_working_dir(
         }
         println!();
     }
-    // Replace existing_files with only the successful ones
-    let existing_files: HashSet<String> = label_add_success_files;
+    // Combine successfully labeled files with already-labeled files for cleanup logic
+    let existing_files: HashSet<String> = label_add_success_files
+        .union(&existing_files_already_labeled)
+        .cloned()
+        .collect();
 
     // Step 6: Index new files
     let mut all_chunks: Vec<engine::Chunk> = Vec::new();

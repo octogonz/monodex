@@ -43,8 +43,8 @@ Otherwise:
 
 This optimization must be applied to **both** crawl entry points:
 
-- [ ] Update git-commit crawl path to skip relabeling when sentinel already has target label
-- [ ] Update working-directory crawl path to skip relabeling when sentinel already has target label
+- [x] Update git-commit crawl path to skip relabeling when sentinel already has target label
+- [x] Update working-directory crawl path to skip relabeling when sentinel already has target label
 
 The two paths currently contain near-duplicate logic and both must be updated.
 
@@ -62,14 +62,14 @@ The sentinel must only be labeled **after all other chunks** of the file are lab
 
 The skip decision uses `get_file_sentinel`, whose return type is `FileSyncInfo`.
 
-- [ ] Extend `FileSyncInfo` struct to include `active_label_ids: Vec<String>`
+- [x] Extend `FileSyncInfo` struct to include `active_label_ids: Vec<String>`
 
 This data is needed in the crawl paths to decide whether relabeling can be skipped.
 
 This is a struct/plumbing change, not a new network request: `get_file_sentinel` already fetches enough payload to return this data.
 
-- [ ] Wire the updated `FileSyncInfo` through git-commit crawl path
-- [ ] Wire the updated `FileSyncInfo` through working-directory crawl path
+- [x] Wire the updated `FileSyncInfo` through git-commit crawl path
+- [x] Wire the updated `FileSyncInfo` through working-directory crawl path
 
 ---
 
@@ -81,11 +81,11 @@ The current implementation processes chunks in this order, which does **not** gu
 
 Therefore, `add_label_to_file_chunks` must:
 
-- [ ] Collect all chunks for a file
-- [ ] Partition them into:
+- [x] Collect all chunks for a file
+- [x] Partition them into:
   - non-sentinel chunks
   - sentinel chunk
-- [ ] Apply updates in two phases:
+- [x] Apply updates in two phases:
   1. label all non-sentinel chunks
   2. label the sentinel chunk last
 
@@ -105,7 +105,7 @@ Alternative (if needed):
 
 - `chunk_ordinal == 1`
 
-- [ ] Update scroll payload in `add_label_to_file_chunks` to include `file_complete` (preferred) or `chunk_ordinal`
+- [x] Update scroll payload in `add_label_to_file_chunks` to include `file_complete` (preferred) or `chunk_ordinal`
 
 ---
 
@@ -115,7 +115,7 @@ The current scroll payload struct used by `add_label_to_file_chunks` (`LabelPayl
 
 - `active_label_ids`
 
-- [ ] Extend `LabelPayload` to include `file_complete: bool` (preferred) or `chunk_ordinal: usize`
+- [x] Extend `LabelPayload` to include `file_complete: bool` (preferred) or `chunk_ordinal: usize`
 
 so that the sentinel can be identified and updated last.
 
@@ -409,7 +409,7 @@ After this change:
 - [ ] Test `"auto"` config on Linux with cgroup limits
 - [ ] Test explicit integer values for `modelInstances` and `threadsPerInstance`
 - [ ] Verify memory warning prints when estimate exceeds available
-- [ ] Verify incremental relabeling skips files that already have the label
-- [ ] Verify sentinel is labeled last in `add_label_to_file_chunks`
+- [x] Verify incremental relabeling skips files that already have the label
+- [x] Verify sentinel is labeled last in `add_label_to_file_chunks`
 - [ ] Verify upload flush triggers on accumulated bytes threshold
 - [ ] End-to-end crawl with new config on sparo catalog

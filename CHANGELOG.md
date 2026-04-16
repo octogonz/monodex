@@ -1,6 +1,6 @@
 # Change Log - monodex
 
-This log was last updated on Mon, 14 Apr 2026 15:16:00 GMT.
+This log was last updated on Wed, 16 Apr 2026 17:50:00 GMT.
 
 <!--
 PUBLISHING INSTRUCTIONS (DO NOT MODIFY):
@@ -22,7 +22,7 @@ PUBLISHING INSTRUCTIONS (DO NOT MODIFY):
 Subsubheadings must be one of: Added, Changed, Fixed, Deprecated, Removed, Security
 -->
 
-## Unreleased
+## 0.3.0 (2026-04-16)
 
 ### Changed
 

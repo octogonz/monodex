@@ -2,6 +2,7 @@
 name = "monodex"
 version = "0.3.0"
 edition = "2024"
+rust-version = "1.93"
 description = "Semantic search indexer for Rush monorepos using Qdrant vector database"
 license = "MIT"
 repository = "https://github.com/microsoft/monodex"

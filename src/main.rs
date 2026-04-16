@@ -817,6 +817,10 @@ fn run_embed_upload_pipeline(
 
     let uploader_thread = std::thread::spawn(move || {
         let mut accumulated: Vec<(engine::Chunk, Vec<f32>)> = Vec::new();
+        let mut accumulated_bytes: usize = 0;
+        // Use the same limit as max_upload_bytes for now
+        // These are separate concepts even if they share the same value
+        let max_accumulated_bytes: usize = uploader_clone.lock().unwrap().max_upload_bytes();
         let mut expected_count: HashMap<String, usize> = HashMap::new();
         let mut uploaded_count: HashMap<String, usize> = HashMap::new();
 
@@ -831,6 +835,7 @@ fn run_embed_upload_pipeline(
                 }
             };
 
+            // Drain embedding results and track accumulated size
             while let Ok(embedded) = embed_rx.try_recv() {
                 let file_id = embedded.0.file_id.clone();
                 if let std::collections::hash_map::Entry::Vacant(e) =
@@ -838,10 +843,26 @@ fn run_embed_upload_pipeline(
                 {
                     e.insert(embedded.0.chunk_count);
                 }
+                // Estimate serialized size for accumulation tracking
+                let size = QdrantUploader::estimate_serialized_size(&embedded.0, &embedded.1);
+                accumulated_bytes += size;
                 accumulated.push(embedded);
             }
 
-            if should_upload {
+            // Flush when time threshold OR size threshold is reached
+            let should_flush_by_size = accumulated_bytes >= max_accumulated_bytes;
+            if should_flush_by_size && !accumulated.is_empty() {
+                eprintln!(
+                    "[{}] Accumulated {} bytes ({:.1} MB) >= limit ({:.1} MB), flushing {} chunks...",
+                    chrono_timestamp(),
+                    accumulated_bytes,
+                    accumulated_bytes as f64 / (1024.0 * 1024.0),
+                    max_accumulated_bytes as f64 / (1024.0 * 1024.0),
+                    accumulated.len()
+                );
+            }
+
+            if should_upload || should_flush_by_size {
                 let count = accumulated.len();
                 eprintln!(
                     "[{}] Uploading checkpoint ({} chunks)...",
@@ -885,6 +906,7 @@ fn run_embed_upload_pipeline(
                             }
                         }
                         accumulated.clear(); // Clear even on non-fatal error to avoid re-upload loop
+                        accumulated_bytes = 0;
                     }
                     Ok(_) => {
                         let mut files_in_batch: HashMap<String, usize> = HashMap::new();
@@ -927,6 +949,7 @@ fn run_embed_upload_pipeline(
                             }
                         }
                         accumulated.clear();
+                        accumulated_bytes = 0;
                     }
                 }
             }

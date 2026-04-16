@@ -254,6 +254,11 @@ impl QdrantUploader {
         })
     }
 
+    /// Get the max upload bytes limit
+    pub fn max_upload_bytes(&self) -> usize {
+        self.max_upload_bytes
+    }
+
     /// Delete all points for a specific catalog
     #[allow(dead_code)]
     pub fn delete_catalog(&self, catalog: &str) -> Result<u64> {
@@ -558,6 +563,45 @@ impl QdrantUploader {
                 },
             })
             .collect()
+    }
+
+    /// Estimate the serialized JSON size of a single chunk with its embedding.
+    /// This is used for accumulation tracking in the uploader thread.
+    /// The estimate does not need to be exact, just reasonably accurate.
+    pub fn estimate_serialized_size(chunk: &crate::engine::Chunk, embedding: &[f32]) -> usize {
+        // Build a single point to measure
+        let point = Point {
+            id: chunk.point_id(),
+            vector: embedding.to_vec(),
+            payload: PointPayload {
+                text: chunk.text.clone(),
+                source_type: chunk.source_type.clone(),
+                catalog: chunk.catalog.clone(),
+                label_id: chunk.label_id.clone(),
+                active_label_ids: chunk.active_label_ids.clone(),
+                embedder_id: chunk.embedder_id.clone(),
+                chunker_id: chunk.chunker_id.clone(),
+                blob_id: chunk.blob_id.clone(),
+                content_hash: chunk.content_hash.clone(),
+                file_id: chunk.file_id.clone(),
+                relative_path: chunk.relative_path.clone(),
+                package_name: chunk.package_name.clone(),
+                source_uri: chunk.source_uri.clone(),
+                chunk_ordinal: chunk.chunk_ordinal,
+                chunk_count: chunk.chunk_count,
+                start_line: chunk.start_line,
+                end_line: chunk.end_line,
+                symbol_name: chunk.symbol_name.clone(),
+                chunk_type: chunk.chunk_type.clone(),
+                chunk_kind: chunk.chunk_kind.clone(),
+                breadcrumb: Some(chunk.breadcrumb.clone()),
+                file_complete: false,
+            },
+        };
+
+        // Serialize to get the actual size
+        // This includes the JSON overhead (braces, quotes, etc.)
+        serde_json::to_vec(&point).map(|v| v.len()).unwrap_or(0)
     }
 
     /// Send pre-serialized upload batch to Qdrant (helper for upload_batch)

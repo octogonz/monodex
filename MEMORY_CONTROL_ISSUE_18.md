@@ -195,8 +195,8 @@ Two distinct limits must exist:
   - limits how much upload data Monodex holds in memory
   - protects Monodex process memory
 
-- [ ] Add `maxAccumulatedUploadBytes` constant/variable to uploader thread
-- [ ] Initially set `maxAccumulatedUploadBytes = qdrant.maxUploadBytes`
+- [x] Add `maxAccumulatedUploadBytes` constant/variable to uploader thread
+- [x] Initially set `maxAccumulatedUploadBytes = qdrant.maxUploadBytes`
 
 These must remain separate variables in code, even if they currently share the same value.
 
@@ -237,17 +237,17 @@ This ensures the limit is **global**, not per worker.
 
 ### Flush Conditions
 
-- [ ] Flush when time threshold is reached (existing behavior)
-- [ ] Flush when estimated accumulated serialized bytes >= `maxAccumulatedUploadBytes`
+- [x] Flush when time threshold is reached (existing behavior)
+- [x] Flush when estimated accumulated serialized bytes >= `maxAccumulatedUploadBytes`
 
 ---
 
 ### Estimation
 
-- [ ] Keep byte estimate in uploader thread alongside global accumulated queue
-- [ ] Update estimate as items are drained from embedding results channel
-- [ ] Estimate serialized size using same point/payload shape used for actual upload request
-- [ ] Estimate does not need to be exact
+- [x] Keep byte estimate in uploader thread alongside global accumulated queue
+- [x] Update estimate as items are drained from embedding results channel
+- [x] Estimate serialized size using same point/payload shape used for actual upload request
+- [x] Estimate does not need to be exact
 
 This estimate should be based on the actual upload structure built in `uploader.rs`, not on raw chunk size alone.
 

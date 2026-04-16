@@ -70,7 +70,7 @@ impl CrawlSource {
 #[derive(Debug, Clone)]
 struct CrawlFileEntry {
     relative_path: String,
-    content_hash: String, // blob_id for git, content_hash for working dir
+    blob_id: String,
 }
 
 /// Failure tracking for crawl pipeline
@@ -1463,17 +1463,16 @@ fn run_crawl_working_dir(
     // Check for existing chunks and collect new files
     println!("⚡ Phase 1: Checking existing chunks and collecting new files...");
 
-    let mut new_files: Vec<(String, String)> = Vec::new(); // (relative_path, content_hash)
+    let mut new_files: Vec<(String, String)> = Vec::new(); // (relative_path, blob_id)
     let mut existing_files: HashSet<String> = HashSet::new();
     let mut new_count = 0;
     let mut existing_count = 0;
 
     for file_entry in &files_to_process {
-        // For working directory, use content_hash as blob_id
         let file_id = compute_file_id(
             EMBEDDER_ID,
             CHUNKER_ID,
-            &file_entry.content_hash,
+            &file_entry.blob_id,
             &file_entry.relative_path,
         );
 
@@ -1483,10 +1482,7 @@ fn run_crawl_working_dir(
                 existing_count += 1;
             }
             Ok(None) => {
-                new_files.push((
-                    file_entry.relative_path.clone(),
-                    file_entry.content_hash.clone(),
-                ));
+                new_files.push((file_entry.relative_path.clone(), file_entry.blob_id.clone()));
                 new_count += 1;
             }
             Err(e) => {
@@ -1494,10 +1490,7 @@ fn run_crawl_working_dir(
                     "  ⚠️  Error checking sentinel for {}: {}",
                     file_entry.relative_path, e
                 );
-                new_files.push((
-                    file_entry.relative_path.clone(),
-                    file_entry.content_hash.clone(),
-                ));
+                new_files.push((file_entry.relative_path.clone(), file_entry.blob_id.clone()));
                 new_count += 1;
             }
         }
@@ -1543,7 +1536,7 @@ fn run_crawl_working_dir(
     if !new_files.is_empty() {
         println!("📦 Phase 2: Chunking {} new files...", new_count);
 
-        for (idx, (relative_path, content_hash)) in new_files.iter().enumerate() {
+        for (idx, (relative_path, blob_id)) in new_files.iter().enumerate() {
             print!(
                 "\r  Processing file {}/{} ({:.0}%)   ",
                 idx + 1,
@@ -1572,13 +1565,13 @@ fn run_crawl_working_dir(
                 .unwrap_or(catalog_name)
                 .to_string();
 
-            // Create chunk context - use content_hash as blob_id
+            // Create chunk context
             let ctx = ChunkContext {
                 catalog: catalog_name.to_string(),
                 label_id: label_id.clone(),
                 package_name,
                 relative_path: relative_path.clone(),
-                blob_id: content_hash.clone(), // Use content hash as blob_id
+                blob_id: blob_id.clone(),
                 source_uri: format!("{}/{}", repo_path.display(), relative_path),
             };
 

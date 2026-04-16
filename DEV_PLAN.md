@@ -652,12 +652,13 @@ The `blob_id` component differs by crawl source:
 - Duplicate chunks stored for same content
 - Wasted embedding API calls
 
-### BF.WD.1 Use Git-Compatible Blob Hash for Working Directory
+### BF.WD.1 Use Git-Compatible Blob Hash for Working Directory ✅ COMPLETE
 
-- [ ] Change `compute_content_hash()` to output Git blob SHA-1 format (40 hex chars, no prefix)
-- [ ] Update `WorkingDirEntry` field name from `content_hash` to `blob_id` for consistency
-- [ ] Test: crawl HEAD, then crawl --working-dir with no changes, verify 0 new files indexed
-- [ ] Test: crawl HEAD, make a change, crawl --working-dir, verify only changed file indexed
+- [x] Use Git CLI batch commands (`git ls-files`, `git status`, `git hash-object --stdin-paths`) to compute blob IDs
+- [x] Correctly handle `.gitattributes`, clean filters, and other repo-specific settings
+- [x] Update `WorkingDirEntry` field name from `content_hash` to `blob_id` for consistency
+- [x] Test: crawl HEAD, then crawl --working-dir with no changes, verify 0 new files indexed
+- [x] Test: `test_working_dir_blob_id_matches_commit` verifies blob IDs match between modes
 
 ---
 

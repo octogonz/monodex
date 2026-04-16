@@ -1,20 +1,30 @@
 # Change Log - monodex
 
-This log was last updated on Mon, 14 Apr 2026 15:16:00 GMT.
+This log was last updated on Wed, 16 Apr 2026 17:50:00 GMT.
 
 <!--
-## Unreleased
+PUBLISHING INSTRUCTIONS (DO NOT MODIFY):
 
-(Add change entries here during pull request development.)
+1. Choose an appropriate version number based on semantic versioning:
+   - MAJOR: Breaking changes that require user action
+   - MINOR: New features, backwards compatible
+   - PATCH: Bug fixes, backwards compatible
 
-When ready to publish:
-1. Choose an appropriate version number (semver)
 2. Update `version` in Cargo.toml
-3. Move entries from this comment block below the header as "## X.Y.Z"
-4. Update the "last generated" date above
-5. Remove this comment block (it will be re-added by the next PR)
 
-### Breaking changes
+3. Rename "## Unreleased" to "## X.Y.Z" and add release date:
+   ## 0.3.0 (2026-04-14)
+
+4. Update the "last generated" date in the header
+
+5. After publishing, the next PR author will add a new "## Unreleased" section
+
+Subsubheadings must be one of: Added, Changed, Fixed, Deprecated, Removed, Security
+-->
+
+## 0.3.0 (2026-04-16)
+
+### Changed
 
 - **crawl command now requires explicit source**: Must specify `--label` AND either `--working-dir` OR `--commit`
   - Previously: `monodex crawl --catalog myrepo --label main` (defaulted to HEAD)
@@ -22,12 +32,9 @@ When ready to publish:
   - This prevents accidental overwrites of labels and makes crawl intent explicit
   - CLI now shows proper usage: `monodex crawl --label <LABEL> <--commit <COMMIT>|--working-dir>`
 
-### Bug fixes
+### Fixed
 
-- Document working directory hash incompatibility: `--working-dir` uses SHA-256 while `--commit` uses Git blob SHA-1, preventing incremental skipping between modes (fix pending)
-
-## X.Y.Z
--->
+- **Working directory blob IDs now match Git blob IDs**: `--working-dir` mode now uses Git CLI batch commands (`git ls-files`, `git status`, `git hash-object`) to compute blob IDs that respect `.gitattributes`, clean filters, and other repo-specific settings. This ensures identical content produces the same `file_id` in both `--commit` and `--working-dir` modes, enabling proper incremental skipping.
 
 ## 0.2.0
 

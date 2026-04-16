@@ -164,12 +164,12 @@ Allowed values:
 
 This is a config format change. Update all of the following together:
 
-- [ ] Add `EmbeddingModelConfig` struct to `src/main.rs` with `model_instances` and `threads_per_instance` fields
-- [ ] Add `embedding_model` field to `Config` struct
-- [ ] Update `schemas/config.schema.json` with `embeddingModel` section
-- [ ] Update README.md config examples and option documentation
-- [ ] Add `#[serde(deny_unknown_fields)]` to new struct
-- [ ] Consider backward compatibility: either make fields optional with defaults, or require migration
+- [x] Add `EmbeddingModelConfig` struct to `src/main.rs` with `model_instances` and `threads_per_instance` fields
+- [x] Add `embedding_model` field to `Config` struct
+- [x] Update `schemas/config.schema.json` with `embeddingModel` section
+- [x] Update README.md config examples and option documentation
+- [x] Add `#[serde(deny_unknown_fields)]` to new struct
+- [x] Consider backward compatibility: either make fields optional with defaults, or require migration
 
 ---
 

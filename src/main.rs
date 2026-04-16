@@ -148,11 +148,108 @@ impl CatalogConfig {
     }
 }
 
+/// Embedding model configuration
+#[derive(Debug, serde::Deserialize, Clone)]
+#[serde(deny_unknown_fields)]
+struct EmbeddingModelConfig {
+    /// Number of ONNX model instances (sessions). Primary driver of memory usage.
+    /// Allowed values: "auto" or integer >= 1
+    #[serde(rename = "modelInstances", default = "EmbeddingModelConfig::default_model_instances")]
+    model_instances: EmbeddingSizeValue,
+
+    /// Threads per model instance. CPU tuning only.
+    /// Allowed values: "auto" or integer >= 1
+    #[serde(rename = "threadsPerInstance", default = "EmbeddingModelConfig::default_threads_per_instance")]
+    threads_per_instance: EmbeddingSizeValue,
+}
+
+/// A value that can be either "auto" or a specific integer
+#[derive(Debug, Clone, PartialEq)]
+enum EmbeddingSizeValue {
+    Auto,
+    Exact(usize),
+}
+
+impl EmbeddingModelConfig {
+    fn default_model_instances() -> EmbeddingSizeValue {
+        EmbeddingSizeValue::Auto
+    }
+
+    fn default_threads_per_instance() -> EmbeddingSizeValue {
+        EmbeddingSizeValue::Auto
+    }
+}
+
+impl Default for EmbeddingModelConfig {
+    fn default() -> Self {
+        Self {
+            model_instances: Self::default_model_instances(),
+            threads_per_instance: Self::default_threads_per_instance(),
+        }
+    }
+}
+
+impl<'de> serde::Deserialize<'de> for EmbeddingSizeValue {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: serde::Deserializer<'de>,
+    {
+        use serde::de::{self, Visitor};
+
+        struct EmbeddingSizeValueVisitor;
+
+        impl<'de> Visitor<'de> for EmbeddingSizeValueVisitor {
+            type Value = EmbeddingSizeValue;
+
+            fn expecting(&self, formatter: &mut std::fmt::Formatter) -> std::fmt::Result {
+                formatter.write_str(r#""auto" or an integer >= 1"#)
+            }
+
+            fn visit_str<E>(self, v: &str) -> Result<Self::Value, E>
+            where
+                E: de::Error,
+            {
+                if v == "auto" {
+                    Ok(EmbeddingSizeValue::Auto)
+                } else {
+                    Err(de::Error::custom(r#"expected "auto" or an integer >= 1"#))
+                }
+            }
+
+            fn visit_u64<E>(self, v: u64) -> Result<Self::Value, E>
+            where
+                E: de::Error,
+            {
+                if v >= 1 {
+                    Ok(EmbeddingSizeValue::Exact(v as usize))
+                } else {
+                    Err(de::Error::custom("integer must be >= 1"))
+                }
+            }
+
+            fn visit_i64<E>(self, v: i64) -> Result<Self::Value, E>
+            where
+                E: de::Error,
+            {
+                if v >= 1 {
+                    Ok(EmbeddingSizeValue::Exact(v as usize))
+                } else {
+                    Err(de::Error::custom("integer must be >= 1"))
+                }
+            }
+        }
+
+        deserializer.deserialize_any(EmbeddingSizeValueVisitor)
+    }
+}
+
 /// Main configuration file
 #[derive(Debug, serde::Deserialize)]
 struct Config {
     qdrant: QdrantConfig,
     catalogs: HashMap<String, CatalogConfig>,
+    #[serde(default)]
+    embedding_model: EmbeddingModelConfig,
 }
 
 /// Rush semantic search crawler for Qdrant

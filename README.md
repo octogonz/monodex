@@ -174,6 +174,10 @@ Create `~/.config/monodex/config.json`:
       "type": "monorepo",
       "path": "/path/to/rushstack"
     }
+  },
+  "embeddingModel": {
+    "modelInstances": "auto",
+    "threadsPerInstance": "auto"
   }
 }
 ```
@@ -182,13 +186,22 @@ Create `~/.config/monodex/config.json`:
 
 **Fields:**
 
-| Field                   | Required | Description                                          |
-| ----------------------- | -------- | ---------------------------------------------------- |
-| `qdrant.url`            | No       | Qdrant server URL (default: `http://localhost:6333`) |
-| `qdrant.collection`     | Yes      | Qdrant collection name                               |
-| `qdrant.maxUploadBytes` | No       | Max upload payload size in bytes (default: 30MB)     |
-| `catalogs.<name>.type`  | Yes      | Catalog type: `"monorepo"`                           |
-| `catalogs.<name>.path`  | Yes      | Absolute path to the repository root                 |
+| Field                              | Required | Description                                                        |
+| ---------------------------------- | -------- | ------------------------------------------------------------------ |
+| `qdrant.url`                       | No       | Qdrant server URL (default: `http://localhost:6333`)               |
+| `qdrant.collection`                | Yes      | Qdrant collection name                                             |
+| `qdrant.maxUploadBytes`            | No       | Max upload payload size in bytes (default: 30MB)                   |
+| `catalogs.<name>.type`             | Yes      | Catalog type: `"monorepo"`                                         |
+| `catalogs.<name>.path`             | Yes      | Absolute path to the repository root                               |
+| `embeddingModel.modelInstances`    | No       | Number of ONNX model instances (default: `"auto"`). Primary driver of memory usage. |
+| `embeddingModel.threadsPerInstance`| No       | Threads per model instance (default: `"auto"`). CPU tuning only.   |
+
+**Embedding model configuration:**
+
+The `embeddingModel` section controls memory and CPU usage for embedding generation:
+
+- **`modelInstances`**: Number of ONNX sessions. Each instance uses ~700MB RAM. Use `"auto"` to automatically size based on available system memory, or an integer ≥ 1 for explicit control.
+- **`threadsPerInstance`**: Threads per ONNX session for intra-op parallelism. Use `"auto"` to automatically size based on CPU cores, or an integer ≥ 1 for explicit control.
 
 **Catalog types:**
 

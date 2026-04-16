@@ -17,158 +17,7 @@ This proposal focuses on high-impact improvements with low regression risk.
 
 ---
 
-## Part 1: Explicit Embedding Configuration in `config.json`
-
-Add a required `embeddingModel` section to `config.json`:
-
-```json
-{
-  "embeddingModel": {
-    "modelInstances": "auto",
-    "threadsPerInstance": "auto"
-  }
-}
-```
-
-Allowed values:
-
-- `"auto"`
-- integer >= 1
-
-### Semantics
-
-- `modelInstances`
-  - Number of ONNX model instances (sessions)
-  - **Primary driver of memory usage**
-
-- `threadsPerInstance`
-  - Threads per model instance
-  - **CPU tuning only**
-
-### Required Code / Schema Updates
-
-This is a config format change. Update all of the following together:
-
-- [ ] Add `EmbeddingModelConfig` struct to `src/main.rs` with `model_instances` and `threads_per_instance` fields
-- [ ] Add `embedding_model` field to `Config` struct
-- [ ] Update `schemas/config.schema.json` with `embeddingModel` section
-- [ ] Update README.md config examples and option documentation
-- [ ] Add `#[serde(deny_unknown_fields)]` to new struct
-- [ ] Consider backward compatibility: either make fields optional with defaults, or require migration
-
----
-
-## Part 2: Deterministic `"auto"` Heuristic
-
-`"auto"` must be deterministic for a given machine. It must **not** depend on current system load.
-
-### New Dependency
-
-- [ ] Add `sysinfo` crate to `Cargo.toml`
-
-This feature introduces a dependency on the `sysinfo` crate.
-
-It is used to obtain:
-
-- total system memory
-- available system memory (for warnings)
-- physical CPU core count
-- Linux cgroup memory limits (when applicable)
-
-This dependency should be reviewed carefully, especially for containerized/Linux environments.
-
----
-
-### Inputs (via `sysinfo`)
-
-Use a `System` instance for memory:
-
-- `system.refresh_memory()`
-- `system.total_memory()`
-- `system.available_memory()` (warning only)
-
-Use CPU count from `System`:
-
-- `System::physical_core_count()` (fallback to logical cores if `None`)
-
-On Linux, also use:
-
-- `system.cgroup_limits()` when present
-
-### Effective Total RAM
-
-- On Linux:
-  - `effective_total_ram = min(total_memory, cgroup memory limit)`
-- Otherwise:
-  - `effective_total_ram = total_memory`
-
-### Constants
-
-```text
-PER_INSTANCE_RAM = 2.5 GiB
-BASELINE_RESERVE = max(4 GiB, 25% of effective_total_ram)
-```
-
-### Sizing Logic
-
-- [ ] Implement `compute_auto_embedding_config() -> (u32, u32)` function returning `(model_instances, threads_per_instance)`
-- [ ] Use `sysinfo` crate to get total memory and physical core count
-- [ ] Implement Linux cgroup memory limit detection (via `cgroup_limits()`)
-- [ ] Implement effective_total_ram calculation
-- [ ] Implement the sizing formula:
-  ```text
-  usable_ram = effective_total_ram - BASELINE_RESERVE
-  ram_limited_instances = floor(usable_ram / PER_INSTANCE_RAM)
-
-  total_cpu_cores = physical_core_count_or_logical_fallback
-  cpu_cap = min(4, total_cpu_cores)
-
-  modelInstances_auto = clamp(ram_limited_instances, 1, cpu_cap)
-  threadsPerInstance_auto = max(1, total_cpu_cores / modelInstances_auto)
-  ```
-
-### Properties
-
-- Stable across runs
-- Memory-aware first, CPU-aware second
-- Avoids dynamic behavior based on transient conditions
-
----
-
-## Part 3: Startup Memory Warning
-
-Even with deterministic sizing, Monodex should warn if current conditions are risky.
-
-### Estimate
-
-```text
-embeddingRamEstimate =
-  (modelInstances × 2.5 GiB) + 0.5 GiB
-```
-
-### Output
-
-- [ ] Before embedding, print memory status:
-  ```text
-  Currently available system RAM: <X.X> GB
-  Estimated embedding RAM usage: <Y.Y> GB
-  ```
-
-- [ ] If `embeddingRamEstimate > available_memory`, print:
-  ```text
-  🚨 Warning: estimate exceeds available RAM by <Z>%.
-  Consider adjusting "embeddingModel.modelInstances" or "embeddingModel.threadsPerInstance" in config.json
-  ```
-
-### Failure Messaging
-
-- [ ] Where Monodex can detect a recoverable memory/allocation failure, the error message should point users to `embeddingModel.modelInstances` and `embeddingModel.threadsPerInstance` with a suggestion to start with `modelInstances = 1`
-
-Do not assume Monodex can always print this message after a hard OS-level OOM kill.
-
----
-
-## Part 4: Efficient Incremental Relabeling (Sentinel-Based)
+## Part 1: Efficient Incremental Relabeling (Sentinel-Based)
 
 ### Goal
 
@@ -283,7 +132,48 @@ This ensures:
 
 ---
 
-## Part 5: Bounded Global Upload Accumulation
+## Part 2: Explicit Embedding Configuration in `config.json`
+
+Add a required `embeddingModel` section to `config.json`:
+
+```json
+{
+  "embeddingModel": {
+    "modelInstances": "auto",
+    "threadsPerInstance": "auto"
+  }
+}
+```
+
+Allowed values:
+
+- `"auto"`
+- integer >= 1
+
+### Semantics
+
+- `modelInstances`
+  - Number of ONNX model instances (sessions)
+  - **Primary driver of memory usage**
+
+- `threadsPerInstance`
+  - Threads per model instance
+  - **CPU tuning only**
+
+### Required Code / Schema Updates
+
+This is a config format change. Update all of the following together:
+
+- [ ] Add `EmbeddingModelConfig` struct to `src/main.rs` with `model_instances` and `threads_per_instance` fields
+- [ ] Add `embedding_model` field to `Config` struct
+- [ ] Update `schemas/config.schema.json` with `embeddingModel` section
+- [ ] Update README.md config examples and option documentation
+- [ ] Add `#[serde(deny_unknown_fields)]` to new struct
+- [ ] Consider backward compatibility: either make fields optional with defaults, or require migration
+
+---
+
+## Part 3: Bounded Global Upload Accumulation
 
 ### Problem
 
@@ -370,6 +260,116 @@ This estimate should be based on the actual upload structure built in `uploader.
 - constructs actual request
 - enforces `qdrant.maxUploadBytes`
 - splits if necessary
+
+---
+
+## Part 4: Deterministic `"auto"` Heuristic
+
+`"auto"` must be deterministic for a given machine. It must **not** depend on current system load.
+
+### New Dependency
+
+- [ ] Add `sysinfo` crate to `Cargo.toml`
+
+This feature introduces a dependency on the `sysinfo` crate.
+
+It is used to obtain:
+
+- total system memory
+- available system memory (for warnings)
+- physical CPU core count
+- Linux cgroup memory limits (when applicable)
+
+This dependency should be reviewed carefully, especially for containerized/Linux environments.
+
+---
+
+### Inputs (via `sysinfo`)
+
+Use a `System` instance for memory:
+
+- `system.refresh_memory()`
+- `system.total_memory()`
+- `system.available_memory()` (warning only)
+
+Use CPU count from `System`:
+
+- `System::physical_core_count()` (fallback to logical cores if `None`)
+
+On Linux, also use:
+
+- `system.cgroup_limits()` when present
+
+### Effective Total RAM
+
+- On Linux:
+  - `effective_total_ram = min(total_memory, cgroup memory limit)`
+- Otherwise:
+  - `effective_total_ram = total_memory`
+
+### Constants
+
+```text
+PER_INSTANCE_RAM = 2.5 GiB
+BASELINE_RESERVE = max(4 GiB, 25% of effective_total_ram)
+```
+
+### Sizing Logic
+
+- [ ] Implement `compute_auto_embedding_config() -> (u32, u32)` function returning `(model_instances, threads_per_instance)`
+- [ ] Use `sysinfo` crate to get total memory and physical core count
+- [ ] Implement Linux cgroup memory limit detection (via `cgroup_limits()`)
+- [ ] Implement effective_total_ram calculation
+- [ ] Implement the sizing formula:
+  ```text
+  usable_ram = effective_total_ram - BASELINE_RESERVE
+  ram_limited_instances = floor(usable_ram / PER_INSTANCE_RAM)
+
+  total_cpu_cores = physical_core_count_or_logical_fallback
+  cpu_cap = min(4, total_cpu_cores)
+
+  modelInstances_auto = clamp(ram_limited_instances, 1, cpu_cap)
+  threadsPerInstance_auto = max(1, total_cpu_cores / modelInstances_auto)
+  ```
+
+### Properties
+
+- Stable across runs
+- Memory-aware first, CPU-aware second
+- Avoids dynamic behavior based on transient conditions
+
+---
+
+## Part 5: Startup Memory Warning
+
+Even with deterministic sizing, Monodex should warn if current conditions are risky.
+
+### Estimate
+
+```text
+embeddingRamEstimate =
+  (modelInstances × 2.5 GiB) + 0.5 GiB
+```
+
+### Output
+
+- [ ] Before embedding, print memory status:
+  ```text
+  Currently available system RAM: <X.X> GB
+  Estimated embedding RAM usage: <Y.Y> GB
+  ```
+
+- [ ] If `embeddingRamEstimate > available_memory`, print:
+  ```text
+  🚨 Warning: estimate exceeds available RAM by <Z>%.
+  Consider adjusting "embeddingModel.modelInstances" or "embeddingModel.threadsPerInstance" in config.json
+  ```
+
+### Failure Messaging
+
+- [ ] Where Monodex can detect a recoverable memory/allocation failure, the error message should point users to `embeddingModel.modelInstances` and `embeddingModel.threadsPerInstance` with a suggestion to start with `modelInstances = 1`
+
+Do not assume Monodex can always print this message after a hard OS-level OOM kill.
 
 ---
 

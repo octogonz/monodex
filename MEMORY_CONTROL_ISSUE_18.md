@@ -269,7 +269,7 @@ This estimate should be based on the actual upload structure built in `uploader.
 
 ### New Dependency
 
-- [ ] Add `sysinfo` crate to `Cargo.toml`
+- [x] Add `sysinfo` crate to `Cargo.toml`
 
 This feature introduces a dependency on the `sysinfo` crate.
 
@@ -316,11 +316,11 @@ BASELINE_RESERVE = max(4 GiB, 25% of effective_total_ram)
 
 ### Sizing Logic
 
-- [ ] Implement `compute_auto_embedding_config() -> (u32, u32)` function returning `(model_instances, threads_per_instance)`
-- [ ] Use `sysinfo` crate to get total memory and physical core count
-- [ ] Implement Linux cgroup memory limit detection (via `cgroup_limits()`)
-- [ ] Implement effective_total_ram calculation
-- [ ] Implement the sizing formula:
+- [x] Implement `compute_auto_embedding_config() -> (u32, u32)` function returning `(model_instances, threads_per_instance)`
+- [x] Use `sysinfo` crate to get total memory and physical core count
+- [x] Implement Linux cgroup memory limit detection (via `cgroup_limits()`)
+- [x] Implement effective_total_ram calculation
+- [x] Implement the sizing formula:
   ```text
   usable_ram = effective_total_ram - BASELINE_RESERVE
   ram_limited_instances = floor(usable_ram / PER_INSTANCE_RAM)
@@ -353,13 +353,13 @@ embeddingRamEstimate =
 
 ### Output
 
-- [ ] Before embedding, print memory status:
+- [x] Before embedding, print memory status:
   ```text
   Currently available system RAM: <X.X> GB
   Estimated embedding RAM usage: <Y.Y> GB
   ```
 
-- [ ] If `embeddingRamEstimate > available_memory`, print:
+- [x] If `embeddingRamEstimate > available_memory`, print:
   ```text
   🚨 Warning: estimate exceeds available RAM by <Z>%.
   Consider adjusting "embeddingModel.modelInstances" or "embeddingModel.threadsPerInstance" in config.json

@@ -17,6 +17,7 @@ use engine::{
         resolve_commit_oid,
     },
     partitioner::{ChunkQualityReport, PartitionConfig, PartitionDebug, partition_typescript},
+    system_info::{compute_auto_embedding_config, format_bytes},
     uploader::{LabelMetadata, PointResult, QdrantUploader, is_payload_limit_error},
     util::compute_label_id,
 };
@@ -154,12 +155,18 @@ impl CatalogConfig {
 struct EmbeddingModelConfig {
     /// Number of ONNX model instances (sessions). Primary driver of memory usage.
     /// Allowed values: "auto" or integer >= 1
-    #[serde(rename = "modelInstances", default = "EmbeddingModelConfig::default_model_instances")]
+    #[serde(
+        rename = "modelInstances",
+        default = "EmbeddingModelConfig::default_model_instances"
+    )]
     model_instances: EmbeddingSizeValue,
 
     /// Threads per model instance. CPU tuning only.
     /// Allowed values: "auto" or integer >= 1
-    #[serde(rename = "threadsPerInstance", default = "EmbeddingModelConfig::default_threads_per_instance")]
+    #[serde(
+        rename = "threadsPerInstance",
+        default = "EmbeddingModelConfig::default_threads_per_instance"
+    )]
     threads_per_instance: EmbeddingSizeValue,
 }
 
@@ -718,6 +725,112 @@ fn run_use(catalog: Option<&str>, label: Option<String>, config: &Config) -> any
 }
 
 // ============================================================================
+// B.2: Embedding configuration resolution
+// ============================================================================
+
+/// Resolve embedding configuration from config file, applying "auto" heuristic if needed.
+/// Returns (model_instances, threads_per_instance) for the ParallelEmbedder.
+fn resolve_embedding_config(config: &EmbeddingModelConfig) -> (usize, usize) {
+    match (&config.model_instances, &config.threads_per_instance) {
+        (EmbeddingSizeValue::Auto, EmbeddingSizeValue::Auto) => {
+            // Both auto: compute from system properties
+            match compute_auto_embedding_config() {
+                Ok(resolved) => {
+                    println!(
+                        "Auto-detected embedding config: {} instances × {} threads",
+                        resolved.model_instances, resolved.threads_per_instance
+                    );
+                    if resolved.cgroup_limited {
+                        println!(
+                            "  (Cgroup memory limit detected: {})",
+                            format_bytes(resolved.total_ram)
+                        );
+                    }
+                    (resolved.model_instances, resolved.threads_per_instance)
+                }
+                Err(e) => {
+                    eprintln!("Warning: Failed to auto-detect embedding config: {}", e);
+                    eprintln!("Using fallback: 1 instance × {} threads", num_cpus::get());
+                    (1, num_cpus::get())
+                }
+            }
+        }
+        (EmbeddingSizeValue::Auto, EmbeddingSizeValue::Exact(threads)) => {
+            // Auto instances, explicit threads
+            match compute_auto_embedding_config() {
+                Ok(resolved) => {
+                    println!(
+                        "Auto-detected model instances: {} (using explicit {} threads/instance)",
+                        resolved.model_instances, threads
+                    );
+                    (resolved.model_instances, *threads)
+                }
+                Err(e) => {
+                    eprintln!("Warning: Failed to auto-detect embedding config: {}", e);
+                    eprintln!("Using fallback: 1 instance × {} threads", threads);
+                    (1, *threads)
+                }
+            }
+        }
+        (EmbeddingSizeValue::Exact(instances), EmbeddingSizeValue::Auto) => {
+            // Explicit instances, auto threads
+            // Need to create a System instance to query physical core count
+            let mut sys = sysinfo::System::new();
+            sys.refresh_cpu_all();
+            let physical_cores =
+                sysinfo::System::physical_core_count(&sys).unwrap_or_else(num_cpus::get);
+            let threads = std::cmp::max(1, physical_cores / instances);
+            println!(
+                "Using explicit {} model instances (auto-detected {} threads/instance)",
+                instances, threads
+            );
+            (*instances, threads)
+        }
+        (EmbeddingSizeValue::Exact(instances), EmbeddingSizeValue::Exact(threads)) => {
+            // Both explicit
+            println!(
+                "Using explicit config: {} instances × {} threads/instance",
+                instances, threads
+            );
+            (*instances, *threads)
+        }
+    }
+}
+
+/// Print memory status and warning if estimated usage exceeds available RAM.
+fn print_memory_warning() {
+    match compute_auto_embedding_config() {
+        Ok(info) => {
+            println!(
+                "Currently available system RAM: {}",
+                format_bytes(info.available_ram)
+            );
+            println!(
+                "Estimated embedding RAM usage: {}",
+                format_bytes(info.estimated_ram_usage)
+            );
+
+            if info.estimated_ram_usage > info.available_ram {
+                let excess_pct =
+                    ((info.estimated_ram_usage as f64 / info.available_ram as f64) - 1.0) * 100.0;
+                eprintln!();
+                eprintln!(
+                    "🚨 Warning: estimate exceeds available RAM by {:.0}%.",
+                    excess_pct
+                );
+                eprintln!("   Consider adjusting \"embeddingModel.modelInstances\" or");
+                eprintln!("   \"embeddingModel.threadsPerInstance\" in config.json");
+                eprintln!("   Suggestion: start with modelInstances = 1");
+            }
+        }
+        Err(e) => {
+            // Don't fail if we can't get memory info, just warn
+            eprintln!("Warning: Could not get memory info: {}", e);
+        }
+    }
+}
+
+// ============================================================================
 // C.1: Helper functions for shared crawl pipeline
 // ============================================================================
 
@@ -727,6 +840,7 @@ fn run_embed_upload_pipeline(
     all_chunks: Vec<engine::Chunk>,
     uploader: QdrantUploader,
     label_id: &str,
+    embedding_config: &EmbeddingModelConfig,
 ) -> anyhow::Result<(HashSet<String>, CrawlFailures)> {
     use crossbeam_channel::unbounded;
     use rayon::prelude::*;
@@ -749,8 +863,17 @@ fn run_embed_upload_pipeline(
 
     let total_chunks = all_chunks.len();
 
-    // Initialize parallel embedder - propagate error to caller
-    let embedder = ParallelEmbedder::new()?;
+    // Resolve embedding config (handles "auto" and explicit values)
+    let (model_instances, threads_per_instance) = resolve_embedding_config(embedding_config);
+
+    // Print memory warning before embedding
+    print_memory_warning();
+
+    // Initialize parallel embedder with resolved config
+    let embedder = ParallelEmbedder::with_config(engine::ParallelConfig {
+        num_workers: model_instances,
+        intra_threads: threads_per_instance,
+    })?;
 
     println!(
         "⚡ Phase 3: Embedding {} chunks with {} parallel sessions...",
@@ -1379,7 +1502,7 @@ fn run_crawl_label(
 
     // Phase 3: Run the shared embed/upload pipeline (handles empty chunks gracefully)
     let (pipeline_file_ids, pipeline_failures) =
-        run_embed_upload_pipeline(all_chunks, uploader, &label_id)?;
+        run_embed_upload_pipeline(all_chunks, uploader, &label_id, &config.embedding_model)?;
 
     // Merge file IDs from pipeline with those tracked during chunking
     touched_file_ids.extend(pipeline_file_ids);
@@ -1750,7 +1873,7 @@ fn run_crawl_working_dir(
 
     // Phase 3: Run the shared embed/upload pipeline (handles empty chunks gracefully)
     let (pipeline_file_ids, pipeline_failures) =
-        run_embed_upload_pipeline(all_chunks, uploader, &label_id)?;
+        run_embed_upload_pipeline(all_chunks, uploader, &label_id, &config.embedding_model)?;
 
     // Merge file IDs from pipeline with those tracked during chunking
     touched_file_ids.extend(pipeline_file_ids);

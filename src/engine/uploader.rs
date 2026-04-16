@@ -1098,7 +1098,11 @@ impl QdrantUploader {
                     QdrantId::String(s) => s,
                     QdrantId::Integer(n) => n.to_string(),
                 };
-                chunks_to_update.push((id_str, point.payload.active_label_ids, point.payload.file_complete));
+                chunks_to_update.push((
+                    id_str,
+                    point.payload.active_label_ids,
+                    point.payload.file_complete,
+                ));
             }
 
             offset = labels_response.result.next_page_offset;
@@ -1110,11 +1114,11 @@ impl QdrantUploader {
         // Now update each chunk, appending the new label if not already present.
         // IMPORTANT: Process sentinel (file_complete=true) LAST to ensure correct
         // incremental behavior - sentinel presence implies all chunks are labeled.
-        
+
         // Partition into non-sentinel and sentinel chunks
         let mut non_sentinel: Vec<(String, Vec<String>)> = Vec::new();
         let mut sentinel: Option<(String, Vec<String>)> = None;
-        
+
         for (point_id, current_labels, is_sentinel) in chunks_to_update {
             if is_sentinel {
                 sentinel = Some((point_id, current_labels));
@@ -1122,7 +1126,7 @@ impl QdrantUploader {
                 non_sentinel.push((point_id, current_labels));
             }
         }
-        
+
         // Update non-sentinel chunks first
         for (point_id, mut current_labels) in non_sentinel {
             if !current_labels.contains(&label_id.to_string()) {
@@ -1130,7 +1134,7 @@ impl QdrantUploader {
             }
             self.set_active_labels(&point_id, &current_labels)?;
         }
-        
+
         // Update sentinel last
         if let Some((point_id, mut current_labels)) = sentinel {
             if !current_labels.contains(&label_id.to_string()) {

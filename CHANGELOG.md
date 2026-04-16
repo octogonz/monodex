@@ -22,6 +22,13 @@ PUBLISHING INSTRUCTIONS (DO NOT MODIFY):
 Subsubheadings must be one of: Added, Changed, Fixed, Deprecated, Removed, Security
 -->
 
+## Unreleased
+
+### Added
+
+- **Deterministic embedding memory control**: The `embeddingModel` config section now supports `"auto"` values for `modelInstances` and `threadsPerInstance`, which are computed deterministically from system properties (total RAM, CPU cores, and Linux cgroup limits). This prevents OOM failures on memory-constrained machines while maximizing parallelism on capable hardware.
+- **Startup memory warning**: Before embedding begins, monodex prints available RAM and estimated usage. If the estimate exceeds available RAM, a warning suggests adjusting config values.
+
 ## 0.3.0 (2026-04-16)
 
 ### Changed

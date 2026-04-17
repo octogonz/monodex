@@ -16,13 +16,13 @@ use engine::{
         enumerate_working_directory, read_blob_content, read_working_file_content,
         resolve_commit_oid,
     },
+    identifier::{LabelId, validate_catalog, validate_label},
     partitioner::{ChunkQualityReport, PartitionConfig, PartitionDebug, partition_typescript},
     system_info::{
         ResolvedEmbeddingConfig, compute_auto_embedding_config, estimate_ram_usage, format_bytes,
         get_physical_core_count,
     },
     uploader::{LabelMetadata, PointResult, QdrantUploader, is_payload_limit_error},
-    util::compute_label_id,
 };
 use std::collections::{HashMap, HashSet};
 use std::path::PathBuf;
@@ -492,40 +492,81 @@ fn save_default_context(catalog: &str, label: &str) -> anyhow::Result<()> {
     Ok(())
 }
 
-/// Resolve label ID from explicit flag or default context
-/// Returns (label_id, catalog, label_name) or error if neither provided
-fn resolve_label_id(
+/// Resolve label context from explicit flags or default context.
+/// Returns (label_id, catalog, label) or error if neither provided.
+///
+/// Per #25: --label takes a bare label name, --catalog takes a bare catalog name.
+/// The qualified "catalog:label" form is no longer accepted.
+fn resolve_label_context(
     explicit_label: Option<&str>,
     explicit_catalog: Option<&str>,
-) -> anyhow::Result<(String, String, String)> {
-    // If explicit label provided, use it
+) -> anyhow::Result<(LabelId, String, String)> {
+    // If explicit label provided, validate it
     if let Some(label_str) = explicit_label {
-        // Parse label format: <catalog>:<label>
-        let parts: Vec<&str> = label_str.splitn(2, ':').collect();
-        if parts.len() != 2 {
+        // Reject legacy qualified form "catalog:label"
+        if label_str.contains(':') {
             return Err(anyhow::anyhow!(
-                "Invalid label format '{}'. Expected <catalog>:<label>",
+                "Invalid --label value '{}'. Use separate flags: --catalog <catalog> --label <label>",
                 label_str
             ));
         }
-        let catalog = parts[0].to_string();
-        let label_name = parts[1].to_string();
-        let label_id = compute_label_id(&catalog, &label_name);
-        return Ok((label_id, catalog, label_name));
+
+        // Validate the bare label name
+        validate_label(label_str)
+            .map_err(|e| anyhow::anyhow!("Invalid label name '{}': {}", label_str, e))?;
     }
 
-    // Try default context
-    if let Some(context) = load_default_context() {
-        // If explicit catalog provided, use it with default label
-        let catalog = explicit_catalog.unwrap_or(&context.catalog).to_string();
-        let label_name = context.label.clone();
-        let label_id = compute_label_id(&catalog, &label_name);
-        return Ok((label_id, catalog, label_name));
+    // If explicit catalog provided, validate it
+    if let Some(catalog_str) = explicit_catalog {
+        validate_catalog(catalog_str)
+            .map_err(|e| anyhow::anyhow!("Invalid catalog name '{}': {}", catalog_str, e))?;
     }
 
-    Err(anyhow::anyhow!(
-        "No label specified. Use --label <catalog>:<label> or set a default with 'monodex use <catalog> <label>'"
-    ))
+    // Resolve from explicit flags or default context
+    match (explicit_catalog, explicit_label, load_default_context()) {
+        (Some(catalog), Some(label), _) => {
+            // Both explicitly provided
+            let label_id = LabelId::new(catalog, label).map_err(|e| anyhow::anyhow!("{}", e))?;
+            Ok((label_id, catalog.to_string(), label.to_string()))
+        }
+        (Some(catalog), None, Some(ctx)) => {
+            // Catalog explicit, label from context
+            let label = ctx.label;
+            validate_label(&label).map_err(|e| {
+                anyhow::anyhow!("Invalid label in default context '{}': {}", label, e)
+            })?;
+            let label_id = LabelId::new(catalog, &label).map_err(|e| anyhow::anyhow!("{}", e))?;
+            Ok((label_id, catalog.to_string(), label))
+        }
+        (None, Some(label), Some(ctx)) => {
+            // Label explicit, catalog from context
+            let catalog = ctx.catalog;
+            validate_catalog(&catalog).map_err(|e| {
+                anyhow::anyhow!("Invalid catalog in default context '{}': {}", catalog, e)
+            })?;
+            let label_id = LabelId::new(&catalog, label).map_err(|e| anyhow::anyhow!("{}", e))?;
+            Ok((label_id, catalog, label.to_string()))
+        }
+        (None, None, Some(ctx)) => {
+            // Both from context
+            let catalog = ctx.catalog;
+            let label = ctx.label;
+            validate_catalog(&catalog).map_err(|e| {
+                anyhow::anyhow!("Invalid catalog in default context '{}': {}", catalog, e)
+            })?;
+            validate_label(&label).map_err(|e| {
+                anyhow::anyhow!("Invalid label in default context '{}': {}", label, e)
+            })?;
+            let label_id = LabelId::new(&catalog, &label).map_err(|e| anyhow::anyhow!("{}", e))?;
+            Ok((label_id, catalog, label))
+        }
+        (None, Some(_), None) | (Some(_), None, None) => Err(anyhow::anyhow!(
+            "Missing context. Provide both --catalog and --label, or set defaults with:\n  monodex use --catalog <name> --label <name>"
+        )),
+        (None, None, None) => Err(anyhow::anyhow!(
+            "No context set. Use --catalog and --label, or set defaults with:\n  monodex use --catalog <name> --label <name>"
+        )),
+    }
 }
 
 /// Get current timestamp for logging
@@ -596,9 +637,9 @@ fn main() -> anyhow::Result<()> {
             source,
             incremental_warnings,
         } => {
-            // Resolve label ID from explicit flags or default context
+            // Resolve label context from explicit flags or default context
             let (_label_id, catalog_name, label_name) =
-                resolve_label_id(Some(&label), catalog.as_deref())?;
+                resolve_label_context(Some(&label), catalog.as_deref())?;
 
             if source.working_dir {
                 run_crawl_working_dir(
@@ -709,6 +750,14 @@ fn run_use(catalog: Option<&str>, label: Option<String>, config: &Config) -> any
             }
         }
         (Some(catalog_name), Some(label_name)) => {
+            // Validate catalog name syntax
+            validate_catalog(catalog_name)
+                .map_err(|e| anyhow::anyhow!("Invalid catalog name '{}': {}", catalog_name, e))?;
+
+            // Validate label name syntax
+            validate_label(&label_name)
+                .map_err(|e| anyhow::anyhow!("Invalid label name '{}': {}", label_name, e))?;
+
             // Validate that catalog exists in config
             if !config.catalogs.contains_key(catalog_name) {
                 return Err(anyhow::anyhow!(
@@ -726,11 +775,13 @@ fn run_use(catalog: Option<&str>, label: Option<String>, config: &Config) -> any
             // Set new context
             save_default_context(catalog_name, &label_name)?;
 
-            let label_id = compute_label_id(catalog_name, &label_name);
-            println!("✓ Default context set to {}:{}", catalog_name, label_name);
-            println!("  Label ID: {}", label_id);
+            println!("✓ Default context set to:");
+            println!("  Catalog: {}", catalog_name);
+            println!("  Label: {}", label_name);
             println!();
-            println!("Commands will now use this context when --label is not specified.");
+            println!(
+                "Commands will now use this context when --catalog/--label are not specified."
+            );
         }
         (Some(_), None) | (None, Some(_)) => {
             // Partial specification - error
@@ -1346,9 +1397,10 @@ fn run_crawl_label(
     println!("Commit: {}", commit);
     println!();
 
-    // Compute label_id
-    let label_id = compute_label_id(catalog_name, label_name);
-    println!("Label ID: {}", label_id);
+    // Compute label_id (internal storage form)
+    let label_id = LabelId::new(catalog_name, label_name).map_err(|e| anyhow::anyhow!("{}", e))?;
+    println!("Catalog: {}", catalog_name);
+    println!("Label: {}", label_name);
     println!();
 
     // B.1: Load repo-specific crawl configuration
@@ -1372,7 +1424,7 @@ fn run_crawl_label(
     let in_progress_metadata = LabelMetadata {
         source_type: "label-metadata".to_string(),
         catalog: catalog_name.to_string(),
-        label_id: label_id.clone(),
+        label_id: label_id.to_string(),
         label_name: label_name.to_string(),
         commit_oid: commit_oid.clone(),
         source_kind: "git-commit".to_string(),
@@ -1427,7 +1479,7 @@ fn run_crawl_label(
         match uploader.get_file_sentinel(&file_id) {
             Ok(Some(sync_info)) => {
                 // File already indexed - check if it already has this label
-                if sync_info.active_label_ids.contains(&label_id) {
+                if sync_info.active_label_ids.contains(&label_id.to_string()) {
                     // Already has the label - no action needed, but mark as touched for cleanup
                     existing_files_already_labeled.insert(file_id);
                 } else {
@@ -1543,7 +1595,7 @@ fn run_crawl_label(
             // Create chunk context
             let ctx = ChunkContext {
                 catalog: catalog_name.to_string(),
-                label_id: label_id.clone(),
+                label_id: label_id.to_string(),
                 package_name,
                 relative_path: relative_path.clone(),
                 blob_id: blob_id.clone(),
@@ -1621,7 +1673,7 @@ fn run_crawl_label(
     let metadata = LabelMetadata {
         source_type: "label-metadata".to_string(),
         catalog: catalog_name.to_string(),
-        label_id: label_id.clone(),
+        label_id: label_id.to_string(),
         label_name: label_name.to_string(),
         commit_oid: commit_oid.clone(),
         source_kind: "git-commit".to_string(),
@@ -1728,9 +1780,10 @@ fn run_crawl_working_dir(
     println!("Source: working directory (uncommitted changes)");
     println!();
 
-    // Compute label_id
-    let label_id = compute_label_id(catalog_name, label_name);
-    println!("Label ID: {}", label_id);
+    // Compute label_id (internal storage form)
+    let label_id = LabelId::new(catalog_name, label_name).map_err(|e| anyhow::anyhow!("{}", e))?;
+    println!("Catalog: {}", catalog_name);
+    println!("Label: {}", label_name);
     println!();
 
     // B.1: Load repo-specific crawl configuration
@@ -1749,7 +1802,7 @@ fn run_crawl_working_dir(
     let in_progress_metadata = LabelMetadata {
         source_type: "label-metadata".to_string(),
         catalog: catalog_name.to_string(),
-        label_id: label_id.clone(),
+        label_id: label_id.to_string(),
         label_name: label_name.to_string(),
         commit_oid: "".to_string(), // No commit for working directory
         source_kind: "working-directory".to_string(),
@@ -1809,7 +1862,7 @@ fn run_crawl_working_dir(
         match uploader.get_file_sentinel(&file_id) {
             Ok(Some(sync_info)) => {
                 // File already indexed - check if it already has this label
-                if sync_info.active_label_ids.contains(&label_id) {
+                if sync_info.active_label_ids.contains(&label_id.to_string()) {
                     // Already has the label - no action needed, but mark as touched for cleanup
                     existing_files_already_labeled.insert(file_id);
                 } else {
@@ -1914,7 +1967,7 @@ fn run_crawl_working_dir(
             // Create chunk context
             let ctx = ChunkContext {
                 catalog: catalog_name.to_string(),
-                label_id: label_id.clone(),
+                label_id: label_id.to_string(),
                 package_name,
                 relative_path: relative_path.clone(),
                 blob_id: blob_id.clone(),
@@ -1988,7 +2041,7 @@ fn run_crawl_working_dir(
     let metadata = LabelMetadata {
         source_type: "label-metadata".to_string(),
         catalog: catalog_name.to_string(),
-        label_id: label_id.clone(),
+        label_id: label_id.to_string(),
         label_name: label_name.to_string(),
         commit_oid: "".to_string(),
         source_kind: "working-directory".to_string(),
@@ -2065,8 +2118,8 @@ fn run_search(
     catalog: Option<&str>,
     debug: bool,
 ) -> anyhow::Result<()> {
-    // Resolve label ID from explicit flag or default context
-    let (label_id, _, _) = resolve_label_id(label, catalog)?;
+    // Resolve label context from explicit flags or default context
+    let (label_id, catalog_name, label_name) = resolve_label_context(label, catalog)?;
 
     // Generate embedding for query
     let embedder = ParallelEmbedder::new()?;
@@ -2080,9 +2133,12 @@ fn run_search(
         config.qdrant.get_max_upload_bytes(),
     )?;
 
-    // Extract catalog from label_id (format: catalog:label)
-    let catalog = label_id.split(':').next().unwrap_or("");
-    let results = uploader.search_with_label(&embedding, limit, catalog, &label_id)?;
+    println!("Catalog: {}", catalog_name);
+    println!("Label: {}", label_name);
+    println!();
+
+    let results =
+        uploader.search_with_label(&embedding, limit, &catalog_name, label_id.as_str())?;
 
     // Display results as blurbs
     for result in &results {
@@ -2227,8 +2283,8 @@ fn run_view(
         ));
     }
 
-    // Resolve label ID from explicit flag or default context
-    let (label_id, _, _) = resolve_label_id(label, None)?;
+    // Resolve label context from explicit flag or default context
+    let (label_id, catalog_name, label_name) = resolve_label_context(label, None)?;
 
     // Parse all file IDs with selectors
     let mut requests: Vec<(String, ChunkSelector)> = Vec::new();
@@ -2245,11 +2301,17 @@ fn run_view(
         config.qdrant.get_max_upload_bytes(),
     )?;
 
+    if !chunks_only {
+        println!("Catalog: {}", catalog_name);
+        println!("Label: {}", label_name);
+        println!();
+    }
+
     // Collect all results with their original selectors for display
     let mut all_results: Vec<(String, ChunkSelector, Vec<PointResult>)> = Vec::new();
 
     for (file_id, selector) in requests {
-        let chunks = uploader.get_chunks_by_file_id_with_label(&file_id, &label_id)?;
+        let chunks = uploader.get_chunks_by_file_id_with_label(&file_id, label_id.as_str())?;
 
         // Filter by selector
         let filtered: Vec<PointResult> = match &selector {

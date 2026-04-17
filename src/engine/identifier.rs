@@ -26,24 +26,25 @@ use thiserror::Error;
 pub enum IdentifierError {
     /// Catalog name is invalid.
     #[error("[invalid_catalog] {message}")]
-    InvalidCatalog { code: &'static str, message: String },
+    Catalog { code: &'static str, message: String },
 
     /// Label name is invalid.
     #[error("[invalid_label] {message}")]
-    InvalidLabel { code: &'static str, message: String },
+    Label { code: &'static str, message: String },
 
     /// Label ID has invalid syntax.
     #[error("[invalid_label_id] {message}")]
-    InvalidLabelId { code: &'static str, message: String },
+    LabelId { code: &'static str, message: String },
 }
 
 impl IdentifierError {
     /// Returns the error code for programmatic handling.
+    #[allow(dead_code)]
     pub fn code(&self) -> &'static str {
         match self {
-            Self::InvalidCatalog { code, .. } => code,
-            Self::InvalidLabel { code, .. } => code,
-            Self::InvalidLabelId { code, .. } => code,
+            Self::Catalog { code, .. } => code,
+            Self::Label { code, .. } => code,
+            Self::LabelId { code, .. } => code,
         }
     }
 }
@@ -66,14 +67,14 @@ const MAX_IDENTIFIER_LENGTH: usize = 128;
 /// Examples: `my-repo`, `frontend`, `backend-api`
 pub fn validate_catalog(name: &str) -> Result<(), IdentifierError> {
     if name.is_empty() {
-        return Err(IdentifierError::InvalidCatalog {
+        return Err(IdentifierError::Catalog {
             code: "catalog_empty",
             message: "Catalog name cannot be empty".to_string(),
         });
     }
 
     if name.len() > MAX_IDENTIFIER_LENGTH {
-        return Err(IdentifierError::InvalidCatalog {
+        return Err(IdentifierError::Catalog {
             code: "catalog_too_long",
             message: format!(
                 "Catalog name exceeds maximum length of {} characters",
@@ -84,11 +85,14 @@ pub fn validate_catalog(name: &str) -> Result<(), IdentifierError> {
 
     // Kebab-case: lowercase alphanumeric with hyphens
     let valid = name.split('-').all(|part| {
-        !part.is_empty() && part.chars().all(|c| c.is_ascii_lowercase() || c.is_ascii_digit())
+        !part.is_empty()
+            && part
+                .chars()
+                .all(|c| c.is_ascii_lowercase() || c.is_ascii_digit())
     });
 
     if !valid {
-        return Err(IdentifierError::InvalidCatalog {
+        return Err(IdentifierError::Catalog {
             code: "catalog_invalid_format",
             message: "Catalog name must be kebab-case (lowercase alphanumeric with hyphens, e.g., 'my-repo')".to_string(),
         });
@@ -108,14 +112,14 @@ pub fn validate_catalog(name: &str) -> Result<(), IdentifierError> {
 /// Examples: `main`, `feature/x`, `release/v1.2.3`, `branch=main`, `commit=abc123`
 pub fn validate_label(name: &str) -> Result<(), IdentifierError> {
     if name.is_empty() {
-        return Err(IdentifierError::InvalidLabel {
+        return Err(IdentifierError::Label {
             code: "label_empty",
             message: "Label name cannot be empty".to_string(),
         });
     }
 
     if name.len() > MAX_IDENTIFIER_LENGTH {
-        return Err(IdentifierError::InvalidLabel {
+        return Err(IdentifierError::Label {
             code: "label_too_long",
             message: format!(
                 "Label name exceeds maximum length of {} characters",
@@ -130,8 +134,12 @@ pub fn validate_label(name: &str) -> Result<(), IdentifierError> {
         let payload = &name[eq_idx + 1..];
 
         // Validate kind: alphanumeric only
-        if kind.is_empty() || !kind.chars().all(|c| c.is_ascii_lowercase() || c.is_ascii_digit()) {
-            return Err(IdentifierError::InvalidLabel {
+        if kind.is_empty()
+            || !kind
+                .chars()
+                .all(|c| c.is_ascii_lowercase() || c.is_ascii_digit())
+        {
+            return Err(IdentifierError::Label {
                 code: "label_invalid_kind",
                 message: format!(
                     "Typed label kind must be alphanumeric (e.g., 'branch', 'commit'), got '{}'",
@@ -154,23 +162,22 @@ pub fn validate_label(name: &str) -> Result<(), IdentifierError> {
 /// Rule: `^[a-z0-9]+(?:[./-][a-z0-9]+)*$`
 fn validate_label_payload(payload: &str) -> Result<(), IdentifierError> {
     if payload.is_empty() {
-        return Err(IdentifierError::InvalidLabel {
+        return Err(IdentifierError::Label {
             code: "label_payload_empty",
             message: "Label payload cannot be empty".to_string(),
         });
     }
 
     // Split on separators and validate each segment
-    let mut chars = payload.chars().peekable();
     let mut segment_len = 0usize;
 
-    while let Some(c) = chars.next() {
+    for c in payload.chars() {
         if c.is_ascii_lowercase() || c.is_ascii_digit() {
             segment_len += 1;
         } else if c == '.' || c == '/' || c == '-' {
             // Separator: must have at least one char before it
             if segment_len == 0 {
-                return Err(IdentifierError::InvalidLabel {
+                return Err(IdentifierError::Label {
                     code: "label_payload_invalid_format",
                     message: format!(
                         "Label payload '{}' has invalid format: segments must be alphanumeric separated by '.', '/', or '-'",
@@ -180,7 +187,7 @@ fn validate_label_payload(payload: &str) -> Result<(), IdentifierError> {
             }
             segment_len = 0;
         } else {
-            return Err(IdentifierError::InvalidLabel {
+            return Err(IdentifierError::Label {
                 code: "label_payload_invalid_char",
                 message: format!(
                     "Label payload '{}' contains invalid character '{}'. Allowed: lowercase letters, digits, '.', '/', '-'",
@@ -192,12 +199,9 @@ fn validate_label_payload(payload: &str) -> Result<(), IdentifierError> {
 
     // Must end with an alphanumeric segment
     if segment_len == 0 {
-        return Err(IdentifierError::InvalidLabel {
+        return Err(IdentifierError::Label {
             code: "label_payload_trailing_separator",
-            message: format!(
-                "Label payload '{}' cannot end with a separator",
-                payload
-            ),
+            message: format!("Label payload '{}' cannot end with a separator", payload),
         });
     }
 
@@ -234,6 +238,7 @@ impl LabelId {
     }
 
     /// Creates a LabelId without validation (for reading from Qdrant).
+    #[allow(dead_code)]
     pub fn new_unchecked(catalog: &str, label: &str) -> Self {
         Self {
             catalog: catalog.to_string(),
@@ -246,7 +251,7 @@ impl LabelId {
     pub fn parse(s: &str) -> Result<Self, IdentifierError> {
         let parts: Vec<&str> = s.splitn(2, ':').collect();
         if parts.len() != 2 {
-            return Err(IdentifierError::InvalidLabelId {
+            return Err(IdentifierError::LabelId {
                 code: "label_id_missing_colon",
                 message: format!("Label ID '{}' must be in 'catalog:label' format", s),
             });
@@ -255,11 +260,13 @@ impl LabelId {
     }
 
     /// Returns the catalog component.
+    #[allow(dead_code)]
     pub fn catalog(&self) -> &str {
         &self.catalog
     }
 
     /// Returns the label component.
+    #[allow(dead_code)]
     pub fn label(&self) -> &str {
         &self.label
     }
@@ -273,6 +280,19 @@ impl LabelId {
 impl fmt::Display for LabelId {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         write!(f, "{}", self.combined)
+    }
+}
+
+impl AsRef<str> for LabelId {
+    fn as_ref(&self) -> &str {
+        &self.combined
+    }
+}
+
+impl std::ops::Deref for LabelId {
+    type Target = str;
+    fn deref(&self) -> &Self::Target {
+        &self.combined
     }
 }
 
@@ -307,6 +327,7 @@ impl<'de> serde::Deserialize<'de> for LabelId {
 // ============================================================================
 
 /// Computes the label_id string from catalog and label names.
+#[allow(dead_code)]
 pub fn compute_label_id(catalog: &str, label: &str) -> Result<String, IdentifierError> {
     validate_catalog(catalog)?;
     validate_label(label)?;
@@ -333,21 +354,36 @@ mod tests {
     fn test_validate_catalog_invalid() {
         // Empty
         assert_eq!(validate_catalog("").unwrap_err().code(), "catalog_empty");
-        
+
         // Uppercase not allowed
-        assert_eq!(validate_catalog("MyRepo").unwrap_err().code(), "catalog_invalid_format");
-        
+        assert_eq!(
+            validate_catalog("MyRepo").unwrap_err().code(),
+            "catalog_invalid_format"
+        );
+
         // Underscore not allowed
-        assert_eq!(validate_catalog("my_repo").unwrap_err().code(), "catalog_invalid_format");
-        
+        assert_eq!(
+            validate_catalog("my_repo").unwrap_err().code(),
+            "catalog_invalid_format"
+        );
+
         // Double hyphen
-        assert_eq!(validate_catalog("my--repo").unwrap_err().code(), "catalog_invalid_format");
-        
+        assert_eq!(
+            validate_catalog("my--repo").unwrap_err().code(),
+            "catalog_invalid_format"
+        );
+
         // Leading hyphen
-        assert_eq!(validate_catalog("-repo").unwrap_err().code(), "catalog_invalid_format");
-        
+        assert_eq!(
+            validate_catalog("-repo").unwrap_err().code(),
+            "catalog_invalid_format"
+        );
+
         // Trailing hyphen
-        assert_eq!(validate_catalog("repo-").unwrap_err().code(), "catalog_invalid_format");
+        assert_eq!(
+            validate_catalog("repo-").unwrap_err().code(),
+            "catalog_invalid_format"
+        );
     }
 
     #[test]
@@ -372,18 +408,30 @@ mod tests {
     fn test_validate_label_invalid() {
         // Empty
         assert_eq!(validate_label("").unwrap_err().code(), "label_empty");
-        
+
         // Uppercase
-        assert_eq!(validate_label("Main").unwrap_err().code(), "label_payload_invalid_char");
-        
+        assert_eq!(
+            validate_label("Main").unwrap_err().code(),
+            "label_payload_invalid_char"
+        );
+
         // Underscore (invalid in payload)
-        assert_eq!(validate_label("feature_x").unwrap_err().code(), "label_payload_invalid_char");
-        
+        assert_eq!(
+            validate_label("feature_x").unwrap_err().code(),
+            "label_payload_invalid_char"
+        );
+
         // Trailing separator
-        assert_eq!(validate_label("feature/").unwrap_err().code(), "label_payload_trailing_separator");
-        
+        assert_eq!(
+            validate_label("feature/").unwrap_err().code(),
+            "label_payload_trailing_separator"
+        );
+
         // Empty kind
-        assert_eq!(validate_label("=main").unwrap_err().code(), "label_invalid_kind");
+        assert_eq!(
+            validate_label("=main").unwrap_err().code(),
+            "label_invalid_kind"
+        );
     }
 
     #[test]

@@ -50,6 +50,33 @@
 use super::util::compute_hash;
 use tree_sitter::{Language, Node, Parser};
 
+/// Percent-encodes reserved characters in a path component for use in locators (breadcrumbs).
+///
+/// Per spec §8.3, these characters must be encoded: `:`, `@`, `=`, `+`, `#`, `%`, 
+/// whitespace, and control characters. `/` is NOT encoded (it's a path separator).
+fn percent_encode_path_component(s: &str) -> String {
+    let mut result = String::with_capacity(s.len());
+    for c in s.chars() {
+        match c {
+            // Grammar-reserved characters
+            ':' | '@' | '=' | '+' | '#' | '%' => {
+                for byte in c.to_string().as_bytes() {
+                    result.push_str(&format!("%{:02X}", byte));
+                }
+            }
+            // Whitespace and control characters
+            c if c.is_control() || c.is_whitespace() => {
+                for byte in c.to_string().as_bytes() {
+                    result.push_str(&format!("%{:02X}", byte));
+                }
+            }
+            // Safe characters pass through
+            _ => result.push(c),
+        }
+    }
+    result
+}
+
 /// Target chunk size in characters (same as runtime chunker's target_size)
 pub const TARGET_CHARS: usize = 6000;
 
@@ -902,10 +929,12 @@ pub fn partition_typescript(
     let total_lines = lines.len();
 
     // Build base breadcrumb: package:file
+    // File name component is percent-encoded per spec §8.3 to handle reserved characters
+    let encoded_file_name = percent_encode_path_component(&config.file_name);
     let base_breadcrumb = if config.package_name.is_empty() {
-        config.file_name.clone()
+        encoded_file_name
     } else {
-        format!("{}:{}", config.package_name, config.file_name)
+        format!("{}:{}", config.package_name, encoded_file_name)
     };
 
     // Step 1: Start with the whole file as one chunk

@@ -2421,9 +2421,9 @@ fn run_view(
                 file_id, chunk_ordinal, chunk_ordinal, chunk_count, breadcrumb
             );
 
-            // Source line
+            // Source line (non-grammar format per spec §8.6)
             println!(
-                "Source: {}:{}",
+                "Source: ({}) {}",
                 sanitize_for_terminal(&result.payload.catalog),
                 sanitize_for_terminal(&result.payload.relative_path)
             );

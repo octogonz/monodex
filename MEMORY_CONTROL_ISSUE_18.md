@@ -405,11 +405,20 @@ After this change:
 
 ## Testing Checklist
 
-- [ ] Test `"auto"` config on macOS (no cgroup)
+- [x] Test `"auto"` config on macOS (no cgroup)
+  - Result: Auto-detected 4 instances × 3 threads on 12-core machine
+  - Memory warning: 17.8 GB available, 10.5 GB estimated usage
 - [ ] Test `"auto"` config on Linux with cgroup limits
-- [ ] Test explicit integer values for `modelInstances` and `threadsPerInstance`
-- [ ] Verify memory warning prints when estimate exceeds available
+- [x] Test explicit integer values for `modelInstances` and `threadsPerInstance`
+  - Result: Correctly uses "Using explicit config: 2 instances × 4 threads/instance"
+  - Estimated RAM: 5.5 GB (2 × 2.5 GiB + 0.5 GiB overhead)
+- [x] Verify memory warning prints when estimate exceeds available
+  - Result: Shows "🚨 Warning: estimate exceeds available RAM by 18%" when 8 instances configured
 - [x] Verify incremental relabeling skips files that already have the label
+  - Result: Shows "Existing files already labeled: 186 (skipping)"
 - [x] Verify sentinel is labeled last in `add_label_to_file_chunks`
+  - Verified in code: non-sentinel chunks updated first, sentinel updated last
 - [ ] Verify upload flush triggers on accumulated bytes threshold
-- [ ] End-to-end crawl with new config on sparo catalog
+  - Would require large crawl to trigger; code path verified
+- [x] End-to-end crawl with new config on sparo catalog
+  - Completed successfully with auto-detection and memory warning

@@ -2,21 +2,30 @@
 //!
 //! This module provides memory and CPU detection for the `"auto"` embedding model
 //! configuration heuristic. The heuristic is deterministic - it does not depend on
-//! current system load, only on static system properties.
+//! current system load, only on static system properties like total RAM and CPU core count.
 
 use anyhow::Result;
 
 /// RAM used per ONNX model instance (in bytes)
-/// Based on empirical measurement: ~700MB-1GB for model + overhead
-/// Using 2.5 GiB to be conservative
-const PER_INSTANCE_RAM: u64 = 2 * 1024 * 1024 * 1024 + 512 * 1024 * 1024; // 2.5 GiB
+///
+/// Based on empirical measurement, each ONNX session uses approximately 700MB-1GB
+/// for the model weights plus runtime overhead. However, we use 2.5 GiB as the
+/// planning constant to provide conservative headroom for:
+/// - Memory fragmentation
+/// - Peak usage during inference
+/// - System memory pressure from other processes
+/// - Avoiding OOM on memory-constrained systems
+///
+/// This conservative sizing ensures that the auto-detection heuristic errs on the
+/// side of using fewer instances rather than risking OOM failures.
+pub const PER_INSTANCE_RAM: u64 = 2 * 1024 * 1024 * 1024 + 512 * 1024 * 1024; // 2.5 GiB
 
 /// Baseline RAM to reserve for OS and other processes (in bytes)
 /// We reserve the larger of 4 GiB or 25% of total RAM
 const BASELINE_RESERVE_MIN: u64 = 4 * 1024 * 1024 * 1024; // 4 GiB
 
 /// Additional overhead for embedding process (tokenizer, buffers, etc.)
-const EMBEDDING_OVERHEAD: u64 = 512 * 1024 * 1024; // 0.5 GiB
+pub const EMBEDDING_OVERHEAD: u64 = 512 * 1024 * 1024; // 0.5 GiB
 
 /// Resolved embedding configuration
 #[derive(Debug, Clone)]
@@ -30,10 +39,30 @@ pub struct ResolvedEmbeddingConfig {
     /// Available RAM at startup (for warnings)
     pub available_ram: u64,
     /// Estimated RAM usage for the embedding process
-    #[allow(dead_code)]
     pub estimated_ram_usage: u64,
     /// Whether cgroup limits were detected (Linux only)
     pub cgroup_limited: bool,
+}
+
+/// Estimate RAM usage for a given number of model instances.
+///
+/// This is a simple calculation: instances × PER_INSTANCE_RAM + EMBEDDING_OVERHEAD.
+/// Used for memory warnings when explicit config values are provided.
+pub fn estimate_ram_usage(model_instances: usize) -> u64 {
+    (model_instances as u64)
+        .saturating_mul(PER_INSTANCE_RAM)
+        .saturating_add(EMBEDDING_OVERHEAD)
+}
+
+/// Get the physical CPU core count, falling back to logical cores if unavailable.
+///
+/// This centralizes the core count logic to ensure consistency across the codebase.
+pub fn get_physical_core_count() -> usize {
+    // Note: We need to create a System instance to query physical core count
+    // This is relatively cheap compared to System::new_all()
+    use sysinfo::System;
+    let sys = System::new();
+    System::physical_core_count(&sys).unwrap_or_else(num_cpus::get)
 }
 
 /// Compute embedding configuration from system properties.
@@ -56,9 +85,10 @@ pub struct ResolvedEmbeddingConfig {
 pub fn compute_auto_embedding_config() -> Result<ResolvedEmbeddingConfig> {
     use sysinfo::System;
 
-    let mut sys = System::new_all();
+    // Use System::new() + targeted refreshes instead of System::new_all()
+    // System::new_all() enumerates all processes which is expensive and unnecessary
+    let mut sys = System::new();
     sys.refresh_memory();
-    sys.refresh_cpu_all();
 
     // Get total system memory
     let total_memory = sys.total_memory();
@@ -66,11 +96,8 @@ pub fn compute_auto_embedding_config() -> Result<ResolvedEmbeddingConfig> {
     // Get available memory (for warning purposes only - not used in sizing)
     let available_memory = sys.available_memory();
 
-    // Get CPU core count (prefer physical cores, fall back to logical)
-    let physical_cores = System::physical_core_count(&sys).unwrap_or_else(|| {
-        // Fall back to logical cores if physical not available
-        num_cpus::get()
-    });
+    // Get CPU core count using centralized function
+    let physical_cores = get_physical_core_count();
 
     // Calculate effective total RAM (consider cgroup limits on Linux)
     let (effective_total_ram, cgroup_limited) = get_effective_total_ram(&sys, total_memory);
@@ -100,10 +127,8 @@ pub fn compute_auto_embedding_config() -> Result<ResolvedEmbeddingConfig> {
     // Threads per instance: distribute remaining cores
     let threads_per_instance = std::cmp::max(1, physical_cores / model_instances);
 
-    // Estimate RAM usage
-    let estimated_ram_usage = (model_instances as u64)
-        .saturating_mul(PER_INSTANCE_RAM)
-        .saturating_add(EMBEDDING_OVERHEAD);
+    // Estimate RAM usage using helper function
+    let estimated_ram_usage = estimate_ram_usage(model_instances);
 
     Ok(ResolvedEmbeddingConfig {
         model_instances,

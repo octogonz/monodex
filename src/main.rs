@@ -17,7 +17,10 @@ use engine::{
         resolve_commit_oid,
     },
     partitioner::{ChunkQualityReport, PartitionConfig, PartitionDebug, partition_typescript},
-    system_info::{compute_auto_embedding_config, format_bytes},
+    system_info::{
+        ResolvedEmbeddingConfig, compute_auto_embedding_config, estimate_ram_usage, format_bytes,
+        get_physical_core_count,
+    },
     uploader::{LabelMetadata, PointResult, QdrantUploader, is_payload_limit_error},
     util::compute_label_id,
 };
@@ -242,6 +245,22 @@ impl<'de> serde::Deserialize<'de> for EmbeddingSizeValue {
                     Ok(EmbeddingSizeValue::Exact(v as usize))
                 } else {
                     Err(de::Error::custom("integer must be >= 1"))
+                }
+            }
+
+            fn visit_f64<E>(self, v: f64) -> Result<Self::Value, E>
+            where
+                E: de::Error,
+            {
+                // Accept whole numbers from JSON parsers that serialize integers as floats
+                if v >= 1.0 && v.fract() == 0.0 {
+                    Ok(EmbeddingSizeValue::Exact(v as usize))
+                } else if v < 1.0 {
+                    Err(de::Error::custom("integer must be >= 1"))
+                } else {
+                    Err(de::Error::custom(
+                        "expected an integer >= 1, got fractional value",
+                    ))
                 }
             }
         }
@@ -729,12 +748,16 @@ fn run_use(catalog: Option<&str>, label: Option<String>, config: &Config) -> any
 // ============================================================================
 
 /// Resolve embedding configuration from config file, applying "auto" heuristic if needed.
-/// Returns (model_instances, threads_per_instance) for the ParallelEmbedder.
-fn resolve_embedding_config(config: &EmbeddingModelConfig) -> (usize, usize) {
+/// Returns ResolvedEmbeddingConfig with all resolved values including memory info for warnings.
+fn resolve_embedding_config(config: &EmbeddingModelConfig) -> ResolvedEmbeddingConfig {
+    // Try to get auto config once, to be reused across match arms that need it.
+    // This avoids redundant System::new() calls which enumerate processes.
+    let auto_config = compute_auto_embedding_config();
+
     match (&config.model_instances, &config.threads_per_instance) {
         (EmbeddingSizeValue::Auto, EmbeddingSizeValue::Auto) => {
-            // Both auto: compute from system properties
-            match compute_auto_embedding_config() {
+            // Both auto: use auto config directly
+            match &auto_config {
                 Ok(resolved) => {
                     println!(
                         "Auto-detected embedding config: {} instances × {} threads",
@@ -746,45 +769,67 @@ fn resolve_embedding_config(config: &EmbeddingModelConfig) -> (usize, usize) {
                             format_bytes(resolved.total_ram)
                         );
                     }
-                    (resolved.model_instances, resolved.threads_per_instance)
+                    resolved.clone()
                 }
                 Err(e) => {
                     eprintln!("Warning: Failed to auto-detect embedding config: {}", e);
                     eprintln!("Using fallback: 1 instance × {} threads", num_cpus::get());
-                    (1, num_cpus::get())
+                    ResolvedEmbeddingConfig {
+                        model_instances: 1,
+                        threads_per_instance: num_cpus::get(),
+                        total_ram: 0,
+                        available_ram: 0,
+                        estimated_ram_usage: estimate_ram_usage(1),
+                        cgroup_limited: false,
+                    }
                 }
             }
         }
         (EmbeddingSizeValue::Auto, EmbeddingSizeValue::Exact(threads)) => {
             // Auto instances, explicit threads
-            match compute_auto_embedding_config() {
+            match &auto_config {
                 Ok(resolved) => {
                     println!(
                         "Auto-detected model instances: {} (using explicit {} threads/instance)",
                         resolved.model_instances, threads
                     );
-                    (resolved.model_instances, *threads)
+                    ResolvedEmbeddingConfig {
+                        threads_per_instance: *threads,
+                        ..resolved.clone()
+                    }
                 }
                 Err(e) => {
                     eprintln!("Warning: Failed to auto-detect embedding config: {}", e);
                     eprintln!("Using fallback: 1 instance × {} threads", threads);
-                    (1, *threads)
+                    ResolvedEmbeddingConfig {
+                        model_instances: 1,
+                        threads_per_instance: *threads,
+                        total_ram: 0,
+                        available_ram: 0,
+                        estimated_ram_usage: estimate_ram_usage(1),
+                        cgroup_limited: false,
+                    }
                 }
             }
         }
         (EmbeddingSizeValue::Exact(instances), EmbeddingSizeValue::Auto) => {
             // Explicit instances, auto threads
-            // Need to create a System instance to query physical core count
-            let mut sys = sysinfo::System::new();
-            sys.refresh_cpu_all();
-            let physical_cores =
-                sysinfo::System::physical_core_count(&sys).unwrap_or_else(num_cpus::get);
+            let physical_cores = get_physical_core_count();
             let threads = std::cmp::max(1, physical_cores / instances);
             println!(
                 "Using explicit {} model instances (auto-detected {} threads/instance)",
                 instances, threads
             );
-            (*instances, threads)
+            // Get memory info for warning purposes only
+            let memory_info = get_memory_info();
+            ResolvedEmbeddingConfig {
+                model_instances: *instances,
+                threads_per_instance: threads,
+                total_ram: memory_info.0,
+                available_ram: memory_info.1,
+                estimated_ram_usage: estimate_ram_usage(*instances),
+                cgroup_limited: memory_info.2,
+            }
         }
         (EmbeddingSizeValue::Exact(instances), EmbeddingSizeValue::Exact(threads)) => {
             // Both explicit
@@ -792,49 +837,83 @@ fn resolve_embedding_config(config: &EmbeddingModelConfig) -> (usize, usize) {
                 "Using explicit config: {} instances × {} threads/instance",
                 instances, threads
             );
-            (*instances, *threads)
+            // Get memory info for warning purposes only
+            let memory_info = get_memory_info();
+            ResolvedEmbeddingConfig {
+                model_instances: *instances,
+                threads_per_instance: *threads,
+                total_ram: memory_info.0,
+                available_ram: memory_info.1,
+                estimated_ram_usage: estimate_ram_usage(*instances),
+                cgroup_limited: memory_info.2,
+            }
         }
     }
 }
 
-/// Print memory status and warning if estimated usage exceeds available RAM.
-/// Uses the resolved model_instances value to compute an accurate estimate.
-fn print_memory_warning(model_instances: usize) {
-    match compute_auto_embedding_config() {
-        Ok(info) => {
-            // Compute estimate based on actual resolved config, not auto-detected defaults
-            let per_instance_ram: u64 = 2 * 1024 * 1024 * 1024 + 512 * 1024 * 1024; // 2.5 GiB
-            let baseline: u64 = 512 * 1024 * 1024; // 0.5 GiB overhead
-            let estimated_usage = (model_instances as u64) * per_instance_ram + baseline;
+/// Get memory info (total_ram, available_ram, cgroup_limited) for warning purposes.
+/// Returns (0, 0, false) if memory info cannot be obtained.
+fn get_memory_info() -> (u64, u64, bool) {
+    use sysinfo::System;
 
-            println!(
-                "Currently available system RAM: {}",
-                format_bytes(info.available_ram)
-            );
-            println!(
-                "Estimated embedding RAM usage: {} ({} instance{})",
-                format_bytes(estimated_usage),
-                model_instances,
-                if model_instances > 1 { "s" } else { "" }
-            );
+    let mut sys = System::new();
+    sys.refresh_memory();
 
-            if estimated_usage > info.available_ram {
-                let excess_pct =
-                    ((estimated_usage as f64 / info.available_ram as f64) - 1.0) * 100.0;
-                eprintln!();
-                eprintln!(
-                    "🚨 Warning: estimate exceeds available RAM by {:.0}%.",
-                    excess_pct
-                );
-                eprintln!("   Consider adjusting \"embeddingModel.modelInstances\" or");
-                eprintln!("   \"embeddingModel.threadsPerInstance\" in config.json");
-                eprintln!("   Suggestion: start with modelInstances = 1");
+    let total = sys.total_memory();
+    let available = sys.available_memory();
+
+    // Check cgroup limits on Linux
+    // When cgroup-limited, we must use cgroup's free_memory instead of host-level available
+    #[cfg(target_os = "linux")]
+    {
+        if let Some(cgroup_info) = sys.cgroup_limits() {
+            let cgroup_limit = cgroup_info.total_memory;
+            if cgroup_limit > 0 && cgroup_limit < total {
+                // Use cgroup's free_memory for available RAM in containerized environments
+                // This is more accurate than host-level available_memory
+                let cgroup_available = cgroup_info.free_memory;
+                return (cgroup_limit, cgroup_available, true);
             }
         }
-        Err(e) => {
-            // Don't fail if we can't get memory info, just warn
-            eprintln!("Warning: Could not get memory info: {}", e);
+    }
+
+    (total, available, false)
+}
+
+/// Print memory status and warning if estimated usage exceeds available RAM.
+fn print_memory_warning(resolved: &ResolvedEmbeddingConfig) {
+    // Skip warning if we couldn't get memory info
+    if resolved.available_ram == 0 {
+        eprintln!("Warning: Could not get memory info for warning check");
+        return;
+    }
+
+    println!(
+        "Currently available system RAM: {}",
+        format_bytes(resolved.available_ram)
+    );
+    println!(
+        "Estimated embedding RAM usage: {} ({} instance{})",
+        format_bytes(resolved.estimated_ram_usage),
+        resolved.model_instances,
+        if resolved.model_instances > 1 {
+            "s"
+        } else {
+            ""
         }
+    );
+
+    if resolved.estimated_ram_usage > resolved.available_ram {
+        let excess_pct =
+            ((resolved.estimated_ram_usage as f64 / resolved.available_ram as f64) - 1.0) * 100.0;
+        eprintln!();
+        eprintln!(
+            "🚨 Warning: estimate exceeds available RAM by {:.0}%.",
+            excess_pct
+        );
+        eprintln!("   Consider adjusting \"embeddingModel.modelInstances\" or");
+        eprintln!("   \"embeddingModel.threadsPerInstance\" in config.json");
+        eprintln!("   Suggestion: start with modelInstances = 1");
     }
 }
 
@@ -872,15 +951,15 @@ fn run_embed_upload_pipeline(
     let total_chunks = all_chunks.len();
 
     // Resolve embedding config (handles "auto" and explicit values)
-    let (model_instances, threads_per_instance) = resolve_embedding_config(embedding_config);
+    let resolved = resolve_embedding_config(embedding_config);
 
     // Print memory warning before embedding
-    print_memory_warning(model_instances);
+    print_memory_warning(&resolved);
 
     // Initialize parallel embedder with resolved config
     let embedder = ParallelEmbedder::with_config(engine::ParallelConfig {
-        num_workers: model_instances,
-        intra_threads: threads_per_instance,
+        num_workers: resolved.model_instances,
+        intra_threads: resolved.threads_per_instance,
     })?;
 
     println!(
@@ -983,7 +1062,7 @@ fn run_embed_upload_pipeline(
             // Flush when time threshold OR size threshold is reached
             let should_flush_by_size = accumulated_bytes >= max_accumulated_bytes;
             if should_flush_by_size && !accumulated.is_empty() {
-                eprintln!(
+                println!(
                     "[{}] Accumulated {} bytes ({:.1} MB) >= limit ({:.1} MB), flushing {} chunks...",
                     chrono_timestamp(),
                     accumulated_bytes,
@@ -995,7 +1074,7 @@ fn run_embed_upload_pipeline(
 
             if should_upload || should_flush_by_size {
                 let count = accumulated.len();
-                eprintln!(
+                println!(
                     "[{}] Uploading checkpoint ({} chunks)...",
                     chrono_timestamp(),
                     count

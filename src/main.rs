@@ -818,7 +818,13 @@ fn resolve_embedding_config(config: &EmbeddingModelConfig) -> ResolvedEmbeddingC
             );
             // Get memory info via compute_auto_embedding_config for cgroup-aware values
             let memory_info = compute_auto_embedding_config()
-                .map(|resolved| (resolved.total_ram, resolved.available_ram, resolved.cgroup_limited))
+                .map(|resolved| {
+                    (
+                        resolved.total_ram,
+                        resolved.available_ram,
+                        resolved.cgroup_limited,
+                    )
+                })
                 .unwrap_or((0, 0, false));
             ResolvedEmbeddingConfig {
                 model_instances: *instances,
@@ -837,7 +843,13 @@ fn resolve_embedding_config(config: &EmbeddingModelConfig) -> ResolvedEmbeddingC
             );
             // Get memory info via compute_auto_embedding_config for cgroup-aware values
             let memory_info = compute_auto_embedding_config()
-                .map(|resolved| (resolved.total_ram, resolved.available_ram, resolved.cgroup_limited))
+                .map(|resolved| {
+                    (
+                        resolved.total_ram,
+                        resolved.available_ram,
+                        resolved.cgroup_limited,
+                    )
+                })
                 .unwrap_or((0, 0, false));
             ResolvedEmbeddingConfig {
                 model_instances: *instances,

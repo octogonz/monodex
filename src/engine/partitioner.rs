@@ -2190,4 +2190,51 @@ export function* parseGitStatus() {
         // that lacks natural split boundaries. This is a known limitation that may
         // be addressed in a future update.
     }
+
+    #[test]
+    fn test_breadcrumb_percent_encoding_round_trip() {
+        // Test that file names with reserved characters are percent-encoded in breadcrumbs.
+        // Per spec §8.3, `:` must be encoded as `%3A` in locators/breadcrumbs.
+        // This test uses a file named `weird:file.ts` and verifies the emitted breadcrumb
+        // contains `weird%3Afile.ts` (not `weird:file.ts` which would be ambiguous).
+        let source = r#"
+export function hello(): string {
+    return "Hello, world!";
+}
+"#;
+        let config = PartitionConfig {
+            // File name contains `:` which is a reserved character in the locator grammar
+            file_name: "weird:file.ts".to_string(),
+            package_name: "test-package".to_string(),
+            allow_fallback: false,
+            ..Default::default()
+        };
+        let chunks = partition_typescript(source, &config, "weird:file.ts", "test-catalog");
+
+        // There should be exactly one chunk (the function)
+        assert!(!chunks.is_empty(), "Expected at least one chunk");
+
+        let chunk = &chunks[0];
+
+        // The breadcrumb should have `:` encoded as `%3A` in the file name component
+        // Expected format: "test-package:weird%3Afile.ts[:symbol]"
+        // NOT: "test-package:weird:file.ts[:symbol]" (ambiguous - `:` in file name creates extra segments)
+        assert!(
+            chunk.breadcrumb.contains("weird%3Afile.ts"),
+            "Breadcrumb should have percent-encoded colon in file name. Got: {}",
+            chunk.breadcrumb
+        );
+        assert!(
+            !chunk.breadcrumb.contains("weird:file.ts"),
+            "Breadcrumb should NOT contain unencoded colon in file name. Got: {}",
+            chunk.breadcrumb
+        );
+
+        // Verify the base format: package:encoded_file[:symbol]
+        assert!(
+            chunk.breadcrumb.starts_with("test-package:weird%3Afile.ts"),
+            "Breadcrumb should start with 'test-package:weird%3Afile.ts', got: {}",
+            chunk.breadcrumb
+        );
+    }
 }

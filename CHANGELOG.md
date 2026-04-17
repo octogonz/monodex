@@ -25,6 +25,10 @@ PUBLISHING PROCEDURE:
 
 ## Unreleased
 
+### Changed
+
+- **Breaking: Stricter identifier validation**: Catalog and label names must now follow strict syntax rules. Catalogs use kebab-case (e.g., `my-repo`). Labels use Git-like identifiers (e.g., `main`, `feature/x`, `release/v1.2.3`). The typed label form `kind=payload` is supported (e.g., `branch=main`, `commit=abc123`). Existing collections with non-conforming identifiers must be recreated. See [#25](https://github.com/microsoft/monodex/issues/25) for the full syntax specification.
+
 ### Added
 
 - **Deterministic embedding memory control**: The `embeddingModel` config section now supports `"auto"` values for `modelInstances` and `threadsPerInstance`, which are computed deterministically from system properties (total RAM, CPU cores, and Linux cgroup limits). This prevents OOM failures on memory-constrained machines while maximizing parallelism on capable hardware.

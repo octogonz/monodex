@@ -15,6 +15,7 @@ pub mod parallel_embedder;
 pub mod partitioner;
 pub mod system_info;
 pub mod uploader;
+pub mod identifier;
 pub mod util;
 
 // Re-export commonly used types for convenience

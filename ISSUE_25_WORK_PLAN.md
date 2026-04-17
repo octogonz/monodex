@@ -102,7 +102,7 @@ The error API is the agent's call. Whatever form it takes (enum, struct, thiserr
 
 ## 7. Tasks
 
-- [ ] 1. **Centralize identifier validation and composition.** The current code has `compute_label_id` in `util.rs` and ad-hoc colon-splitting in `main.rs`. Move validation and composition into one module. Every `label_id` produced in the codebase flows through the single composition function defined here. Internal module layout, function signatures, and error types are the agent's call, subject to the invariants above.
+- [x] 1. **Centralize identifier validation and composition.** The current code has `compute_label_id` in `util.rs` and ad-hoc colon-splitting in `main.rs`. Move validation and composition into one module. Every `label_id` produced in the codebase flows through the single composition function defined here. Internal module layout, function signatures, and error types are the agent's call, subject to the invariants above.
 
 - [ ] 2. **Rewrite CLI flag handling in `src/main.rs`.** `--catalog` and `--label` each take a bare validated identifier. The legacy `--label catalog:label` form is rejected with a clear error. The existing `resolve_label_id` function should go away or be rewritten; its current contract (takes a colon-joined string) is wrong. Defaults fill in missing components.
 

@@ -2,11 +2,12 @@
 
 ## 1. Scope
 
-This document defines the syntax of identifiers and references used by Monodex at the CLI and in storage. It covers:
+This document defines the syntax of identifiers, locators, and reports used by Monodex at the CLI and in storage. It covers:
 
 - **Catalogs**: names Monodex assigns to data sources it indexes.
 - **Labels**: names Monodex assigns to versions/snapshots within a catalog.
-- **References**: composite strings that locate content across catalog, label, and path.
+- **Locators**: parseable strings that identify content within a grammar (breadcrumbs and references).
+- **Reports**: human-facing output that describes content without parseable structure.
 
 It does **not** define what paths are allowed inside a catalog. Paths are bytes from external systems (Git trees, working directories, issue systems). Monodex does not own them and must not reject or silently drop them. See §8 for how paths are handled.
 
@@ -17,7 +18,8 @@ It does **not** define what paths are allowed inside a catalog. Paths are bytes 
 - **Catalog** — a Monodex-assigned name for a data source. Few and stable. Chosen by the user.
 - **Label** — a Monodex-assigned name for a version or snapshot of a catalog (branch, commit, tag, working-directory state, time snapshot). Many and diverse.
 - **Path** — a location within a label. The identity of a path is determined by the underlying data source. Monodex does not assign or constrain path syntax.
-- **Reference** — a composite string that locates content, composed of zero or more of: catalog, label, path.
+- **Locator** — a structured string that identifies content within a grammar. Two locator grammars exist: **breadcrumbs** (catalog-relative, of the form `package:file:symbol`) and **references** (globally qualified, of the form `@catalog:label:path` and its sub-forms). Locators are parseable; their structural characters must be encoded when they appear inside path or identifier data.
+- **Report** — human-facing output (CLI stdout, error messages, log lines). Reports are not locators. They use decoded paths and separate fields by visual devices that cannot collide with identifier characters.
 
 Catalogs and labels are **identifiers Monodex owns**. Paths are **external data Monodex indexes**. This distinction is load-bearing; see §8.
 
@@ -172,7 +174,7 @@ kind=payload:path
 
 ### 8.1 Principle
 
-Paths are facts about external systems. Monodex does not assign path syntax and must not refuse to index a file because its path contains a character that collides with Monodex's reference grammar.
+Paths are facts about external systems. Monodex does not assign path syntax and must not refuse to index a file because its path contains a character that collides with Monodex's locator grammars.
 
 This rules out two failure modes:
 
@@ -185,33 +187,53 @@ Both are forbidden.
 
 Paths are stored verbatim. No normalization, rewriting, or character substitution. The path field round-trips bit-for-bit with what the data source reported.
 
-### 8.3 Encoding at Reference Boundaries
+### 8.3 Encoding at Locator Boundaries
 
-When a path appears inside a reference string — any context where it is concatenated with grammar characters — it is **percent-encoded per RFC 3986**.
+When a path appears inside a locator — a breadcrumb or a reference, any context where it is concatenated with grammar characters — it is **percent-encoded per RFC 3986**.
 
-Characters that **must** be encoded in a path within a reference:
+Characters that **must** be encoded in a path within a locator:
 
 - Grammar-reserved: `:`, `@`, `=`, `+`, `#`
 - The escape character itself: `%`
 - Whitespace and control characters
 
-`/` is **not** encoded. It is a legitimate path separator and does not collide with any reference-grammar character.
+`/` is **not** encoded. It is a legitimate path separator and does not collide with any locator-grammar character.
 
-Decoding is the inverse: percent-sequences in the path segment of a reference are decoded before lookup. Storage still holds the decoded form.
+Decoding is the inverse: percent-sequences in the path segment of a locator are decoded before lookup. Storage still holds the decoded form.
 
 Percent-encoding was chosen over backslash or quote-based escaping because it survives shells, JSON, and YAML without re-escaping, and it keeps ordinary paths mostly readable.
 
 ### 8.4 Examples
 
-| Stored path         | In a reference                      |
-| ------------------- | ----------------------------------- |
-| `src/index.ts`      | `@my-repo:main:src/index.ts`        |
-| `src/weird:file.ts` | `@my-repo:main:src/weird%3Afile.ts` |
-| `50%off/notes.md`   | `@my-repo:main:50%25off/notes.md`   |
+| Stored path         | In a breadcrumb                           | In a global reference               |
+| ------------------- | ----------------------------------------- | ----------------------------------- |
+| `src/index.ts`      | `node-core-library:index.ts:foo`          | `@my-repo:main:src/index.ts`        |
+| `src/weird:file.ts` | `node-core-library:weird%3Afile.ts:foo`   | `@my-repo:main:src/weird%3Afile.ts` |
+| `50%off/notes.md`   | `node-core-library:50%25off/notes.md:foo` | `@my-repo:main:50%25off/notes.md`   |
 
-### 8.5 Breadcrumbs and Display
+### 8.5 Breadcrumbs (Catalog-Relative Locators)
 
-Breadcrumb rendering and other human-facing displays use the **stored (decoded)** form. Percent-encoding applies only at the boundary where paths are embedded in reference strings. A breadcrumb that says `my-repo / main / src/weird:file.ts` is correct; a breadcrumb that says `src/weird%3Afile.ts` is wrong.
+Breadcrumbs have the form `package:file:symbol`. The `:` is a structural separator within the breadcrumb grammar. Path components embedded in a breadcrumb are percent-encoded per §8.3. Example: a file named `weird:file.ts` in package `node-core-library` renders as `node-core-library:weird%3Afile.ts:JsonFile.load`.
+
+Breadcrumbs are catalog-relative: they do not begin with `@catalog`. A reader who needs the fully-qualified identity of a breadcrumb must consult the surrounding context (the search result's `catalog` field, the crawl's scope, etc.).
+
+### 8.6 Human Reports
+
+Report lines in CLI output (e.g. `Source:` lines, error messages, progress output) are not locators and must not look like them. Paths in reports use the stored (decoded) form. Fields within a report line are separated by a visual device that cannot appear in a catalog name — parentheses, `/`, or a newline — never by `:` or `@`.
+
+Correct:
+
+```
+Source: (my-repo) src/weird:file.ts
+Source: my-repo / src/weird:file.ts
+```
+
+Incorrect (looks like a locator, isn't one):
+
+```
+Source: my-repo:src/weird:file.ts
+Source: @my-repo:src/weird:file.ts
+```
 
 ---
 
@@ -225,7 +247,7 @@ Forbidden in bare catalog and label identifiers:
 :  @  +  #  whitespace  control characters
 ```
 
-These are reserved for current or future reference grammar. `+` and `#` are not used by the grammar today but are reserved to keep future extensions non-breaking.
+These are reserved for current or future locator grammar. `+` and `#` are not used by the grammar today but are reserved to keep future extensions non-breaking.
 
 `=` is additionally forbidden in catalogs. `=` is permitted in labels but is not interpreted today (§5); a label containing `=` is an opaque identifier.
 
@@ -271,3 +293,5 @@ Examples: `branch`, `commit`, `tag`, `local`, `snapshot`.
 > Catalogs and labels are identifiers Monodex owns and may constrain. Paths are external data Monodex must represent faithfully.
 >
 > Labels remain human- and Git-like. Machine semantics are layered via `kind=payload` only when needed.
+>
+> Locators and reports are different things. Locators are parseable and encode at boundaries; reports are for humans and use decoded paths with visually distinct separators.

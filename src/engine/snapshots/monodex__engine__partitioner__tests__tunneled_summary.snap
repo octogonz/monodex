@@ -9,12 +9,12 @@ Small chunks (<500 chars): 0
 Chars: 1920-3959 (mean 3043)
 
 === CHUNK 1 ===
-Breadcrumb: @rushstack/playwright-browser-tunnel:TunneledBrowserConnection.ts
+Breadcrumb: %40rushstack/playwright-browser-tunnel:TunneledBrowserConnection.ts
 Type: code
 Kind: content
 Symbol: None
 Lines: 1-49
-Size: 1985 chars
+Size: 1987 chars
 Text preview (5 lines):
 // Copyright (c) Microsoft Corporation. All rights reserved. Licensed under the MIT license.
 // See LICENSE in the project root for license information.
@@ -23,12 +23,12 @@ import type { LaunchOptions } from 'playwright-core';
 import playwrightPackageJson from 'playwright-core/package.json';
 
 === CHUNK 2 ===
-Breadcrumb: @rushstack/playwright-browser-tunnel:TunneledBrowserConnection.ts:tunneledBrowserConnection
+Breadcrumb: %40rushstack/playwright-browser-tunnel:TunneledBrowserConnection.ts:tunneledBrowserConnection
 Type: function
 Kind: content
 Symbol: Some("tunneledBrowserConnection")
 Lines: 50-147
-Size: 4050 chars
+Size: 4052 chars
 Text preview (5 lines):
 
   function maybeSendHandshake(): void {
@@ -37,12 +37,12 @@ Text preview (5 lines):
         action: 'handshake',
 
 === CHUNK 3 ===
-Breadcrumb: @rushstack/playwright-browser-tunnel:TunneledBrowserConnection.ts:tunneledBrowserConnection
+Breadcrumb: %40rushstack/playwright-browser-tunnel:TunneledBrowserConnection.ts:tunneledBrowserConnection
 Type: function
 Kind: content
 Symbol: Some("tunneledBrowserConnection")
 Lines: 148-231
-Size: 3340 chars
+Size: 3342 chars
 Text preview (5 lines):
 
     localProxyWs.on('connection', (localWs, request) => {

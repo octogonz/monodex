@@ -14,7 +14,6 @@
 //! The qualified `label_id` form is internal only and never shown to users.
 
 use std::fmt;
-use std::str::FromStr;
 use thiserror::Error;
 
 // ============================================================================
@@ -92,10 +91,7 @@ pub fn validate_catalog(name: &str) -> Result<(), IdentifierError> {
     if name.starts_with('-') {
         return Err(IdentifierError::Catalog {
             code: "catalog_leading_hyphen",
-            message: format!(
-                "Catalog name '{}' cannot start with a hyphen",
-                name
-            ),
+            message: format!("Catalog name '{}' cannot start with a hyphen", name),
         });
     }
 
@@ -103,10 +99,7 @@ pub fn validate_catalog(name: &str) -> Result<(), IdentifierError> {
     if name.ends_with('-') {
         return Err(IdentifierError::Catalog {
             code: "catalog_trailing_hyphen",
-            message: format!(
-                "Catalog name '{}' cannot end with a hyphen",
-                name
-            ),
+            message: format!("Catalog name '{}' cannot end with a hyphen", name),
         });
     }
 
@@ -114,10 +107,7 @@ pub fn validate_catalog(name: &str) -> Result<(), IdentifierError> {
     if name.contains("--") {
         return Err(IdentifierError::Catalog {
             code: "catalog_consecutive_hyphens",
-            message: format!(
-                "Catalog name '{}' cannot contain consecutive hyphens",
-                name
-            ),
+            message: format!("Catalog name '{}' cannot contain consecutive hyphens", name),
         });
     }
 
@@ -299,7 +289,10 @@ impl LabelId {
         if parts.len() != 2 {
             return Err(IdentifierError::LabelId {
                 code: "label_id_missing_colon",
-                message: format!("Label ID '{}' must be in 'catalog:label' format", s),
+                message: format!(
+                    "invalid stored label identifier '{}': expected 'catalog:label' format",
+                    s
+                ),
             });
         }
         Self::new(parts[0], parts[1])
@@ -342,29 +335,12 @@ impl std::ops::Deref for LabelId {
     }
 }
 
-impl FromStr for LabelId {
-    type Err = IdentifierError;
-    fn from_str(s: &str) -> Result<Self, Self::Err> {
-        Self::parse(s)
-    }
-}
-
 impl serde::Serialize for LabelId {
     fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
     where
         S: serde::Serializer,
     {
         serializer.serialize_str(&self.combined)
-    }
-}
-
-impl<'de> serde::Deserialize<'de> for LabelId {
-    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
-    where
-        D: serde::Deserializer<'de>,
-    {
-        let s = String::deserialize(deserializer)?;
-        Self::parse(&s).map_err(serde::de::Error::custom)
     }
 }
 

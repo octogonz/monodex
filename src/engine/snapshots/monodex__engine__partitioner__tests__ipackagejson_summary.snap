@@ -9,12 +9,12 @@ Small chunks (<500 chars): 0
 Chars: 2826-4030 (mean 3437)
 
 === CHUNK 1 ===
-Breadcrumb: @rushstack/node-core-library:IPackageJson.ts
+Breadcrumb: %40rushstack/node-core-library:IPackageJson.ts
 Type: code
 Kind: content
 Symbol: None
 Lines: 1-135
-Size: 4074 chars
+Size: 4076 chars
 Text preview (5 lines):
 // Copyright (c) Microsoft Corporation. All rights reserved. Licensed under the MIT license.
 // See LICENSE in the project root for license information.
@@ -23,12 +23,12 @@ Text preview (5 lines):
  * This interface is part of the {@link IPackageJson} file format.  It is used for the
 
 === CHUNK 2 ===
-Breadcrumb: @rushstack/node-core-library:IPackageJson.ts
+Breadcrumb: %40rushstack/node-core-library:IPackageJson.ts
 Type: code
 Kind: content
 Symbol: None
 Lines: 136-235
-Size: 2870 chars
+Size: 2872 chars
 Text preview (5 lines):
 
 /**
@@ -37,12 +37,12 @@ Text preview (5 lines):
  * @remarks
 
 === CHUNK 3 ===
-Breadcrumb: @rushstack/node-core-library:IPackageJson.ts
+Breadcrumb: %40rushstack/node-core-library:IPackageJson.ts
 Type: code
 Kind: content
 Symbol: None
 Lines: 236-338
-Size: 3498 chars
+Size: 3500 chars
 Text preview (5 lines):
 
   /**

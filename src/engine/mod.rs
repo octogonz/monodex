@@ -5,6 +5,7 @@
 //!
 //! Repository-specific configuration lives in `../config.rs`
 
+pub mod breadcrumb;
 pub mod chunker;
 pub mod config;
 pub mod crawl_config;

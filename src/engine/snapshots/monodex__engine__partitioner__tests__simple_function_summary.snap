@@ -9,12 +9,12 @@ Small chunks (<500 chars): 1
 Chars: 72-72 (mean 72)
 
 === CHUNK 1 ===
-Breadcrumb: @test/package:test.ts
+Breadcrumb: %40test/package:test.ts
 Type: code
 Kind: content
 Symbol: None
 Lines: 1-4
-Size: 93 chars
+Size: 95 chars
 Text preview (5 lines):
 
 export function add(a: number, b: number): number {

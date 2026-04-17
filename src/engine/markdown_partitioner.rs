@@ -8,6 +8,9 @@
 
 #![allow(dead_code)]
 
+use super::breadcrumb::{encode_path_component, slugify_heading};
+use github_slugger::Slugger;
+
 /// Partition a Markdown file into chunks
 pub fn partition_markdown(
     source: &str,
@@ -28,12 +31,17 @@ pub fn partition_markdown(
         format!("sha256:{}", hex::encode(hasher.finalize()))
     };
 
-    // Build breadcrumb prefix
-    let breadcrumb_prefix = if config.package_name.is_empty() {
-        config.file_name.clone()
+    // Build breadcrumb prefix with encoded components
+    let encoded_package = encode_path_component(&config.package_name);
+    let encoded_file_name = encode_path_component(&config.file_name);
+    let breadcrumb_prefix = if encoded_package.is_empty() {
+        encoded_file_name
     } else {
-        format!("{}:{}", config.package_name, config.file_name)
+        format!("{}:{}", encoded_package, encoded_file_name)
     };
+
+    // Create a slugger for heading slugification (shared across the document)
+    let mut slugger = Slugger::default();
 
     // Find all section boundaries (headings)
     let mut section_starts: Vec<usize> = Vec::new();
@@ -74,6 +82,8 @@ pub fn partition_markdown(
                 chunk_type: "markdown".to_string(),
                 chunk_kind: "content".to_string(),
                 symbol_name: None,
+                split_part_ordinal: None,
+                split_part_count: None,
             });
         }
         return chunks;
@@ -96,10 +106,11 @@ pub fn partition_markdown(
             continue;
         }
 
-        // Get heading for breadcrumb
+        // Get heading for breadcrumb - slugify for consistent heading IDs
         let heading = extract_heading_text(section_lines[0]);
         let breadcrumb = if let Some(h) = &heading {
-            format!("{}:{}", breadcrumb_prefix, h)
+            let slug = slugify_heading(&mut slugger, h);
+            format!("{}:{}", breadcrumb_prefix, slug)
         } else {
             breadcrumb_prefix.clone()
         };
@@ -128,6 +139,8 @@ pub fn partition_markdown(
                 chunk_type: "section".to_string(),
                 chunk_kind: "content".to_string(),
                 symbol_name: heading,
+                split_part_ordinal: None,
+                split_part_count: None,
             });
         }
     }
@@ -220,7 +233,8 @@ fn split_oversized_section(
         return;
     }
 
-    // Emit chunks
+    // Emit chunks - breadcrumb is identical for all parts, differ only in split_part_ordinal/count
+    let total_parts = split_points.len();
     for (i, (start_idx, end_idx)) in split_points.iter().enumerate() {
         let chunk_lines = &lines[*start_idx..*end_idx];
         let chunk_text = chunk_lines.join("\n");
@@ -233,13 +247,15 @@ fn split_oversized_section(
             source_uri: file_path.to_string(),
             catalog: catalog.to_string(),
             content_hash: content_hash.to_string(),
-            breadcrumb: format!("{} (part {}/{})", breadcrumb, i + 1, split_points.len()),
+            breadcrumb: breadcrumb.to_string(),
             text: chunk_text,
             start_line: start_line + start_idx,
             end_line: start_line + end_idx - 1,
             chunk_type: "section".to_string(),
             chunk_kind: "content".to_string(),
             symbol_name: None,
+            split_part_ordinal: Some(i + 1),
+            split_part_count: Some(total_parts),
         });
     }
 }
@@ -258,50 +274,51 @@ fn split_by_lines_fallback(
 ) {
     use super::partitioner::PartitionedChunk;
 
+    // First pass: collect all split boundaries
+    let mut split_boundaries: Vec<(usize, usize)> = Vec::new();
     let mut current_start = 0;
     let mut current_size = 0;
-    let mut part_num = 1;
 
     for (i, line) in lines.iter().enumerate() {
         let line_size = line.len() + 1;
 
         if current_size + line_size > config.target_size && current_size > 0 {
-            let chunk_lines = &lines[current_start..i];
-            chunks.push(PartitionedChunk {
-                source_uri: file_path.to_string(),
-                catalog: catalog.to_string(),
-                content_hash: content_hash.to_string(),
-                breadcrumb: format!("{} (part {})", breadcrumb, part_num),
-                text: chunk_lines.join("\n"),
-                start_line: start_line + current_start,
-                end_line: start_line + i - 1,
-                chunk_type: "markdown".to_string(),
-                chunk_kind: "content".to_string(),
-                symbol_name: None,
-            });
-
+            split_boundaries.push((current_start, i));
             current_start = i;
             current_size = 0;
-            part_num += 1;
         }
-
         current_size += line_size;
     }
 
-    // Add final chunk
+    // Add final boundary
     if current_start < lines.len() {
-        let chunk_lines = &lines[current_start..];
+        split_boundaries.push((current_start, lines.len()));
+    }
+
+    let total_parts = split_boundaries.len();
+
+    // Second pass: emit chunks with proper part numbers
+    for (i, (start_idx, end_idx)) in split_boundaries.iter().enumerate() {
+        let chunk_lines = &lines[*start_idx..*end_idx];
+        let chunk_text = chunk_lines.join("\n");
+
+        if chunk_text.trim().is_empty() {
+            continue;
+        }
+
         chunks.push(PartitionedChunk {
             source_uri: file_path.to_string(),
             catalog: catalog.to_string(),
             content_hash: content_hash.to_string(),
-            breadcrumb: format!("{} (part {})", breadcrumb, part_num),
-            text: chunk_lines.join("\n"),
-            start_line: start_line + current_start,
-            end_line: start_line + lines.len() - 1,
+            breadcrumb: breadcrumb.to_string(),
+            text: chunk_text,
+            start_line: start_line + start_idx,
+            end_line: start_line + end_idx - 1,
             chunk_type: "markdown".to_string(),
             chunk_kind: "content".to_string(),
             symbol_name: None,
+            split_part_ordinal: Some(i + 1),
+            split_part_count: Some(total_parts),
         });
     }
 }

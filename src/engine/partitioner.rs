@@ -47,35 +47,9 @@
 //!    f. If no AST candidates at all, fall back to line-based splitting
 //! 3. Done - all chunks fit budget
 
+use super::breadcrumb::encode_path_component;
 use super::util::compute_hash;
 use tree_sitter::{Language, Node, Parser};
-
-/// Percent-encodes reserved characters in a path component for use in locators (breadcrumbs).
-///
-/// Per spec §8.3, these characters must be encoded: `:`, `@`, `=`, `+`, `#`, `%`, 
-/// whitespace, and control characters. `/` is NOT encoded (it's a path separator).
-fn percent_encode_path_component(s: &str) -> String {
-    let mut result = String::with_capacity(s.len());
-    for c in s.chars() {
-        match c {
-            // Grammar-reserved characters
-            ':' | '@' | '=' | '+' | '#' | '%' => {
-                for byte in c.to_string().as_bytes() {
-                    result.push_str(&format!("%{:02X}", byte));
-                }
-            }
-            // Whitespace and control characters
-            c if c.is_control() || c.is_whitespace() => {
-                for byte in c.to_string().as_bytes() {
-                    result.push_str(&format!("%{:02X}", byte));
-                }
-            }
-            // Safe characters pass through
-            _ => result.push(c),
-        }
-    }
-    result
-}
 
 /// Target chunk size in characters (same as runtime chunker's target_size)
 pub const TARGET_CHARS: usize = 6000;
@@ -389,11 +363,17 @@ pub struct PartitionedChunk {
     /// Chunk type (function, class, method, etc.)
     pub chunk_type: String,
 
-    /// Chunk kind (content, imports, changelog, config)
+    /// Chunk kind (content, imports, changelog, config, fallback-split, degraded-ast-split)
     pub chunk_kind: String,
 
     /// Symbol name (if applicable)
     pub symbol_name: Option<String>,
+
+    /// For split sections: which part this is (1-indexed)
+    pub split_part_ordinal: Option<usize>,
+
+    /// For split sections: total number of parts
+    pub split_part_count: Option<usize>,
 }
 
 /// A line range representing a chunk-in-progress
@@ -929,12 +909,13 @@ pub fn partition_typescript(
     let total_lines = lines.len();
 
     // Build base breadcrumb: package:file
-    // File name component is percent-encoded per spec §8.3 to handle reserved characters
-    let encoded_file_name = percent_encode_path_component(&config.file_name);
-    let base_breadcrumb = if config.package_name.is_empty() {
+    // Both package name and file name are percent-encoded to handle reserved characters
+    let encoded_package = encode_path_component(&config.package_name);
+    let encoded_file_name = encode_path_component(&config.file_name);
+    let base_breadcrumb = if encoded_package.is_empty() {
         encoded_file_name
     } else {
-        format!("{}:{}", config.package_name, encoded_file_name)
+        format!("{}:{}", encoded_package, encoded_file_name)
     };
 
     // Step 1: Start with the whole file as one chunk
@@ -1050,19 +1031,23 @@ pub fn partition_typescript(
             chunk_range.end_line,
         );
 
-        let mut breadcrumb = if breadcrumb_suffix.is_empty() {
+        // Build breadcrumb with encoded symbol name
+        let breadcrumb = if breadcrumb_suffix.is_empty() {
             base_breadcrumb.clone()
         } else {
-            format!("{}:{}", base_breadcrumb, breadcrumb_suffix)
+            format!(
+                "{}:{}",
+                base_breadcrumb,
+                encode_path_component(&breadcrumb_suffix)
+            )
         };
 
-        if chunk_range.from_fallback {
-            breadcrumb.push_str(":[fallback-split]");
+        // Determine chunk_kind based on split type
+        let chunk_kind = if chunk_range.from_fallback {
+            "fallback-split".to_string()
         } else if chunk_range.from_degraded_ast_split {
-            breadcrumb.push_str(":[degraded-ast-split]");
-        }
-
-        let chunk_kind = if import_end_line > 0 && chunk_range.end_line <= import_end_line {
+            "degraded-ast-split".to_string()
+        } else if import_end_line > 0 && chunk_range.end_line <= import_end_line {
             "imports".to_string()
         } else {
             "content".to_string()
@@ -1079,6 +1064,8 @@ pub fn partition_typescript(
             chunk_type,
             chunk_kind,
             symbol_name,
+            split_part_ordinal: None,
+            split_part_count: None,
         });
     }
 

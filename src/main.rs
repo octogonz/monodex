@@ -2173,13 +2173,26 @@ fn run_search(
 
     // Display results as blurbs
     for result in &results {
-        // Line 1: file_id:chunk_ordinal  score  breadcrumb
+        // Line 1: file_id:chunk_ordinal  score  breadcrumb [chunk_kind] (part N/M)
         // E.1: Sanitize breadcrumb to prevent terminal injection
         let breadcrumb =
             sanitize_for_terminal(result.payload.breadcrumb.as_deref().unwrap_or("unknown"));
+
+        // Build the report form with chunk_kind and split metadata
+        let mut report = breadcrumb.clone();
+        if let (Some(ordinal), Some(count)) = (
+            result.payload.split_part_ordinal,
+            result.payload.split_part_count,
+        ) {
+            report = format!("{} (part {}/{})", report, ordinal, count);
+        }
+        if result.payload.chunk_kind != "content" {
+            report = format!("{} [{}]", report, result.payload.chunk_kind);
+        }
+
         println!(
             "{}:{}  {:.3}  {}",
-            result.payload.file_id, result.payload.chunk_ordinal, result.score, breadcrumb
+            result.payload.file_id, result.payload.chunk_ordinal, result.score, report
         );
 
         // Lines 2-4: first 3 lines of code (quoted with >)
@@ -2409,10 +2422,22 @@ fn run_view(
             let chunk_count = result.payload.chunk_count;
             let chunk_ordinal = result.payload.chunk_ordinal;
 
-            // Header line: <file_id>:<chunk_ordinal> (<n>/<total>) <breadcrumb>
+            // Build the report form with chunk_kind and split metadata
+            let mut report = breadcrumb.clone();
+            if let (Some(ordinal), Some(count)) = (
+                result.payload.split_part_ordinal,
+                result.payload.split_part_count,
+            ) {
+                report = format!("{} (part {}/{})", report, ordinal, count);
+            }
+            if result.payload.chunk_kind != "content" {
+                report = format!("{} [{}]", report, result.payload.chunk_kind);
+            }
+
+            // Header line: <file_id>:<chunk_ordinal> (<n>/<total>) <breadcrumb> [kind] (part N/M)
             println!(
                 "{}:{} ({}/{}) {}",
-                file_id, chunk_ordinal, chunk_ordinal, chunk_count, breadcrumb
+                file_id, chunk_ordinal, chunk_ordinal, chunk_count, report
             );
 
             // Source line (non-grammar format per spec §8.6)

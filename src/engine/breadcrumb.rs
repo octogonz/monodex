@@ -1,0 +1,192 @@
+//! Breadcrumb sanitization for hierarchical locators.
+//!
+//! Breadcrumbs are hierarchical locators of the form `package:file:symbol_or_heading`.
+//! They answer "where am I and what's near me" for Jina semantic neighboring and
+//! query-selector prefix matching.
+//!
+//! ## Encoding Rules
+//!
+//! Reserved characters (`:`, `@`, `=`, `+`, `#`, `%`, whitespace, control characters)
+//! are percent-encoded in path components. The `/` character is NOT encoded as it
+//! serves as a path separator within file names.
+//!
+//! ## Heading Slugification
+//!
+//! Markdown headings are converted to URL-safe slugs using GitHub-style slugification
+//! for consistent heading identification across documents.
+
+/// Percent-encodes reserved characters in a path component for use in locators (breadcrumbs).
+///
+/// Per the spec, these characters must be encoded: `:`, `@`, `=`, `+`, `#`, `%`,
+/// whitespace, and control characters. `/` is NOT encoded (it's a path separator).
+///
+/// # Example
+///
+/// ```
+/// use monodex::engine::breadcrumb::encode_path_component;
+///
+/// assert_eq!(encode_path_component("weird:file.ts"), "weird%3Afile.ts");
+/// assert_eq!(encode_path_component("@scope/pkg"), "%40scope/pkg");
+/// ```
+pub fn encode_path_component(s: &str) -> String {
+    let mut result = String::with_capacity(s.len());
+    for c in s.chars() {
+        match c {
+            // Grammar-reserved characters
+            ':' | '@' | '=' | '+' | '#' | '%' => {
+                for byte in c.to_string().as_bytes() {
+                    result.push_str(&format!("%{:02X}", byte));
+                }
+            }
+            // Whitespace and control characters
+            c if c.is_control() || c.is_whitespace() => {
+                for byte in c.to_string().as_bytes() {
+                    result.push_str(&format!("%{:02X}", byte));
+                }
+            }
+            // Safe characters pass through
+            _ => result.push(c),
+        }
+    }
+    result
+}
+
+/// Slugifies a markdown heading using GitHub-style slugification.
+///
+/// Uses the `github-slugger` crate for consistent heading ID generation.
+/// Duplicate headings get numbered suffixes (e.g., `examples`, `examples-1`).
+///
+/// # Example
+///
+/// ```
+/// use monodex::engine::breadcrumb::slugify_heading;
+/// use github_slugger::Slugger;
+///
+/// let mut slugger = Slugger::new();
+/// assert_eq!(slugify_heading(&mut slugger, "API: Configuration"), "api-configuration");
+/// assert_eq!(slugify_heading(&mut slugger, "Examples"), "examples");
+/// assert_eq!(slugify_heading(&mut slugger, "Examples"), "examples-1");
+/// ```
+pub fn slugify_heading(slugger: &mut github_slugger::Slugger, heading: &str) -> String {
+    slugger.slug(heading)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_encode_path_component_reserved_chars() {
+        // Colon
+        assert_eq!(encode_path_component("weird:file.ts"), "weird%3Afile.ts");
+
+        // At sign
+        assert_eq!(encode_path_component("@scope/pkg"), "%40scope/pkg");
+
+        // Equals
+        assert_eq!(encode_path_component("key=value"), "key%3Dvalue");
+
+        // Plus
+        assert_eq!(encode_path_component("a+b"), "a%2Bb");
+
+        // Hash
+        assert_eq!(encode_path_component("heading#id"), "heading%23id");
+
+        // Percent
+        assert_eq!(encode_path_component("100%"), "100%25");
+    }
+
+    #[test]
+    fn test_encode_path_component_whitespace() {
+        assert_eq!(encode_path_component("file name.ts"), "file%20name.ts");
+        assert_eq!(encode_path_component("tab\there"), "tab%09here");
+        assert_eq!(encode_path_component("new\nline"), "new%0Aline");
+    }
+
+    #[test]
+    fn test_encode_path_component_control_chars() {
+        // Null byte
+        assert_eq!(encode_path_component("a\x00b"), "a%00b");
+
+        // Delete character
+        assert_eq!(encode_path_component("a\x7Fb"), "a%7Fb");
+    }
+
+    #[test]
+    fn test_encode_path_component_preserves_safe_chars() {
+        // Slashes are preserved (path separator)
+        assert_eq!(encode_path_component("path/to/file.ts"), "path/to/file.ts");
+
+        // Dots, dashes, underscores
+        assert_eq!(encode_path_component("my-file_name.ts"), "my-file_name.ts");
+
+        // Alphanumeric
+        assert_eq!(encode_path_component("File123"), "File123");
+    }
+
+    #[test]
+    fn test_slugify_heading_basic() {
+        let mut slugger = github_slugger::Slugger::default();
+
+        assert_eq!(
+            slugify_heading(&mut slugger, "Introduction"),
+            "introduction"
+        );
+        assert_eq!(
+            slugify_heading(&mut slugger, "API Reference"),
+            "api-reference"
+        );
+        assert_eq!(slugify_heading(&mut slugger, "What's New?"), "whats-new");
+    }
+
+    #[test]
+    fn test_slugify_heading_duplicates() {
+        let mut slugger = github_slugger::Slugger::default();
+
+        // First occurrence gets base slug
+        assert_eq!(slugify_heading(&mut slugger, "Examples"), "examples");
+
+        // Second occurrence gets numbered suffix
+        assert_eq!(slugify_heading(&mut slugger, "Examples"), "examples-1");
+
+        // Third occurrence
+        assert_eq!(slugify_heading(&mut slugger, "Examples"), "examples-2");
+    }
+
+    #[test]
+    fn test_slugify_heading_special_chars() {
+        let mut slugger = github_slugger::Slugger::default();
+
+        // Colons become hyphens
+        assert_eq!(
+            slugify_heading(&mut slugger, "API: Configuration"),
+            "api-configuration"
+        );
+
+        // Multiple spaces become multiple hyphens (GitHub slugger behavior)
+        assert_eq!(
+            slugify_heading(&mut slugger, "Multiple   Spaces"),
+            "multiple---spaces"
+        );
+    }
+
+    #[test]
+    fn test_breadcrumb_round_trip() {
+        // Simulate building a breadcrumb with encoded components
+        let package = encode_path_component("@scope/my-package");
+        let file = encode_path_component("weird:file.ts");
+        let symbol = encode_path_component("myFunction");
+
+        let breadcrumb = format!("{}:{}:{}", package, file, symbol);
+
+        // The breadcrumb should have all reserved chars encoded
+        assert_eq!(breadcrumb, "%40scope/my-package:weird%3Afile.ts:myFunction");
+
+        // But the structure should be parseable by splitting on unencoded colons
+        let parts: Vec<&str> = breadcrumb.split(':').collect();
+        assert_eq!(parts.len(), 3);
+        assert_eq!(parts[0], "%40scope/my-package");
+        assert_eq!(parts[1], "weird%3Afile.ts");
+        assert_eq!(parts[2], "myFunction");
+    }
+}

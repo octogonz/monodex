@@ -156,6 +156,17 @@ impl LabelMetadata {
             .map_err(|e| anyhow!("Invalid catalog in stored metadata: {}", e))?;
         validate_label(&self.label)
             .map_err(|e| anyhow!("Invalid label in stored metadata: {}", e))?;
+        
+        // Check label_id consistency (authoritative key for UUID derivation)
+        let expected_label_id = format!("{}:{}", self.catalog, self.label);
+        if self.label_id != expected_label_id {
+            return Err(anyhow!(
+                "Label metadata has inconsistent label_id: expected '{}', got '{}'",
+                expected_label_id,
+                self.label_id
+            ));
+        }
+        
         Ok(())
     }
 }

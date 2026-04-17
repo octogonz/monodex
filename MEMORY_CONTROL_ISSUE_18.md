@@ -401,6 +401,21 @@ After this change:
 - upload buffering is globally bounded and consistent
 - system behavior is easier to reason about and verify
 
+## Code Review Fixes (PR #23)
+
+### Round 1 Fixes (Commit: fix: resolve code review issues from PR #23)
+
+1. **Redundant compute_auto_embedding_config() calls**: Refactored to call once and reuse result
+2. **Sentinel warning message**: Changed "will be skipped" to "will be replaced" (accurate)
+3. **Progress message consistency**: Size-threshold flush messages now use println! (stdout)
+4. **EmbeddingSizeValue f64 visitor**: Added to handle JSON parsers that serialize integers as floats
+
+### Round 2 Fixes (Current)
+
+1. **Duplicate doc comment**: Removed old doc comment from `estimate_serialized_size()`
+2. **Lazy compute_auto_embedding_config()**: Removed eager call; now only called in arms that need it
+3. **Cgroup-aware available memory**: Fixed bug where `compute_auto_embedding_config()` used host-level available RAM instead of cgroup-limited free_memory in containerized environments. Removed redundant `get_memory_info()` function since all paths now use `compute_auto_embedding_config()` for consistent cgroup handling.
+
 ---
 
 ## Testing Checklist

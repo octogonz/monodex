@@ -93,14 +93,28 @@ pub fn compute_auto_embedding_config() -> Result<ResolvedEmbeddingConfig> {
     // Get total system memory
     let total_memory = sys.total_memory();
 
-    // Get available memory (for warning purposes only - not used in sizing)
-    let available_memory = sys.available_memory();
-
     // Get CPU core count using centralized function
     let physical_cores = get_physical_core_count();
 
     // Calculate effective total RAM (consider cgroup limits on Linux)
     let (effective_total_ram, cgroup_limited) = get_effective_total_ram(&sys, total_memory);
+
+    // Get available memory (for warning purposes only - not used in sizing)
+    // When cgroup-limited, use cgroup's free_memory instead of host-level available
+    let available_memory = if cgroup_limited {
+        #[cfg(target_os = "linux")]
+        {
+            sys.cgroup_limits()
+                .map(|cgroup_info| cgroup_info.free_memory)
+                .unwrap_or_else(|| sys.available_memory())
+        }
+        #[cfg(not(target_os = "linux"))]
+        {
+            sys.available_memory()
+        }
+    } else {
+        sys.available_memory()
+    };
 
     // Calculate baseline reserve
     let baseline_reserve = std::cmp::max(

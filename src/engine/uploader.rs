@@ -565,9 +565,6 @@ impl QdrantUploader {
             .collect()
     }
 
-    /// Estimate the serialized JSON size of a single chunk with its embedding.
-    /// This is used for accumulation tracking in the uploader thread.
-    /// The estimate does not need to be exact, just reasonably accurate.
     /// Estimate serialized size of a point without full JSON serialization.
     ///
     /// This uses a cheap heuristic instead of building and serializing the full Point struct.

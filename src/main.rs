@@ -750,14 +750,10 @@ fn run_use(catalog: Option<&str>, label: Option<String>, config: &Config) -> any
 /// Resolve embedding configuration from config file, applying "auto" heuristic if needed.
 /// Returns ResolvedEmbeddingConfig with all resolved values including memory info for warnings.
 fn resolve_embedding_config(config: &EmbeddingModelConfig) -> ResolvedEmbeddingConfig {
-    // Try to get auto config once, to be reused across match arms that need it.
-    // This avoids redundant System::new() calls which enumerate processes.
-    let auto_config = compute_auto_embedding_config();
-
     match (&config.model_instances, &config.threads_per_instance) {
         (EmbeddingSizeValue::Auto, EmbeddingSizeValue::Auto) => {
-            // Both auto: use auto config directly
-            match &auto_config {
+            // Both auto: compute from system properties
+            match compute_auto_embedding_config() {
                 Ok(resolved) => {
                     println!(
                         "Auto-detected embedding config: {} instances × {} threads",
@@ -769,7 +765,7 @@ fn resolve_embedding_config(config: &EmbeddingModelConfig) -> ResolvedEmbeddingC
                             format_bytes(resolved.total_ram)
                         );
                     }
-                    resolved.clone()
+                    resolved
                 }
                 Err(e) => {
                     eprintln!("Warning: Failed to auto-detect embedding config: {}", e);
@@ -787,7 +783,7 @@ fn resolve_embedding_config(config: &EmbeddingModelConfig) -> ResolvedEmbeddingC
         }
         (EmbeddingSizeValue::Auto, EmbeddingSizeValue::Exact(threads)) => {
             // Auto instances, explicit threads
-            match &auto_config {
+            match compute_auto_embedding_config() {
                 Ok(resolved) => {
                     println!(
                         "Auto-detected model instances: {} (using explicit {} threads/instance)",
@@ -795,7 +791,7 @@ fn resolve_embedding_config(config: &EmbeddingModelConfig) -> ResolvedEmbeddingC
                     );
                     ResolvedEmbeddingConfig {
                         threads_per_instance: *threads,
-                        ..resolved.clone()
+                        ..resolved
                     }
                 }
                 Err(e) => {
@@ -820,8 +816,10 @@ fn resolve_embedding_config(config: &EmbeddingModelConfig) -> ResolvedEmbeddingC
                 "Using explicit {} model instances (auto-detected {} threads/instance)",
                 instances, threads
             );
-            // Get memory info for warning purposes only
-            let memory_info = get_memory_info();
+            // Get memory info via compute_auto_embedding_config for cgroup-aware values
+            let memory_info = compute_auto_embedding_config()
+                .map(|resolved| (resolved.total_ram, resolved.available_ram, resolved.cgroup_limited))
+                .unwrap_or((0, 0, false));
             ResolvedEmbeddingConfig {
                 model_instances: *instances,
                 threads_per_instance: threads,
@@ -837,8 +835,10 @@ fn resolve_embedding_config(config: &EmbeddingModelConfig) -> ResolvedEmbeddingC
                 "Using explicit config: {} instances × {} threads/instance",
                 instances, threads
             );
-            // Get memory info for warning purposes only
-            let memory_info = get_memory_info();
+            // Get memory info via compute_auto_embedding_config for cgroup-aware values
+            let memory_info = compute_auto_embedding_config()
+                .map(|resolved| (resolved.total_ram, resolved.available_ram, resolved.cgroup_limited))
+                .unwrap_or((0, 0, false));
             ResolvedEmbeddingConfig {
                 model_instances: *instances,
                 threads_per_instance: *threads,
@@ -849,35 +849,6 @@ fn resolve_embedding_config(config: &EmbeddingModelConfig) -> ResolvedEmbeddingC
             }
         }
     }
-}
-
-/// Get memory info (total_ram, available_ram, cgroup_limited) for warning purposes.
-/// Returns (0, 0, false) if memory info cannot be obtained.
-fn get_memory_info() -> (u64, u64, bool) {
-    use sysinfo::System;
-
-    let mut sys = System::new();
-    sys.refresh_memory();
-
-    let total = sys.total_memory();
-    let available = sys.available_memory();
-
-    // Check cgroup limits on Linux
-    // When cgroup-limited, we must use cgroup's free_memory instead of host-level available
-    #[cfg(target_os = "linux")]
-    {
-        if let Some(cgroup_info) = sys.cgroup_limits() {
-            let cgroup_limit = cgroup_info.total_memory;
-            if cgroup_limit > 0 && cgroup_limit < total {
-                // Use cgroup's free_memory for available RAM in containerized environments
-                // This is more accurate than host-level available_memory
-                let cgroup_available = cgroup_info.free_memory;
-                return (cgroup_limit, cgroup_available, true);
-            }
-        }
-    }
-
-    (total, available, false)
 }
 
 /// Print memory status and warning if estimated usage exceeds available RAM.

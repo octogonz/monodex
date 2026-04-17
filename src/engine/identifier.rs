@@ -35,10 +35,6 @@ pub enum IdentifierError {
     /// Label ID has invalid syntax.
     #[error("[invalid_label_id] {message}")]
     LabelId { code: &'static str, message: String },
-
-    /// Relative path is invalid.
-    #[error("[invalid_path] {message}")]
-    Path { code: &'static str, message: String },
 }
 
 impl IdentifierError {
@@ -49,7 +45,6 @@ impl IdentifierError {
             Self::Catalog { code, .. } => code,
             Self::Label { code, .. } => code,
             Self::LabelId { code, .. } => code,
-            Self::Path { code, .. } => code,
         }
     }
 }
@@ -58,8 +53,11 @@ impl IdentifierError {
 // Validation Constants
 // ============================================================================
 
-/// Maximum length for catalog and label names.
-const MAX_IDENTIFIER_LENGTH: usize = 128;
+/// Maximum length for catalog names (per spec §9.2).
+const MAX_CATALOG_LENGTH: usize = 64;
+
+/// Maximum length for label names (per spec §9.3).
+const MAX_LABEL_LENGTH: usize = 128;
 
 // ============================================================================
 // Validation Functions
@@ -78,12 +76,14 @@ pub fn validate_catalog(name: &str) -> Result<(), IdentifierError> {
         });
     }
 
-    if name.len() > MAX_IDENTIFIER_LENGTH {
+    if name.len() > MAX_CATALOG_LENGTH {
         return Err(IdentifierError::Catalog {
             code: "catalog_too_long",
             message: format!(
-                "Catalog name exceeds maximum length of {} characters",
-                MAX_IDENTIFIER_LENGTH
+                "Catalog name exceeds maximum length of {} characters (got {} characters: '{}')",
+                MAX_CATALOG_LENGTH,
+                name.len(),
+                name
             ),
         });
     }
@@ -108,13 +108,12 @@ pub fn validate_catalog(name: &str) -> Result<(), IdentifierError> {
 
 /// Validates a label name (Git-like identifier).
 ///
-/// Rule: `^[a-z0-9]+(?:[./-][a-z0-9]+)*$`
+/// Rule: `^[a-z0-9]+(?:[./=-][a-z0-9]+)*$`
 ///
-/// Also accepts typed form `kind=payload` where:
-/// - kind: `^[a-z0-9]+$`
-/// - payload: follows label rules above
+/// Examples: `main`, `feature/x`, `release/v1.2.3`, `branch=main`, `repo/sub/feature`
 ///
-/// Examples: `main`, `feature/x`, `release/v1.2.3`, `branch=main`, `commit=abc123`
+/// Note: `=` is a permitted separator character but is not interpreted as a typed-form
+/// delimiter today. A label containing `=` is an opaque identifier (per spec §5).
 pub fn validate_label(name: &str) -> Result<(), IdentifierError> {
     if name.is_empty() {
         return Err(IdentifierError::Label {
@@ -123,48 +122,25 @@ pub fn validate_label(name: &str) -> Result<(), IdentifierError> {
         });
     }
 
-    if name.len() > MAX_IDENTIFIER_LENGTH {
+    if name.len() > MAX_LABEL_LENGTH {
         return Err(IdentifierError::Label {
             code: "label_too_long",
             message: format!(
-                "Label name exceeds maximum length of {} characters",
-                MAX_IDENTIFIER_LENGTH
+                "Label name exceeds maximum length of {} characters (got {} characters: '{}')",
+                MAX_LABEL_LENGTH,
+                name.len(),
+                name
             ),
         });
     }
 
-    // Check for typed form: kind=payload
-    if let Some(eq_idx) = name.find('=') {
-        let kind = &name[..eq_idx];
-        let payload = &name[eq_idx + 1..];
-
-        // Validate kind: alphanumeric only
-        if kind.is_empty()
-            || !kind
-                .chars()
-                .all(|c| c.is_ascii_lowercase() || c.is_ascii_digit())
-        {
-            return Err(IdentifierError::Label {
-                code: "label_invalid_kind",
-                message: format!(
-                    "Typed label kind must be alphanumeric (e.g., 'branch', 'commit'), got '{}'",
-                    kind
-                ),
-            });
-        }
-
-        // Validate payload using the label payload rules
-        validate_label_payload(payload)?;
-        return Ok(());
-    }
-
-    // Non-typed form: validate as label payload
+    // Validate as label payload (single-pass validation per spec §9.3)
     validate_label_payload(name)
 }
 
-/// Validates a label payload (the part after `=` in typed forms, or the whole label).
+/// Validates a label payload (the label itself, or the part after `=` in future typed forms).
 ///
-/// Rule: `^[a-z0-9]+(?:[./-][a-z0-9]+)*$`
+/// Rule: `^[a-z0-9]+(?:[./=-][a-z0-9]+)*$`
 fn validate_label_payload(payload: &str) -> Result<(), IdentifierError> {
     if payload.is_empty() {
         return Err(IdentifierError::Label {
@@ -179,13 +155,13 @@ fn validate_label_payload(payload: &str) -> Result<(), IdentifierError> {
     for c in payload.chars() {
         if c.is_ascii_lowercase() || c.is_ascii_digit() {
             segment_len += 1;
-        } else if c == '.' || c == '/' || c == '-' {
+        } else if c == '.' || c == '/' || c == '-' || c == '=' {
             // Separator: must have at least one char before it
             if segment_len == 0 {
                 return Err(IdentifierError::Label {
                     code: "label_payload_invalid_format",
                     message: format!(
-                        "Label payload '{}' has invalid format: segments must be alphanumeric separated by '.', '/', or '-'",
+                        "Label '{}' has invalid format: segments must be alphanumeric separated by '.', '/', '-', or '='",
                         payload
                     ),
                 });
@@ -195,7 +171,7 @@ fn validate_label_payload(payload: &str) -> Result<(), IdentifierError> {
             return Err(IdentifierError::Label {
                 code: "label_payload_invalid_char",
                 message: format!(
-                    "Label payload '{}' contains invalid character '{}'. Allowed: lowercase letters, digits, '.', '/', '-'",
+                    "Label '{}' contains invalid character '{}'. Allowed: lowercase letters, digits, '.', '/', '-', '='",
                     payload, c
                 ),
             });
@@ -208,51 +184,6 @@ fn validate_label_payload(payload: &str) -> Result<(), IdentifierError> {
             code: "label_payload_trailing_separator",
             message: format!("Label payload '{}' cannot end with a separator", payload),
         });
-    }
-
-    Ok(())
-}
-
-/// Validates a relative path for crawl-time indexing.
-///
-/// Paths cannot contain reserved grammar characters: `:`, `@`, or `=`.
-/// These characters are reserved for future reference syntax.
-pub fn validate_relative_path(path: &str) -> Result<(), IdentifierError> {
-    if path.is_empty() {
-        return Err(IdentifierError::Path {
-            code: "path_empty",
-            message: "Relative path cannot be empty".to_string(),
-        });
-    }
-
-    for c in path.chars() {
-        if c == ':' {
-            return Err(IdentifierError::Path {
-                code: "path_contains_colon",
-                message: format!(
-                    "Relative path '{}' contains ':', which is reserved for future reference syntax",
-                    path
-                ),
-            });
-        }
-        if c == '@' {
-            return Err(IdentifierError::Path {
-                code: "path_contains_at",
-                message: format!(
-                    "Relative path '{}' contains '@', which is reserved for future reference syntax",
-                    path
-                ),
-            });
-        }
-        if c == '=' {
-            return Err(IdentifierError::Path {
-                code: "path_contains_equals",
-                message: format!(
-                    "Relative path '{}' contains '=', which is reserved for future reference syntax",
-                    path
-                ),
-            });
-        }
     }
 
     Ok(())
@@ -447,11 +378,19 @@ mod tests {
 
     #[test]
     fn test_validate_label_typed_form() {
+        // `=` is a permitted separator character but not interpreted as typed-form
+        // These are all valid opaque identifiers:
         assert!(validate_label("branch=main").is_ok());
         assert!(validate_label("branch=feature/x").is_ok());
         assert!(validate_label("commit=abc123").is_ok());
         assert!(validate_label("tag=v1.2.3").is_ok());
         assert!(validate_label("local=working-dir").is_ok());
+
+        // Multiple `=` are now valid since `=` is just a separator
+        assert!(validate_label("foo=bar=baz").is_ok());
+
+        // Mixed separators
+        assert!(validate_label("repo/branch=name").is_ok());
     }
 
     #[test]
@@ -465,7 +404,7 @@ mod tests {
             "label_payload_invalid_char"
         );
 
-        // Underscore (invalid in payload)
+        // Underscore (invalid separator)
         assert_eq!(
             validate_label("feature_x").unwrap_err().code(),
             "label_payload_invalid_char"
@@ -477,10 +416,10 @@ mod tests {
             "label_payload_trailing_separator"
         );
 
-        // Empty kind
+        // Leading separator (= is now a valid separator, but cannot start label)
         assert_eq!(
             validate_label("=main").unwrap_err().code(),
-            "label_invalid_kind"
+            "label_payload_invalid_format"
         );
     }
 

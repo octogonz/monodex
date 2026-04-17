@@ -16,7 +16,7 @@ use engine::{
         enumerate_working_directory, read_blob_content, read_working_file_content,
         resolve_commit_oid,
     },
-    identifier::{LabelId, validate_catalog, validate_label, validate_relative_path},
+    identifier::{LabelId, validate_catalog, validate_label},
     partitioner::{ChunkQualityReport, PartitionConfig, PartitionDebug, partition_typescript},
     system_info::{
         ResolvedEmbeddingConfig, compute_auto_embedding_config, estimate_ram_usage, format_bytes,
@@ -1482,14 +1482,7 @@ fn run_crawl_label(
     println!("📂 Filtering files...");
     let files_to_process: Vec<_> = files
         .iter()
-        .filter(|f| {
-            // Validate path doesn't contain reserved characters
-            if let Err(e) = validate_relative_path(&f.relative_path) {
-                eprintln!("  ⚠️  Skipping file with invalid path: {}", e);
-                return false;
-            }
-            crawl_config.should_crawl(&f.relative_path)
-        })
+        .filter(|f| crawl_config.should_crawl(&f.relative_path))
         .cloned()
         .collect();
     println!(
@@ -1873,14 +1866,7 @@ fn run_crawl_working_dir(
     println!("📂 Filtering files...");
     let files_to_process: Vec<_> = files
         .iter()
-        .filter(|f| {
-            // Validate path doesn't contain reserved characters
-            if let Err(e) = validate_relative_path(&f.relative_path) {
-                eprintln!("  ⚠️  Skipping file with invalid path: {}", e);
-                return false;
-            }
-            crawl_config.should_crawl(&f.relative_path)
-        })
+        .filter(|f| crawl_config.should_crawl(&f.relative_path))
         .cloned()
         .collect();
     println!(

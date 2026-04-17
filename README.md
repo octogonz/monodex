@@ -268,8 +268,8 @@ monodex crawl --catalog rushstack --label v1.0.0 --commit a1b2c3d4e5f6
 # Semantic search (uses default context if set)
 monodex search --text "how to read JSON files"
 
-# With explicit label (full format: catalog:label)
-monodex search --text "API Extractor" --label rushstack:main --limit 10
+# With explicit catalog and label
+monodex search --text "API Extractor" --catalog rushstack --label main --limit 10
 ```
 
 ### View Full Chunks
@@ -296,8 +296,8 @@ monodex view --id 30440fb2ecd5fa62 --full-paths
 # Omit catalog preamble (chunks only)
 monodex view --id 30440fb2ecd5fa62 --chunks-only
 
-# Filter by label (full format: catalog:label)
-monodex view --id 30440fb2ecd5fa62 --label rushstack:main
+# Filter by catalog and label
+monodex view --id 30440fb2ecd5fa62 --catalog rushstack --label main
 ```
 
 ### Debug Chunking Algorithm

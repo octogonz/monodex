@@ -895,26 +895,29 @@ mod tests {
     fn test_working_dir_blob_id_matches_commit() {
         let repo_path = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
 
-        // Get commit-mode blob ID for README.md
+        // Use a stable test artifact that rarely changes (not README.md or Cargo.toml)
+        let test_file = "test_artifacts/Colorize.ts";
+
+        // Get commit-mode blob ID for the test file
         let commit_entries =
             enumerate_commit_tree(&repo_path, "HEAD").expect("Failed to enumerate commit");
-        let readme_commit = commit_entries
+        let file_commit = commit_entries
             .iter()
-            .find(|e| e.relative_path == "README.md")
-            .expect("README.md should exist in commit");
+            .find(|e| e.relative_path == test_file)
+            .expect("test_artifacts/Colorize.ts should exist in commit");
 
-        // Get working-dir blob ID for README.md
+        // Get working-dir blob ID for the test file
         let workdir_entries =
             enumerate_working_directory(&repo_path).expect("Failed to enumerate working dir");
-        let readme_workdir = workdir_entries
+        let file_workdir = workdir_entries
             .iter()
-            .find(|e| e.relative_path == "README.md")
-            .expect("README.md should exist in working dir");
+            .find(|e| e.relative_path == test_file)
+            .expect("test_artifacts/Colorize.ts should exist in working dir");
 
         // They should match!
         assert_eq!(
-            readme_commit.blob_id, readme_workdir.blob_id,
-            "README.md blob_id should match between commit and working-dir modes"
+            file_commit.blob_id, file_workdir.blob_id,
+            "test_artifacts/Colorize.ts blob_id should match between commit and working-dir modes"
         );
     }
 }

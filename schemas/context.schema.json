@@ -8,13 +8,19 @@
   "properties": {
     "catalog": {
       "type": "string",
-      "description": "Default catalog name for commands",
-      "examples": ["my_monorepo", "frontend_app"]
+      "description": "Default catalog name for commands. Must match the regex: ^[a-z0-9]+(?:-[a-z0-9]+)*$ (kebab-case, 1-64 chars). Authoritative validation is in src/engine/identifier.rs.",
+      "minLength": 1,
+      "maxLength": 64,
+      "pattern": "^[^\\s:@+#=:]+$",
+      "examples": ["my-repo", "frontend-app"]
     },
     "label": {
       "type": "string",
-      "description": "Default label name for indexing/searching",
-      "examples": ["main", "feature-branch", "v1.2.3"]
+      "description": "Default label name for indexing/searching. Must match the regex: ^[a-z0-9]+(?:[./=-][a-z0-9]+)*$ (Git-like, 1-128 chars). The '=' character is permitted but not interpreted. Authoritative validation is in src/engine/identifier.rs.",
+      "minLength": 1,
+      "maxLength": 128,
+      "pattern": "^[^\\s:@+#]+$",
+      "examples": ["main", "feature/login-flow", "branch=main"]
     },
     "set_at": {
       "type": "string",

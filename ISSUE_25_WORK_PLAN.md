@@ -112,18 +112,18 @@ The error API is the agent's call. Whatever form it takes (enum, struct, thiserr
 
 - [x] 5. **Apply validation at every boundary listed in §6.**
 
-- [ ] 6. **Update schemas.** Constrain catalog and label fields to `{ "type": "string", "minLength": 1, "maxLength": 128 }` with at most a trivial shape hint (e.g. `"pattern": "^[^\\s:@+#]+$"` to catch the most common confusions — note `=` is deliberately permitted here since it is allowed in labels). Add a comment in each schema pointing to the Rust validator.
+- [x] 6. **Update schemas.** Constrain catalog and label fields to `{ "type": "string", "minLength": 1, "maxLength": 128 }` with at most a trivial shape hint (e.g. `"pattern": "^[^\\s:@+#]+$"` to catch the most common confusions — note `=` is deliberately permitted here since it is allowed in labels). Add a comment in each schema pointing to the Rust validator.
 
-- [ ] 7. **Update DESIGN.md.** Revise the "Label-Based Indexing" section to use the strict terminology; `label_id` moves into a "Storage Format" subsection explaining it as internal. Every "Query Interface" example uses two separate flags. Add a concise "Identifier Syntax" subsection that:
+- [x] 7. **Update DESIGN.md.** Revise the "Label-Based Indexing" section to use the strict terminology; `label_id` moves into a "Storage Format" subsection explaining it as internal. Every "Query Interface" example uses two separate flags. Add a concise "Identifier Syntax" subsection that:
    - Gives the regexes and length bounds for `catalog` and `label` as implemented today, matching §4 invariant 5 exactly.
    - Shows brief examples of valid and invalid values, including at least one example using `=` in a label to illustrate the reserved-but-not-interpreted treatment.
    - Documents the full envisioned syntax (typed labels `kind=payload`, `@catalog:label` references, `@catalog:label:path` path references, reserved `+` and `#`) as planned grammar, with a clear note that only bare catalog and label are parsed today.
    - References https://github.com/microsoft/monodex/issues/25 for the full spec.
      Justifies why `@`, `+`, `#` are forbidden in bare identifiers today, and why `=` is permitted but not interpreted: because they are reserved for future grammar described in the linked issue.
 
-- [ ] 8. **Update README.md.** Every example uses the two-flag form. No `Label ID` anywhere.
+- [x] 8. **Update README.md.** Every example uses the two-flag form. No `Label ID` anywhere.
 
-- [ ] 9. **Update CHANGELOG.md.** One entry documenting the breaking change and noting that existing collections with non-conforming identifiers must be recreated, and that the `label_name` payload field has been renamed to `label`.
+- [x] 9. **Update CHANGELOG.md.** One entry documenting the breaking change and noting that existing collections with non-conforming identifiers must be recreated, and that the `label_name` payload field has been renamed to `label`.
 
 ## 8. Acceptance Criteria
 

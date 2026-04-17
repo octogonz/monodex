@@ -458,13 +458,46 @@ struct DefaultContext {
     set_at: String,
 }
 
-/// Load default context from file
+/// Load default context from file, validating identifiers at the boundary
 fn load_default_context() -> Option<DefaultContext> {
     let path = shellexpand::tilde(DEFAULT_CONTEXT_PATH);
     let path = std::path::Path::new(path.as_ref());
 
     match std::fs::read_to_string(path) {
-        Ok(content) => serde_json::from_str(&content).ok(),
+        Ok(content) => {
+            let ctx: DefaultContext = match serde_json::from_str(&content) {
+                Ok(ctx) => ctx,
+                Err(e) => {
+                    eprintln!(
+                        "Warning: Failed to parse default context file ({}): {}. \
+                         Run 'monodex use --catalog <name> --label <name>' to reset.",
+                        path.display(),
+                        e
+                    );
+                    return None;
+                }
+            };
+
+            // Validate identifiers at boundary per ISSUE_25_WORK_PLAN.md §6
+            if let Err(e) = validate_catalog(&ctx.catalog) {
+                eprintln!(
+                    "Warning: Invalid catalog '{}' in default context: {}. \
+                     Run 'monodex use --catalog <name> --label <name>' to reset.",
+                    ctx.catalog, e
+                );
+                return None;
+            }
+            if let Err(e) = validate_label(&ctx.label) {
+                eprintln!(
+                    "Warning: Invalid label '{}' in default context: {}. \
+                     Run 'monodex use --catalog <name> --label <name>' to reset.",
+                    ctx.label, e
+                );
+                return None;
+            }
+
+            Some(ctx)
+        }
         Err(_) => None,
     }
 }

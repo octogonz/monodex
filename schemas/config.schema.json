@@ -34,7 +34,7 @@
     },
     "catalogs": {
       "type": "object",
-      "description": "Named catalog configurations",
+      "description": "Named catalog configurations. Keys are catalog names and must match the regex: ^[a-z0-9]+(?:-[a-z0-9]+)*$ (kebab-case, 1-64 chars). Authoritative validation is in src/engine/identifier.rs.",
       "additionalProperties": {
         "$ref": "#/definitions/CatalogConfig"
       },

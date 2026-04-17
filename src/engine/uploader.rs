@@ -955,6 +955,11 @@ impl QdrantUploader {
         // Sort by chunk_ordinal
         results.sort_by_key(|p| p.payload.chunk_ordinal);
 
+        // Validate each payload
+        for result in &results {
+            result.payload.validate()?;
+        }
+
         Ok(results)
     }
 
@@ -1468,6 +1473,12 @@ impl QdrantUploader {
         }
 
         let search_response: SearchResponse = response.json()?;
+
+        // Validate each payload
+        for result in &search_response.result {
+            result.payload.validate()?;
+        }
+
         Ok(search_response.result)
     }
 
@@ -1561,6 +1572,11 @@ impl QdrantUploader {
 
         // Sort by chunk_ordinal
         results.sort_by_key(|p| p.payload.chunk_ordinal);
+
+        // Validate each payload
+        for result in &results {
+            result.payload.validate()?;
+        }
 
         Ok(results)
     }

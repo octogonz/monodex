@@ -387,4 +387,115 @@ Final paragraph.
         let chunks = partition_markdown(source, &config, "API.md", "test");
         assert_snapshot!(format_chunks(&chunks));
     }
+
+    #[test]
+    fn test_markdown_heading_slug_duplicates() {
+        // Test that duplicate headings get unique slugs using github-slugger
+        let source = r#"## API: Configuration
+
+Config docs here.
+
+## Examples
+
+First examples section.
+
+## Examples
+
+Second examples section (duplicate heading).
+"#;
+
+        let config = PartitionConfig {
+            file_name: "README.md".to_string(),
+            package_name: "pkg".to_string(),
+            ..Default::default()
+        };
+
+        let chunks = partition_markdown(source, &config, "README.md", "test");
+
+        // Expected breadcrumbs:
+        // - "API: Configuration" -> "api-configuration" (colon removed by slugifier)
+        // - "Examples" -> "examples"
+        // - "Examples" (second) -> "examples-1"
+        assert_eq!(chunks.len(), 3);
+        assert!(
+            chunks[0].breadcrumb.contains("api-configuration"),
+            "First heading should have slug 'api-configuration', got: {}",
+            chunks[0].breadcrumb
+        );
+        assert!(
+            chunks[1].breadcrumb.ends_with(":examples"),
+            "First 'Examples' should have slug 'examples', got: {}",
+            chunks[1].breadcrumb
+        );
+        assert!(
+            chunks[2].breadcrumb.ends_with(":examples-1"),
+            "Second 'Examples' should have slug 'examples-1', got: {}",
+            chunks[2].breadcrumb
+        );
+    }
+
+    #[test]
+    fn test_markdown_oversized_section_split() {
+        // Test that oversized sections share identical breadcrumb but differ in split metadata
+        let long_text = "x".repeat(7000); // Exceeds 6000 char target
+        let source = format!(
+            r#"## Long Section
+
+{}
+"#,
+            long_text
+        );
+
+        let config = PartitionConfig {
+            file_name: "test.md".to_string(),
+            package_name: "pkg".to_string(),
+            ..Default::default()
+        };
+
+        let chunks = partition_markdown(&source, &config, "test.md", "test");
+
+        // Should be split into multiple chunks
+        assert!(
+            chunks.len() > 1,
+            "Expected multiple chunks for oversized section, got {}",
+            chunks.len()
+        );
+
+        // All chunks should have identical breadcrumbs
+        let first_breadcrumb = &chunks[0].breadcrumb;
+        for (i, chunk) in chunks.iter().enumerate() {
+            assert_eq!(
+                &chunk.breadcrumb, first_breadcrumb,
+                "Chunk {} breadcrumb '{}' differs from first chunk '{}'",
+                i, chunk.breadcrumb, first_breadcrumb
+            );
+        }
+
+        // Chunks should differ in split_part_ordinal
+        for (i, chunk) in chunks.iter().enumerate() {
+            assert_eq!(
+                chunk.split_part_ordinal,
+                Some(i + 1),
+                "Chunk {} should have split_part_ordinal = {}",
+                i,
+                i + 1
+            );
+            assert!(
+                chunk.split_part_count.is_some(),
+                "Chunk {} should have split_part_count",
+                i
+            );
+        }
+
+        // All should have same split_part_count
+        let total_count = chunks[0].split_part_count.unwrap();
+        assert_eq!(
+            total_count,
+            chunks.len(),
+            "split_part_count should equal total chunks"
+        );
+        for chunk in &chunks {
+            assert_eq!(chunk.split_part_count, Some(total_count));
+        }
+    }
 }

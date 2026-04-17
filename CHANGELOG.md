@@ -27,7 +27,7 @@ PUBLISHING PROCEDURE:
 
 ### Changed
 
-- **Breaking: Stricter identifier validation**: Catalog and label names must now follow strict syntax rules. Catalogs use kebab-case (e.g., `my-repo`). Labels use Git-like identifiers (e.g., `main`, `feature/x`, `release/v1.2.3`). The typed label form `kind=payload` is supported (e.g., `branch=main`, `commit=abc123`). The Qdrant payload field `label_name` has been renamed to `label`. Existing collections with non-conforming identifiers must be recreated. See [#25](https://github.com/microsoft/monodex/issues/25) for the full syntax specification.
+- **Breaking: Stricter identifier validation**: Catalog and label names must now follow strict syntax rules. Catalogs use kebab-case (e.g., `my-repo`). Labels use Git-like identifiers (e.g., `main`, `feature/x`, `release/v1.2.3`). Labels may contain `=` as a permitted separator character (e.g., `branch=main`, `commit=abc123`). These are opaque identifiers today; the `kind=payload` convention is reserved for a future typed-label grammar and is not currently interpreted by Monodex. The Qdrant payload field `label_name` has been renamed to `label`. Existing collections with non-conforming identifiers must be recreated. See [#25](https://github.com/microsoft/monodex/issues/25) for the full syntax specification.
 
 ### Added
 

@@ -132,6 +132,16 @@ pub fn validate_catalog(name: &str) -> Result<(), IdentifierError> {
                     ),
                 });
             }
+            // Check for reserved characters
+            if c == ':' || c == '@' || c == '+' || c == '#' || c == '=' {
+                return Err(IdentifierError::Catalog {
+                    code: "catalog_reserved_char",
+                    message: format!(
+                        "Catalog name '{}' contains '{}', which is reserved for future grammar. Only lowercase letters, digits, and hyphens are allowed.",
+                        name, c
+                    ),
+                });
+            }
             return Err(IdentifierError::Catalog {
                 code: "catalog_invalid_char",
                 message: format!(
@@ -220,6 +230,22 @@ fn validate_label_payload(payload: &str) -> Result<(), IdentifierError> {
                 message: format!(
                     "Label '{}' contains underscore at position {}. Use hyphens or slashes instead.",
                     payload, pos
+                ),
+            });
+        } else if c == ':' {
+            return Err(IdentifierError::Label {
+                code: "label_reserved_char",
+                message: format!(
+                    "Label '{}' contains ':', which is reserved. If you meant to specify a catalog, use the --catalog flag.",
+                    payload
+                ),
+            });
+        } else if c == '@' || c == '+' || c == '#' {
+            return Err(IdentifierError::Label {
+                code: "label_reserved_char",
+                message: format!(
+                    "Label '{}' contains '{}', which is reserved for future grammar.",
+                    payload, c
                 ),
             });
         } else {

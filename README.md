@@ -211,9 +211,9 @@ The `embeddingModel` section controls memory and CPU usage for embedding generat
 
 A **label** is a named, queryable fileset within a catalog. Labels typically represent branches or specific commits:
 
-- `rushstack:main` - main branch
-- `rushstack:feature-x` - feature branch
-- `rushstack:v1.0.0` - specific release tag
+- a label named `main` under the `rushstack` catalog (main branch)
+- a label named `feature-x` (a feature branch)
+- a label named `v1.0.0` (a specific release tag)
 
 **Key concept:** Chunks are immutable content. Labels track which chunks belong to which fileset. When you crawl a new commit under a label, membership is updated but identical content is reused.
 

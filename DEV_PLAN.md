@@ -118,8 +118,9 @@ In `src/engine/util.rs`:
 - [x] Add `EMBEDDER_ID` and `CHUNKER_ID` constants
 - [x] Implement `compute_point_id(file_id, chunk_ordinal) -> String`
   - Returns `string_to_uuid(format!("{}:{}", file_id, chunk_ordinal))` for deterministic chunk IDs
-- [x] Implement `compute_label_id(catalog, label_name) -> String`
-  - Returns `<catalog>:<label_name>` format
+- [x] Implement `LabelId::new(catalog, label) -> Result<LabelId, IdentifierError>` in `src/engine/identifier.rs`
+  - Returns a validated `LabelId` containing the `<catalog>:<label>` qualified form
+  - A helper function `compute_label_id(catalog, label) -> Result<String, IdentifierError>` also exists for the plain-string case
 - [x] Update `Chunk` struct to include new Phase 2 fields
 - [x] Add `ChunkContext` struct for content-based chunking
 - [x] Add `chunk_content()` function for Git blob-based chunking

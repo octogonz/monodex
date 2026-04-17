@@ -379,7 +379,6 @@ enum Commands {
         limit: usize,
 
         /// Filter by label (uses default context if not provided)
-        /// Format: <catalog>:<label>
         #[arg(long)]
         label: Option<String>,
 
@@ -400,9 +399,12 @@ enum Commands {
         id: Vec<String>,
 
         /// Filter by label (uses default context if not provided)
-        /// Format: <catalog>:<label>
         #[arg(long)]
         label: Option<String>,
+
+        /// Filter by catalog (optional - uses label or default context)
+        #[arg(long)]
+        catalog: Option<String>,
 
         /// Show full filesystem paths
         #[arg(long)]
@@ -723,6 +725,7 @@ fn main() -> anyhow::Result<()> {
         Commands::View {
             id,
             label,
+            catalog,
             full_paths,
             chunks_only,
         } => {
@@ -730,6 +733,7 @@ fn main() -> anyhow::Result<()> {
                 &config,
                 &id,
                 label.as_deref(),
+                catalog.as_deref(),
                 full_paths,
                 chunks_only,
                 cli.debug,
@@ -2306,6 +2310,7 @@ fn run_view(
     config: &Config,
     id_specs: &[String],
     label: Option<&str>,
+    catalog: Option<&str>,
     show_full_paths: bool,
     chunks_only: bool,
     debug: bool,
@@ -2317,7 +2322,7 @@ fn run_view(
     }
 
     // Resolve label context from explicit flag or default context
-    let (label_id, catalog_name, label) = resolve_label_context(label, None)?;
+    let (label_id, catalog_name, label) = resolve_label_context(label, catalog)?;
 
     // Parse all file IDs with selectors
     let mut requests: Vec<(String, ChunkSelector)> = Vec::new();

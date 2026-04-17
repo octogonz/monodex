@@ -88,19 +88,68 @@ pub fn validate_catalog(name: &str) -> Result<(), IdentifierError> {
         });
     }
 
-    // Kebab-case: lowercase alphanumeric with hyphens
-    let valid = name.split('-').all(|part| {
-        !part.is_empty()
-            && part
-                .chars()
-                .all(|c| c.is_ascii_lowercase() || c.is_ascii_digit())
-    });
-
-    if !valid {
+    // Check for leading hyphen
+    if name.starts_with('-') {
         return Err(IdentifierError::Catalog {
-            code: "catalog_invalid_format",
-            message: "Catalog name must be kebab-case (lowercase alphanumeric with hyphens, e.g., 'my-repo')".to_string(),
+            code: "catalog_leading_hyphen",
+            message: format!(
+                "Catalog name '{}' cannot start with a hyphen",
+                name
+            ),
         });
+    }
+
+    // Check for trailing hyphen
+    if name.ends_with('-') {
+        return Err(IdentifierError::Catalog {
+            code: "catalog_trailing_hyphen",
+            message: format!(
+                "Catalog name '{}' cannot end with a hyphen",
+                name
+            ),
+        });
+    }
+
+    // Check for consecutive hyphens
+    if name.contains("--") {
+        return Err(IdentifierError::Catalog {
+            code: "catalog_consecutive_hyphens",
+            message: format!(
+                "Catalog name '{}' cannot contain consecutive hyphens",
+                name
+            ),
+        });
+    }
+
+    // Check for invalid characters (uppercase, underscore, special chars)
+    for (i, c) in name.chars().enumerate() {
+        if !(c.is_ascii_lowercase() || c.is_ascii_digit() || c == '-') {
+            if c.is_ascii_uppercase() {
+                return Err(IdentifierError::Catalog {
+                    code: "catalog_uppercase",
+                    message: format!(
+                        "Catalog name '{}' contains uppercase letter '{}' at position {}. Use lowercase only.",
+                        name, c, i
+                    ),
+                });
+            }
+            if c == '_' {
+                return Err(IdentifierError::Catalog {
+                    code: "catalog_underscore",
+                    message: format!(
+                        "Catalog name '{}' contains underscore at position {}. Use hyphens instead (e.g., 'my-repo' not 'my_repo').",
+                        name, i
+                    ),
+                });
+            }
+            return Err(IdentifierError::Catalog {
+                code: "catalog_invalid_char",
+                message: format!(
+                    "Catalog name '{}' contains invalid character '{}' at position {}. Only lowercase letters, digits, and hyphens are allowed.",
+                    name, c, i
+                ),
+            });
+        }
     }
 
     Ok(())
@@ -144,13 +193,14 @@ pub fn validate_label(name: &str) -> Result<(), IdentifierError> {
 fn validate_label_payload(payload: &str) -> Result<(), IdentifierError> {
     if payload.is_empty() {
         return Err(IdentifierError::Label {
-            code: "label_payload_empty",
-            message: "Label payload cannot be empty".to_string(),
+            code: "label_empty",
+            message: "Label name cannot be empty".to_string(),
         });
     }
 
-    // Split on separators and validate each segment
+    // Track position for better error messages
     let mut segment_len = 0usize;
+    let mut pos = 0usize;
 
     for c in payload.chars() {
         if c.is_ascii_lowercase() || c.is_ascii_digit() {
@@ -159,30 +209,47 @@ fn validate_label_payload(payload: &str) -> Result<(), IdentifierError> {
             // Separator: must have at least one char before it
             if segment_len == 0 {
                 return Err(IdentifierError::Label {
-                    code: "label_payload_invalid_format",
+                    code: "label_leading_separator",
                     message: format!(
-                        "Label '{}' has invalid format: segments must be alphanumeric separated by '.', '/', '-', or '='",
-                        payload
+                        "Label '{}' has a leading separator '{}' at position {}",
+                        payload, c, pos
                     ),
                 });
             }
             segment_len = 0;
+        } else if c.is_ascii_uppercase() {
+            return Err(IdentifierError::Label {
+                code: "label_uppercase",
+                message: format!(
+                    "Label '{}' contains uppercase letter '{}' at position {}. Use lowercase only.",
+                    payload, c, pos
+                ),
+            });
+        } else if c == '_' {
+            return Err(IdentifierError::Label {
+                code: "label_underscore",
+                message: format!(
+                    "Label '{}' contains underscore at position {}. Use hyphens or slashes instead.",
+                    payload, pos
+                ),
+            });
         } else {
             return Err(IdentifierError::Label {
-                code: "label_payload_invalid_char",
+                code: "label_invalid_char",
                 message: format!(
-                    "Label '{}' contains invalid character '{}'. Allowed: lowercase letters, digits, '.', '/', '-', '='",
-                    payload, c
+                    "Label '{}' contains invalid character '{}' at position {}. Allowed: lowercase letters, digits, '.', '/', '-', '='",
+                    payload, c, pos
                 ),
             });
         }
+        pos += 1;
     }
 
     // Must end with an alphanumeric segment
     if segment_len == 0 {
         return Err(IdentifierError::Label {
-            code: "label_payload_trailing_separator",
-            message: format!("Label payload '{}' cannot end with a separator", payload),
+            code: "label_trailing_separator",
+            message: format!("Label '{}' cannot end with a separator", payload),
         });
     }
 
@@ -339,31 +406,31 @@ mod tests {
         // Uppercase not allowed
         assert_eq!(
             validate_catalog("MyRepo").unwrap_err().code(),
-            "catalog_invalid_format"
+            "catalog_uppercase"
         );
 
         // Underscore not allowed
         assert_eq!(
             validate_catalog("my_repo").unwrap_err().code(),
-            "catalog_invalid_format"
+            "catalog_underscore"
         );
 
         // Double hyphen
         assert_eq!(
             validate_catalog("my--repo").unwrap_err().code(),
-            "catalog_invalid_format"
+            "catalog_consecutive_hyphens"
         );
 
         // Leading hyphen
         assert_eq!(
             validate_catalog("-repo").unwrap_err().code(),
-            "catalog_invalid_format"
+            "catalog_leading_hyphen"
         );
 
         // Trailing hyphen
         assert_eq!(
             validate_catalog("repo-").unwrap_err().code(),
-            "catalog_invalid_format"
+            "catalog_trailing_hyphen"
         );
     }
 
@@ -401,25 +468,25 @@ mod tests {
         // Uppercase
         assert_eq!(
             validate_label("Main").unwrap_err().code(),
-            "label_payload_invalid_char"
+            "label_uppercase"
         );
 
         // Underscore (invalid separator)
         assert_eq!(
             validate_label("feature_x").unwrap_err().code(),
-            "label_payload_invalid_char"
+            "label_underscore"
         );
 
         // Trailing separator
         assert_eq!(
             validate_label("feature/").unwrap_err().code(),
-            "label_payload_trailing_separator"
+            "label_trailing_separator"
         );
 
         // Leading separator (= is now a valid separator, but cannot start label)
         assert_eq!(
             validate_label("=main").unwrap_err().code(),
-            "label_payload_invalid_format"
+            "label_leading_separator"
         );
     }
 

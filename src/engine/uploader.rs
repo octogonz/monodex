@@ -138,8 +138,8 @@ pub struct PointPayload {
 pub struct LabelMetadata {
     pub source_type: String, // "label-metadata"
     pub catalog: String,
-    pub label_id: String,    // e.g., "rushstack:main"
-    pub label_name: String,  // e.g., "main"
+    pub label_id: String,    // e.g., "rushstack:main" (internal storage form)
+    pub label: String,       // e.g., "main" (bare label name)
     pub commit_oid: String,  // Resolved commit SHA
     pub source_kind: String, // "git-commit"
     #[serde(default)]
@@ -1512,7 +1512,7 @@ mod tests {
             source_type: "label-metadata".to_string(),
             catalog: "rushstack".to_string(),
             label_id: label_id.to_string(),
-            label_name: "feature/foo".to_string(),
+            label: "feature/foo".to_string(),
             commit_oid: "abc123".to_string(),
             source_kind: "git-commit".to_string(),
             crawl_complete: false,

@@ -89,7 +89,7 @@ impl Chunk {
 pub struct ChunkContext {
     /// Catalog name
     pub catalog: String,
-    /// Label ID (e.g., "rushstack:main")
+    /// Label ID (internal storage form: catalog:label)
     pub label_id: String,
     /// Package name for breadcrumb
     pub package_name: String,

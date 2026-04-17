@@ -319,7 +319,6 @@ enum Commands {
 
         /// Label name for this crawl (e.g., "main", "feature-x", "local")
         /// REQUIRED: Must be explicitly specified to avoid accidental overwrites.
-        /// Label ID will be computed as <catalog>:<label>
         #[arg(long)]
         label: String,
 
@@ -638,14 +637,14 @@ fn main() -> anyhow::Result<()> {
             incremental_warnings,
         } => {
             // Resolve label context from explicit flags or default context
-            let (_label_id, catalog_name, label_name) =
+            let (_label_id, catalog_name, label) =
                 resolve_label_context(Some(&label), catalog.as_deref())?;
 
             if source.working_dir {
                 run_crawl_working_dir(
                     &config,
                     &catalog_name,
-                    &label_name,
+                    &label,
                     incremental_warnings,
                     cli.debug,
                 )?;
@@ -654,7 +653,7 @@ fn main() -> anyhow::Result<()> {
                 run_crawl_label(
                     &config,
                     &catalog_name,
-                    &label_name,
+                    &label,
                     source.commit.as_ref().unwrap(),
                     incremental_warnings,
                     cli.debug,
@@ -739,7 +738,6 @@ fn run_use(catalog: Option<&str>, label: Option<String>, config: &Config) -> any
                     println!("Current context:");
                     println!("  Catalog: {}", ctx.catalog);
                     println!("  Label: {}", ctx.label);
-                    println!("  Label ID: {}:{}", ctx.catalog, ctx.label);
                 }
                 None => {
                     println!("No default context set.");
@@ -749,14 +747,14 @@ fn run_use(catalog: Option<&str>, label: Option<String>, config: &Config) -> any
                 }
             }
         }
-        (Some(catalog_name), Some(label_name)) => {
+        (Some(catalog_name), Some(label)) => {
             // Validate catalog name syntax
             validate_catalog(catalog_name)
                 .map_err(|e| anyhow::anyhow!("Invalid catalog name '{}': {}", catalog_name, e))?;
 
             // Validate label name syntax
-            validate_label(&label_name)
-                .map_err(|e| anyhow::anyhow!("Invalid label name '{}': {}", label_name, e))?;
+            validate_label(&label)
+                .map_err(|e| anyhow::anyhow!("Invalid label name '{}': {}", label, e))?;
 
             // Validate that catalog exists in config
             if !config.catalogs.contains_key(catalog_name) {
@@ -773,11 +771,11 @@ fn run_use(catalog: Option<&str>, label: Option<String>, config: &Config) -> any
             }
 
             // Set new context
-            save_default_context(catalog_name, &label_name)?;
+            save_default_context(catalog_name, &label)?;
 
             println!("✓ Default context set to:");
             println!("  Catalog: {}", catalog_name);
-            println!("  Label: {}", label_name);
+            println!("  Label: {}", label);
             println!();
             println!(
                 "Commands will now use this context when --catalog/--label are not specified."
@@ -1370,7 +1368,7 @@ fn run_embed_upload_pipeline(
 fn run_crawl_label(
     config: &Config,
     catalog_name: &str,
-    label_name: &str,
+    label: &str,
     commit: &str,
     _incremental_warnings: bool,
     debug: bool,
@@ -1380,7 +1378,7 @@ fn run_crawl_label(
     let total_start = std::time::Instant::now();
     println!("🔍 Starting label-aware crawl...");
     println!("Catalog: {}", catalog_name);
-    println!("Label: {}", label_name);
+    println!("Label: {}", label);
 
     // Get catalog config
     let catalog_config = config
@@ -1398,9 +1396,9 @@ fn run_crawl_label(
     println!();
 
     // Compute label_id (internal storage form)
-    let label_id = LabelId::new(catalog_name, label_name).map_err(|e| anyhow::anyhow!("{}", e))?;
+    let label_id = LabelId::new(catalog_name, label).map_err(|e| anyhow::anyhow!("{}", e))?;
     println!("Catalog: {}", catalog_name);
-    println!("Label: {}", label_name);
+    println!("Label: {}", label);
     println!();
 
     // B.1: Load repo-specific crawl configuration
@@ -1425,7 +1423,7 @@ fn run_crawl_label(
         source_type: "label-metadata".to_string(),
         catalog: catalog_name.to_string(),
         label_id: label_id.to_string(),
-        label_name: label_name.to_string(),
+        label: label.to_string(),
         commit_oid: commit_oid.clone(),
         source_kind: "git-commit".to_string(),
         crawl_complete: false,
@@ -1674,7 +1672,7 @@ fn run_crawl_label(
         source_type: "label-metadata".to_string(),
         catalog: catalog_name.to_string(),
         label_id: label_id.to_string(),
-        label_name: label_name.to_string(),
+        label: label.to_string(),
         commit_oid: commit_oid.clone(),
         source_kind: "git-commit".to_string(),
         crawl_complete,
@@ -1754,7 +1752,7 @@ fn run_crawl_label(
 fn run_crawl_working_dir(
     config: &Config,
     catalog_name: &str,
-    label_name: &str,
+    label: &str,
     _incremental_warnings: bool,
     debug: bool,
 ) -> anyhow::Result<()> {
@@ -1763,7 +1761,7 @@ fn run_crawl_working_dir(
     let total_start = std::time::Instant::now();
     println!("🔍 Starting working directory crawl...");
     println!("Catalog: {}", catalog_name);
-    println!("Label: {}", label_name);
+    println!("Label: {}", label);
 
     // Get catalog config
     let catalog_config = config
@@ -1781,9 +1779,9 @@ fn run_crawl_working_dir(
     println!();
 
     // Compute label_id (internal storage form)
-    let label_id = LabelId::new(catalog_name, label_name).map_err(|e| anyhow::anyhow!("{}", e))?;
+    let label_id = LabelId::new(catalog_name, label).map_err(|e| anyhow::anyhow!("{}", e))?;
     println!("Catalog: {}", catalog_name);
-    println!("Label: {}", label_name);
+    println!("Label: {}", label);
     println!();
 
     // B.1: Load repo-specific crawl configuration
@@ -1803,7 +1801,7 @@ fn run_crawl_working_dir(
         source_type: "label-metadata".to_string(),
         catalog: catalog_name.to_string(),
         label_id: label_id.to_string(),
-        label_name: label_name.to_string(),
+        label: label.to_string(),
         commit_oid: "".to_string(), // No commit for working directory
         source_kind: "working-directory".to_string(),
         crawl_complete: false,
@@ -2042,7 +2040,7 @@ fn run_crawl_working_dir(
         source_type: "label-metadata".to_string(),
         catalog: catalog_name.to_string(),
         label_id: label_id.to_string(),
-        label_name: label_name.to_string(),
+        label: label.to_string(),
         commit_oid: "".to_string(),
         source_kind: "working-directory".to_string(),
         crawl_complete,
@@ -2119,7 +2117,7 @@ fn run_search(
     debug: bool,
 ) -> anyhow::Result<()> {
     // Resolve label context from explicit flags or default context
-    let (label_id, catalog_name, label_name) = resolve_label_context(label, catalog)?;
+    let (label_id, catalog_name, label) = resolve_label_context(label, catalog)?;
 
     // Generate embedding for query
     let embedder = ParallelEmbedder::new()?;
@@ -2134,7 +2132,7 @@ fn run_search(
     )?;
 
     println!("Catalog: {}", catalog_name);
-    println!("Label: {}", label_name);
+    println!("Label: {}", label);
     println!();
 
     let results =
@@ -2284,7 +2282,7 @@ fn run_view(
     }
 
     // Resolve label context from explicit flag or default context
-    let (label_id, catalog_name, label_name) = resolve_label_context(label, None)?;
+    let (label_id, catalog_name, label) = resolve_label_context(label, None)?;
 
     // Parse all file IDs with selectors
     let mut requests: Vec<(String, ChunkSelector)> = Vec::new();
@@ -2303,7 +2301,7 @@ fn run_view(
 
     if !chunks_only {
         println!("Catalog: {}", catalog_name);
-        println!("Label: {}", label_name);
+        println!("Label: {}", label);
         println!();
     }
 

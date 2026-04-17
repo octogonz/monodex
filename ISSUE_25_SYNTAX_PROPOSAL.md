@@ -1,133 +1,75 @@
 # Monodex Identifier & Reference Syntax Proposal
 
-## 1. Motivating Examples (Realistic, Exhaustive)
+## 1. Scope
 
-### 1.1 Single Repo, Typical Usage
+This document defines the syntax of identifiers and references used by Monodex at the CLI and in storage. It covers:
+
+- **Catalogs**: names Monodex assigns to data sources it indexes.
+- **Labels**: names Monodex assigns to versions/snapshots within a catalog.
+- **References**: composite strings that locate content across catalog, label, and path.
+
+It does **not** define what paths are allowed inside a catalog. Paths are bytes from external systems (Git trees, working directories, issue systems). Monodex does not own them and must not reject or silently drop them. See §8 for how paths are handled.
+
+---
+
+## 2. Terminology
+
+- **Catalog** — a Monodex-assigned name for a data source. Few and stable. Chosen by the user.
+- **Label** — a Monodex-assigned name for a version or snapshot of a catalog (branch, commit, tag, working-directory state, time snapshot). Many and diverse.
+- **Path** — a location within a label. The identity of a path is determined by the underlying data source. Monodex does not assign or constrain path syntax.
+- **Reference** — a composite string that locates content, composed of zero or more of: catalog, label, path.
+
+Catalogs and labels are **identifiers Monodex owns**. Paths are **external data Monodex indexes**. This distinction is load-bearing; see §8.
+
+---
+
+## 3. Motivating Examples
+
+### 3.1 Typical single-repo usage
 
 ```bash
 --catalog my-repo
 --label main
 --path main:src/index.ts
---path release/v1.2.3:src/index.ts
 ```
 
-Labels:
-
-```
-main
-feature/login-flow
-release/v1.2.3
-```
-
----
-
-### 1.2 Multiple Repos (Cross-Catalog)
+### 3.2 Cross-catalog references
 
 ```bash
 --path @frontend:main:src/app.ts
 --path @backend:main:src/server.ts
 ```
 
----
+### 3.3 Typed labels disambiguate user-chosen names
 
-### 1.3 Commit-Specific Queries
-
-```bash
---path @my-repo:commit=abc123:src/index.ts
---path @my-repo:commit=def456:src/index.ts
-```
-
----
-
-### 1.4 Working Directory / Local State
-
-```bash
---path @my-repo:local=working-dir:src/index.ts
-```
-
----
-
-### 1.5 Time-Based Snapshots (Automation)
-
-```bash
---path @my-repo:snapshot=2026-04-16T12-00:src/index.ts
-```
-
----
-
-### 1.6 Release Tags
-
-```bash
---path @my-repo:tag=v1.2.3:src/index.ts
-```
-
----
-
-### 1.7 Branch Names with Slashes (Git-like)
-
-```bash
---path @my-repo:branch=feature/login-flow:src/index.ts
---path @my-repo:branch=release/v1.2.3:src/index.ts
-```
-
----
-
-### 1.8 Avoiding Collisions
-
-User creates a branch literally named `commit`:
+A user creates a branch literally named `commit`:
 
 ```bash
 --path @my-repo:branch=commit:src/index.ts
 --path @my-repo:commit=abc123:src/index.ts
 ```
 
-These remain unambiguous.
+The typed form makes these unambiguous. Other typed kinds include `tag=v1.2.3`, `local=working-dir`, `snapshot=2026-04-16T12-00`.
 
----
-
-### 1.9 Omitted Catalog (Contextual Default)
-
-```bash
---path branch=main:src/index.ts
---path release/v1.2.3:src/index.ts
-```
-
----
-
-### 1.10 Non-Git Data Sources
+### 3.4 Non-Git data sources
 
 ```bash
 --path @github-issues:snapshot=2026-04-16:issue/123
 ```
 
----
+### 3.5 Paths with reserved characters
 
-## 2. Core Model
+A user's repo contains a file literally named `weird:file.ts`:
 
-### Catalog
+```bash
+--path @my-repo:main:src/weird%3Afile.ts
+```
 
-- Identifies a data source (e.g. repo, issue system)
-- Few and stable
-
-### Label
-
-- Identifies a version/snapshot of a catalog
-- Many and diverse
-- May correspond to:
-  - Git branch
-  - Git commit
-  - Git tag
-  - working directory
-  - time snapshot
-  - external system state
-
-### Path
-
-- Identifies a location within a label
+See §8 for the encoding rules.
 
 ---
 
-## 3. Syntax Overview
+## 4. Syntax Overview
 
 ### Base forms
 
@@ -150,7 +92,7 @@ kind=payload:path
 
 ---
 
-## 4. Typed Label Form (Key Innovation)
+## 5. Typed Label Form
 
 ### Structure
 
@@ -158,67 +100,36 @@ kind=payload:path
 <kind>=<payload>
 ```
 
-Examples:
+Examples: `branch=main`, `commit=abc123`, `tag=v1.2.3`, `local=working-dir`, `snapshot=2026-04-16T12-00`.
 
-```
-branch=main
-branch=feature/x
-commit=abc123
-tag=v1.2.3
-local=working-dir
-snapshot=2026-04-16T12-00
-```
+`kind` is a reserved identifier; `payload` is opaque and may contain `/`. The typed form eliminates ambiguity with user-created branch names that coincide with reserved kinds.
 
-### Properties
+### Status of `=` Today
 
-- `kind` is a reserved identifier
-- `payload` is opaque and may contain `/`
-- `=` is the delimiter between machine type and payload
-- eliminates ambiguity with user-created branch names
+The typed form is **reserved grammar**. In the current implementation, `=` is a permitted character in label identifiers but is not parsed or interpreted: `--label branch=main` today yields a label literally named `branch=main`. Users may adopt `kind=payload` as a naming convention in their own automation, and such names will remain valid when the typed form is parsed natively in the future.
 
 ---
 
-## 5. Full Reference Grammar
+## 6. Parsing Rules (Planned)
 
-### Without catalog
+These rules describe the future parser. Today only the bare forms of `--catalog` and `--label` are parsed; composite forms are reserved.
 
-```
-path
-label:path
-kind=payload:path
-```
-
-### With catalog
-
-```
-@catalog:path
-@catalog:label
-@catalog:kind=payload
-@catalog:label:path
-@catalog:kind=payload:path
-```
-
----
-
-## 6. Parsing Rules
-
-1. If string starts with `@`, parse catalog first:
+1. If the string starts with `@`, parse catalog first:
 
    ```
    @catalog:...
    ```
 
-2. Split remaining string on `:` (left-to-right):
+2. Split the remaining string on `:` (left-to-right, respecting path encoding per §8):
    - 1 segment → label or path (based on context)
-   - 2 segments → label:path or kind=payload:path
-   - 3 segments → catalog:label:path or catalog:kind=payload:path
+   - 2 segments → `label:path` or `kind=payload:path`
+   - 3 segments → `@catalog:label:path` or `@catalog:kind=payload:path`
 
-3. Within a label segment:
-   - if `=` present → parse as `kind=payload`
-   - else → treat as opaque label
+3. Within a label segment: if `=` present, parse as `kind=payload`; otherwise treat as opaque.
 
-4. `/` is never parsed structurally by Monodex:
-   - always part of label or path
+4. `/` is never parsed structurally; it is always part of a label or a decoded path.
+
+5. Path segments are percent-decoded per §8 before use.
 
 ---
 
@@ -226,20 +137,25 @@ kind=payload:path
 
 ### `--catalog`
 
+Accepts only the bare form:
+
 ```
 catalog
 ```
 
 ### `--label`
 
+Accepts only the bare form today:
+
 ```
 label
-kind=payload
-@catalog:label
-@catalog:kind=payload
 ```
 
+Composite forms (`kind=payload`, `@catalog:label`, `@catalog:kind=payload`) are **not accepted** at the CLI yet. `=` is a valid character inside a bare label but is not interpreted.
+
 ### `--path`
+
+Accepts only the bare path form today. Planned composite forms:
 
 ```
 path
@@ -252,101 +168,106 @@ kind=payload:path
 
 ---
 
-## 8. Identifier Rules
+## 8. Paths
 
-### Forbidden characters (global)
+### 8.1 Principle
 
-```
-: @ = + whitespace control-chars
-```
+Paths are facts about external systems. Monodex does not assign path syntax and must not refuse to index a file because its path contains a character that collides with Monodex's reference grammar.
 
-### Allowed characters (recommended)
+This rules out two failure modes:
 
-```
-[a-z0-9._/-]
-```
+- **Rejection** — refusing to crawl a file because its path contains `:`, `@`, or `=`. Monodex does not control what filenames appear in a Git tree.
+- **Silent omission** — skipping such files with a warning. The user gets a crawl reported as "successful" but search results are missing content they expect. Worse than rejection because the failure is invisible.
+
+Both are forbidden.
+
+### 8.2 Storage
+
+Paths are stored verbatim. No normalization, rewriting, or character substitution. The path field round-trips bit-for-bit with what the data source reported.
+
+### 8.3 Encoding at Reference Boundaries
+
+When a path appears inside a reference string — any context where it is concatenated with grammar characters — it is **percent-encoded per RFC 3986**.
+
+Characters that **must** be encoded in a path within a reference:
+
+- Grammar-reserved: `:`, `@`, `=`, `+`, `#`
+- The escape character itself: `%`
+- Whitespace and control characters
+
+`/` is **not** encoded. It is a legitimate path separator and does not collide with any reference-grammar character.
+
+Decoding is the inverse: percent-sequences in the path segment of a reference are decoded before lookup. Storage still holds the decoded form.
+
+Percent-encoding was chosen over backslash or quote-based escaping because it survives shells, JSON, and YAML without re-escaping, and it keeps ordinary paths mostly readable.
+
+### 8.4 Examples
+
+| Stored path         | In a reference                      |
+| ------------------- | ----------------------------------- |
+| `src/index.ts`      | `@my-repo:main:src/index.ts`        |
+| `src/weird:file.ts` | `@my-repo:main:src/weird%3Afile.ts` |
+| `50%off/notes.md`   | `@my-repo:main:50%25off/notes.md`   |
+
+### 8.5 Breadcrumbs and Display
+
+Breadcrumb rendering and other human-facing displays use the **stored (decoded)** form. Percent-encoding applies only at the boundary where paths are embedded in reference strings. A breadcrumb that says `my-repo / main / src/weird:file.ts` is correct; a breadcrumb that says `src/weird%3Afile.ts` is wrong.
 
 ---
 
-### Catalog (kebab-case)
+## 9. Identifier Rules
+
+### 9.1 Forbidden Characters
+
+Forbidden in bare catalog and label identifiers:
+
+```
+:  @  +  #  whitespace  control characters
+```
+
+These are reserved for current or future reference grammar. `+` and `#` are not used by the grammar today but are reserved to keep future extensions non-breaking.
+
+`=` is additionally forbidden in catalogs. `=` is permitted in labels but is not interpreted today (§5); a label containing `=` is an opaque identifier.
+
+### 9.2 Catalog (kebab-case)
 
 ```
 ^[a-z0-9]+(?:-[a-z0-9]+)*$
 ```
 
-Examples:
+- Length 1–64 characters.
+- Lowercase ASCII alphanumeric words separated by single `-`.
+- No leading, trailing, or consecutive `-`.
+
+Examples: `my-repo`, `frontend`, `backend-api`.
+
+### 9.3 Label (Git-like)
 
 ```
-my-repo
-frontend
-backend-api
+^[a-z0-9]+(?:[./=-][a-z0-9]+)*$
 ```
 
----
+- Length 1–128 characters.
+- Lowercase ASCII alphanumeric words separated by single `.`, `/`, `=`, or `-`.
+- No leading, trailing, or consecutive separators.
+- `=` is a permitted separator character but is not interpreted as a typed-form delimiter today.
 
-### Label payload (Git-like)
+Examples: `main`, `feature/x`, `release/v1.2.3`, `working-dir`, `branch=main`, `repo/sub/feature`.
 
-```
-^[a-z0-9]+(?:[./-][a-z0-9]+)*$
-```
-
-Examples:
-
-```
-main
-feature/x
-release/v1.2.3
-working-dir
-repo/sub/feature
-```
-
----
-
-### Kind (typed prefix)
+### 9.4 Kind (typed prefix, planned)
 
 ```
 ^[a-z0-9]+$
 ```
 
-Examples:
+Applies when the typed form `kind=payload` is parsed natively in a future release. Not enforced today.
 
-```
-branch
-commit
-tag
-local
-snapshot
-```
+Examples: `branch`, `commit`, `tag`, `local`, `snapshot`.
 
 ---
 
-## 9. Reserved Syntax Budget
+## 10. Key Principles
 
-Reserved globally:
-
-```
-: @ =
-```
-
-Reserved for future:
-
-```
-+
-#
-```
-
----
-
-## 10. Design Outcomes
-
-- No ambiguity between branch names and machine labels
-- `/` remains fully usable in labels
-- Git naming patterns preserved
-- CLI remains shell-safe without quoting
-- Future extensions possible without breaking syntax
-
----
-
-## 11. Key Principle
-
-> Labels remain human/Git-like; machine semantics are layered via `kind=payload` only when needed.
+> Catalogs and labels are identifiers Monodex owns and may constrain. Paths are external data Monodex must represent faithfully.
+>
+> Labels remain human- and Git-like. Machine semantics are layered via `kind=payload` only when needed.

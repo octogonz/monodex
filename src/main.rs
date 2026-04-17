@@ -17,6 +17,10 @@ use engine::{
         resolve_commit_oid,
     },
     partitioner::{ChunkQualityReport, PartitionConfig, PartitionDebug, partition_typescript},
+    system_info::{
+        ResolvedEmbeddingConfig, compute_auto_embedding_config, estimate_ram_usage, format_bytes,
+        get_physical_core_count,
+    },
     uploader::{LabelMetadata, PointResult, QdrantUploader, is_payload_limit_error},
     util::compute_label_id,
 };
@@ -148,11 +152,130 @@ impl CatalogConfig {
     }
 }
 
+/// Embedding model configuration
+#[derive(Debug, serde::Deserialize, Clone)]
+#[serde(deny_unknown_fields)]
+struct EmbeddingModelConfig {
+    /// Number of ONNX model instances (sessions). Primary driver of memory usage.
+    /// Allowed values: "auto" or integer >= 1
+    #[serde(
+        rename = "modelInstances",
+        default = "EmbeddingModelConfig::default_model_instances"
+    )]
+    model_instances: EmbeddingSizeValue,
+
+    /// Threads per model instance. CPU tuning only.
+    /// Allowed values: "auto" or integer >= 1
+    #[serde(
+        rename = "threadsPerInstance",
+        default = "EmbeddingModelConfig::default_threads_per_instance"
+    )]
+    threads_per_instance: EmbeddingSizeValue,
+}
+
+/// A value that can be either "auto" or a specific integer
+#[derive(Debug, Clone, PartialEq)]
+enum EmbeddingSizeValue {
+    Auto,
+    Exact(usize),
+}
+
+impl EmbeddingModelConfig {
+    fn default_model_instances() -> EmbeddingSizeValue {
+        EmbeddingSizeValue::Auto
+    }
+
+    fn default_threads_per_instance() -> EmbeddingSizeValue {
+        EmbeddingSizeValue::Auto
+    }
+}
+
+impl Default for EmbeddingModelConfig {
+    fn default() -> Self {
+        Self {
+            model_instances: Self::default_model_instances(),
+            threads_per_instance: Self::default_threads_per_instance(),
+        }
+    }
+}
+
+impl<'de> serde::Deserialize<'de> for EmbeddingSizeValue {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: serde::Deserializer<'de>,
+    {
+        use serde::de::{self, Visitor};
+
+        struct EmbeddingSizeValueVisitor;
+
+        impl<'de> Visitor<'de> for EmbeddingSizeValueVisitor {
+            type Value = EmbeddingSizeValue;
+
+            fn expecting(&self, formatter: &mut std::fmt::Formatter) -> std::fmt::Result {
+                formatter.write_str(r#""auto" or an integer >= 1"#)
+            }
+
+            fn visit_str<E>(self, v: &str) -> Result<Self::Value, E>
+            where
+                E: de::Error,
+            {
+                if v == "auto" {
+                    Ok(EmbeddingSizeValue::Auto)
+                } else {
+                    Err(de::Error::custom(r#"expected "auto" or an integer >= 1"#))
+                }
+            }
+
+            fn visit_u64<E>(self, v: u64) -> Result<Self::Value, E>
+            where
+                E: de::Error,
+            {
+                if v >= 1 {
+                    Ok(EmbeddingSizeValue::Exact(v as usize))
+                } else {
+                    Err(de::Error::custom("integer must be >= 1"))
+                }
+            }
+
+            fn visit_i64<E>(self, v: i64) -> Result<Self::Value, E>
+            where
+                E: de::Error,
+            {
+                if v >= 1 {
+                    Ok(EmbeddingSizeValue::Exact(v as usize))
+                } else {
+                    Err(de::Error::custom("integer must be >= 1"))
+                }
+            }
+
+            fn visit_f64<E>(self, v: f64) -> Result<Self::Value, E>
+            where
+                E: de::Error,
+            {
+                // Accept whole numbers from JSON parsers that serialize integers as floats
+                if v >= 1.0 && v.fract() == 0.0 {
+                    Ok(EmbeddingSizeValue::Exact(v as usize))
+                } else if v < 1.0 {
+                    Err(de::Error::custom("integer must be >= 1"))
+                } else {
+                    Err(de::Error::custom(
+                        "expected an integer >= 1, got fractional value",
+                    ))
+                }
+            }
+        }
+
+        deserializer.deserialize_any(EmbeddingSizeValueVisitor)
+    }
+}
+
 /// Main configuration file
 #[derive(Debug, serde::Deserialize)]
 struct Config {
     qdrant: QdrantConfig,
     catalogs: HashMap<String, CatalogConfig>,
+    #[serde(rename = "embeddingModel", default)]
+    embedding_model: EmbeddingModelConfig,
 }
 
 /// Rush semantic search crawler for Qdrant
@@ -621,6 +744,163 @@ fn run_use(catalog: Option<&str>, label: Option<String>, config: &Config) -> any
 }
 
 // ============================================================================
+// B.2: Embedding configuration resolution
+// ============================================================================
+
+/// Resolve embedding configuration from config file, applying "auto" heuristic if needed.
+/// Returns ResolvedEmbeddingConfig with all resolved values including memory info for warnings.
+fn resolve_embedding_config(config: &EmbeddingModelConfig) -> ResolvedEmbeddingConfig {
+    match (&config.model_instances, &config.threads_per_instance) {
+        (EmbeddingSizeValue::Auto, EmbeddingSizeValue::Auto) => {
+            // Both auto: compute from system properties
+            match compute_auto_embedding_config() {
+                Ok(resolved) => {
+                    println!(
+                        "Auto-detected embedding config: {} instances × {} threads",
+                        resolved.model_instances, resolved.threads_per_instance
+                    );
+                    if resolved.cgroup_limited {
+                        println!(
+                            "  (Cgroup memory limit detected: {})",
+                            format_bytes(resolved.total_ram)
+                        );
+                    }
+                    resolved
+                }
+                Err(e) => {
+                    eprintln!("Warning: Failed to auto-detect embedding config: {}", e);
+                    eprintln!("Using fallback: 1 instance × {} threads", num_cpus::get());
+                    ResolvedEmbeddingConfig {
+                        model_instances: 1,
+                        threads_per_instance: num_cpus::get(),
+                        total_ram: 0,
+                        available_ram: 0,
+                        estimated_ram_usage: estimate_ram_usage(1),
+                        cgroup_limited: false,
+                    }
+                }
+            }
+        }
+        (EmbeddingSizeValue::Auto, EmbeddingSizeValue::Exact(threads)) => {
+            // Auto instances, explicit threads
+            match compute_auto_embedding_config() {
+                Ok(resolved) => {
+                    println!(
+                        "Auto-detected model instances: {} (using explicit {} threads/instance)",
+                        resolved.model_instances, threads
+                    );
+                    ResolvedEmbeddingConfig {
+                        threads_per_instance: *threads,
+                        ..resolved
+                    }
+                }
+                Err(e) => {
+                    eprintln!("Warning: Failed to auto-detect embedding config: {}", e);
+                    eprintln!("Using fallback: 1 instance × {} threads", threads);
+                    ResolvedEmbeddingConfig {
+                        model_instances: 1,
+                        threads_per_instance: *threads,
+                        total_ram: 0,
+                        available_ram: 0,
+                        estimated_ram_usage: estimate_ram_usage(1),
+                        cgroup_limited: false,
+                    }
+                }
+            }
+        }
+        (EmbeddingSizeValue::Exact(instances), EmbeddingSizeValue::Auto) => {
+            // Explicit instances, auto threads
+            let physical_cores = get_physical_core_count();
+            let threads = std::cmp::max(1, physical_cores / instances);
+            println!(
+                "Using explicit {} model instances (auto-detected {} threads/instance)",
+                instances, threads
+            );
+            // Get memory info via compute_auto_embedding_config for cgroup-aware values
+            let memory_info = compute_auto_embedding_config()
+                .map(|resolved| {
+                    (
+                        resolved.total_ram,
+                        resolved.available_ram,
+                        resolved.cgroup_limited,
+                    )
+                })
+                .unwrap_or((0, 0, false));
+            ResolvedEmbeddingConfig {
+                model_instances: *instances,
+                threads_per_instance: threads,
+                total_ram: memory_info.0,
+                available_ram: memory_info.1,
+                estimated_ram_usage: estimate_ram_usage(*instances),
+                cgroup_limited: memory_info.2,
+            }
+        }
+        (EmbeddingSizeValue::Exact(instances), EmbeddingSizeValue::Exact(threads)) => {
+            // Both explicit
+            println!(
+                "Using explicit config: {} instances × {} threads/instance",
+                instances, threads
+            );
+            // Get memory info via compute_auto_embedding_config for cgroup-aware values
+            let memory_info = compute_auto_embedding_config()
+                .map(|resolved| {
+                    (
+                        resolved.total_ram,
+                        resolved.available_ram,
+                        resolved.cgroup_limited,
+                    )
+                })
+                .unwrap_or((0, 0, false));
+            ResolvedEmbeddingConfig {
+                model_instances: *instances,
+                threads_per_instance: *threads,
+                total_ram: memory_info.0,
+                available_ram: memory_info.1,
+                estimated_ram_usage: estimate_ram_usage(*instances),
+                cgroup_limited: memory_info.2,
+            }
+        }
+    }
+}
+
+/// Print memory status and warning if estimated usage exceeds available RAM.
+fn print_memory_warning(resolved: &ResolvedEmbeddingConfig) {
+    // Skip warning if we couldn't get memory info
+    if resolved.available_ram == 0 {
+        eprintln!("Warning: Could not get memory info for warning check");
+        return;
+    }
+
+    println!(
+        "Currently available system RAM: {}",
+        format_bytes(resolved.available_ram)
+    );
+    println!(
+        "Estimated embedding RAM usage: {} ({} instance{})",
+        format_bytes(resolved.estimated_ram_usage),
+        resolved.model_instances,
+        if resolved.model_instances > 1 {
+            "s"
+        } else {
+            ""
+        }
+    );
+
+    if resolved.estimated_ram_usage > resolved.available_ram {
+        let excess_pct =
+            ((resolved.estimated_ram_usage as f64 / resolved.available_ram as f64) - 1.0) * 100.0;
+        eprintln!();
+        eprintln!(
+            "🚨 Warning: estimate exceeds available RAM by {:.0}%.",
+            excess_pct
+        );
+        eprintln!("   Consider adjusting \"embeddingModel.modelInstances\" or");
+        eprintln!("   \"embeddingModel.threadsPerInstance\" in config.json");
+        eprintln!("   Suggestion: start with modelInstances = 1");
+    }
+}
+
+// ============================================================================
 // C.1: Helper functions for shared crawl pipeline
 // ============================================================================
 
@@ -630,6 +910,7 @@ fn run_embed_upload_pipeline(
     all_chunks: Vec<engine::Chunk>,
     uploader: QdrantUploader,
     label_id: &str,
+    embedding_config: &EmbeddingModelConfig,
 ) -> anyhow::Result<(HashSet<String>, CrawlFailures)> {
     use crossbeam_channel::unbounded;
     use rayon::prelude::*;
@@ -652,8 +933,17 @@ fn run_embed_upload_pipeline(
 
     let total_chunks = all_chunks.len();
 
-    // Initialize parallel embedder - propagate error to caller
-    let embedder = ParallelEmbedder::new()?;
+    // Resolve embedding config (handles "auto" and explicit values)
+    let resolved = resolve_embedding_config(embedding_config);
+
+    // Print memory warning before embedding
+    print_memory_warning(&resolved);
+
+    // Initialize parallel embedder with resolved config
+    let embedder = ParallelEmbedder::with_config(engine::ParallelConfig {
+        num_workers: resolved.model_instances,
+        intra_threads: resolved.threads_per_instance,
+    })?;
 
     println!(
         "⚡ Phase 3: Embedding {} chunks with {} parallel sessions...",
@@ -720,6 +1010,10 @@ fn run_embed_upload_pipeline(
 
     let uploader_thread = std::thread::spawn(move || {
         let mut accumulated: Vec<(engine::Chunk, Vec<f32>)> = Vec::new();
+        let mut accumulated_bytes: usize = 0;
+        // Use the same limit as max_upload_bytes for now
+        // These are separate concepts even if they share the same value
+        let max_accumulated_bytes: usize = uploader_clone.lock().unwrap().max_upload_bytes();
         let mut expected_count: HashMap<String, usize> = HashMap::new();
         let mut uploaded_count: HashMap<String, usize> = HashMap::new();
 
@@ -734,6 +1028,7 @@ fn run_embed_upload_pipeline(
                 }
             };
 
+            // Drain embedding results and track accumulated size
             while let Ok(embedded) = embed_rx.try_recv() {
                 let file_id = embedded.0.file_id.clone();
                 if let std::collections::hash_map::Entry::Vacant(e) =
@@ -741,12 +1036,28 @@ fn run_embed_upload_pipeline(
                 {
                     e.insert(embedded.0.chunk_count);
                 }
+                // Estimate serialized size for accumulation tracking
+                let size = QdrantUploader::estimate_serialized_size(&embedded.0, &embedded.1);
+                accumulated_bytes += size;
                 accumulated.push(embedded);
             }
 
-            if should_upload {
+            // Flush when time threshold OR size threshold is reached
+            let should_flush_by_size = accumulated_bytes >= max_accumulated_bytes;
+            if should_flush_by_size && !accumulated.is_empty() {
+                println!(
+                    "[{}] Accumulated {} bytes ({:.1} MB) >= limit ({:.1} MB), flushing {} chunks...",
+                    chrono_timestamp(),
+                    accumulated_bytes,
+                    accumulated_bytes as f64 / (1024.0 * 1024.0),
+                    max_accumulated_bytes as f64 / (1024.0 * 1024.0),
+                    accumulated.len()
+                );
+            }
+
+            if should_upload || should_flush_by_size {
                 let count = accumulated.len();
-                eprintln!(
+                println!(
                     "[{}] Uploading checkpoint ({} chunks)...",
                     chrono_timestamp(),
                     count
@@ -788,6 +1099,7 @@ fn run_embed_upload_pipeline(
                             }
                         }
                         accumulated.clear(); // Clear even on non-fatal error to avoid re-upload loop
+                        accumulated_bytes = 0;
                     }
                     Ok(_) => {
                         let mut files_in_batch: HashMap<String, usize> = HashMap::new();
@@ -830,6 +1142,7 @@ fn run_embed_upload_pipeline(
                             }
                         }
                         accumulated.clear();
+                        accumulated_bytes = 0;
                     }
                 }
             }
@@ -1097,7 +1410,8 @@ fn run_crawl_label(
     println!("⚡ Phase 1: Checking existing chunks and collecting new files...");
 
     let mut new_files: Vec<(String, String)> = Vec::new(); // (relative_path, blob_id)
-    let mut existing_files: HashSet<String> = HashSet::new();
+    let mut existing_files_needing_label: HashSet<String> = HashSet::new(); // Files that exist but don't have this label
+    let mut existing_files_already_labeled: HashSet<String> = HashSet::new(); // Files that already have this label
     let mut new_count = 0;
     let mut existing_count = 0;
 
@@ -1111,9 +1425,15 @@ fn run_crawl_label(
 
         // Check if sentinel exists
         match uploader.get_file_sentinel(&file_id) {
-            Ok(Some(_)) => {
-                // File already indexed - just need to add label
-                existing_files.insert(file_id);
+            Ok(Some(sync_info)) => {
+                // File already indexed - check if it already has this label
+                if sync_info.active_label_ids.contains(&label_id) {
+                    // Already has the label - no action needed, but mark as touched for cleanup
+                    existing_files_already_labeled.insert(file_id);
+                } else {
+                    // Needs label added
+                    existing_files_needing_label.insert(file_id);
+                }
                 existing_count += 1;
             }
             Ok(None) => {
@@ -1134,19 +1454,25 @@ fn run_crawl_label(
 
     println!("  New files to index: {}", new_count);
     println!("  Existing files (label update only): {}", existing_count);
+    if !existing_files_already_labeled.is_empty() {
+        println!(
+            "  Existing files already labeled: {} (skipping)",
+            existing_files_already_labeled.len()
+        );
+    }
     println!();
 
-    // Step 5: Add label to existing files
+    // Step 5: Add label to existing files that need it
     // Track files that successfully got the label added
     // Also track failures for A.1 - existing file label-add failures must count toward crawl failure
     let mut label_add_success_files: HashSet<String> = HashSet::new();
     let mut existing_file_label_add_failures: Vec<String> = Vec::new();
-    if !existing_files.is_empty() {
+    if !existing_files_needing_label.is_empty() {
         println!(
             "🏷️  Adding label to {} existing files...",
-            existing_files.len()
+            existing_files_needing_label.len()
         );
-        for file_id in &existing_files {
+        for file_id in &existing_files_needing_label {
             if let Err(e) = uploader.add_label_to_file_chunks(file_id, &label_id) {
                 eprintln!("  ❌ Failed to add label to file {}: {}", file_id, e);
                 existing_file_label_add_failures.push(format!("{}: {}", file_id, e));
@@ -1164,8 +1490,11 @@ fn run_crawl_label(
         }
         println!();
     }
-    // Replace existing_files with only the successful ones for cleanup logic
-    let existing_files: HashSet<String> = label_add_success_files;
+    // Combine successfully labeled files with already-labeled files for cleanup logic
+    let existing_files: HashSet<String> = label_add_success_files
+        .union(&existing_files_already_labeled)
+        .cloned()
+        .collect();
 
     // Step 6: Index new files
     let mut all_chunks: Vec<engine::Chunk> = Vec::new();
@@ -1243,7 +1572,7 @@ fn run_crawl_label(
 
     // Phase 3: Run the shared embed/upload pipeline (handles empty chunks gracefully)
     let (pipeline_file_ids, pipeline_failures) =
-        run_embed_upload_pipeline(all_chunks, uploader, &label_id)?;
+        run_embed_upload_pipeline(all_chunks, uploader, &label_id, &config.embedding_model)?;
 
     // Merge file IDs from pipeline with those tracked during chunking
     touched_file_ids.extend(pipeline_file_ids);
@@ -1464,7 +1793,8 @@ fn run_crawl_working_dir(
     println!("⚡ Phase 1: Checking existing chunks and collecting new files...");
 
     let mut new_files: Vec<(String, String)> = Vec::new(); // (relative_path, blob_id)
-    let mut existing_files: HashSet<String> = HashSet::new();
+    let mut existing_files_needing_label: HashSet<String> = HashSet::new(); // Files that exist but don't have this label
+    let mut existing_files_already_labeled: HashSet<String> = HashSet::new(); // Files that already have this label
     let mut new_count = 0;
     let mut existing_count = 0;
 
@@ -1477,8 +1807,15 @@ fn run_crawl_working_dir(
         );
 
         match uploader.get_file_sentinel(&file_id) {
-            Ok(Some(_)) => {
-                existing_files.insert(file_id);
+            Ok(Some(sync_info)) => {
+                // File already indexed - check if it already has this label
+                if sync_info.active_label_ids.contains(&label_id) {
+                    // Already has the label - no action needed, but mark as touched for cleanup
+                    existing_files_already_labeled.insert(file_id);
+                } else {
+                    // Needs label added
+                    existing_files_needing_label.insert(file_id);
+                }
                 existing_count += 1;
             }
             Ok(None) => {
@@ -1498,18 +1835,24 @@ fn run_crawl_working_dir(
 
     println!("  New files to index: {}", new_count);
     println!("  Existing files (label update only): {}", existing_count);
+    if !existing_files_already_labeled.is_empty() {
+        println!(
+            "  Existing files already labeled: {} (skipping)",
+            existing_files_already_labeled.len()
+        );
+    }
     println!();
 
-    // Add label to existing files
+    // Add label to existing files that need it
     // A.1/A.3: Track files that successfully got the label added, and track failures
     let mut label_add_success_files: HashSet<String> = HashSet::new();
     let mut existing_file_label_add_failures: Vec<String> = Vec::new();
-    if !existing_files.is_empty() {
+    if !existing_files_needing_label.is_empty() {
         println!(
             "🏷️  Adding label to {} existing files...",
-            existing_files.len()
+            existing_files_needing_label.len()
         );
-        for file_id in &existing_files {
+        for file_id in &existing_files_needing_label {
             if let Err(e) = uploader.add_label_to_file_chunks(file_id, &label_id) {
                 eprintln!("  ❌ Failed to add label to file {}: {}", file_id, e);
                 existing_file_label_add_failures.push(format!("{}: {}", file_id, e));
@@ -1526,8 +1869,11 @@ fn run_crawl_working_dir(
         }
         println!();
     }
-    // Replace existing_files with only the successful ones
-    let existing_files: HashSet<String> = label_add_success_files;
+    // Combine successfully labeled files with already-labeled files for cleanup logic
+    let existing_files: HashSet<String> = label_add_success_files
+        .union(&existing_files_already_labeled)
+        .cloned()
+        .collect();
 
     // Step 6: Index new files
     let mut all_chunks: Vec<engine::Chunk> = Vec::new();
@@ -1597,7 +1943,7 @@ fn run_crawl_working_dir(
 
     // Phase 3: Run the shared embed/upload pipeline (handles empty chunks gracefully)
     let (pipeline_file_ids, pipeline_failures) =
-        run_embed_upload_pipeline(all_chunks, uploader, &label_id)?;
+        run_embed_upload_pipeline(all_chunks, uploader, &label_id, &config.embedding_model)?;
 
     // Merge file IDs from pipeline with those tracked during chunking
     touched_file_ids.extend(pipeline_file_ids);

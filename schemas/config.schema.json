@@ -39,6 +39,31 @@
         "$ref": "#/definitions/CatalogConfig"
       },
       "minProperties": 1
+    },
+    "embeddingModel": {
+      "type": "object",
+      "description": "Embedding model configuration for memory and CPU tuning",
+      "additionalProperties": false,
+      "properties": {
+        "modelInstances": {
+          "description": "Number of ONNX model instances (sessions). Primary driver of memory usage. Use 'auto' for automatic sizing based on available memory.",
+          "default": "auto",
+          "oneOf": [
+            { "type": "string", "const": "auto" },
+            { "type": "integer", "minimum": 1 }
+          ],
+          "examples": ["auto", 2, 4]
+        },
+        "threadsPerInstance": {
+          "description": "Threads per model instance for intra-op parallelism. CPU tuning only. Use 'auto' for automatic sizing based on CPU cores.",
+          "default": "auto",
+          "oneOf": [
+            { "type": "string", "const": "auto" },
+            { "type": "integer", "minimum": 1 }
+          ],
+          "examples": ["auto", 2, 3, 4]
+        }
+      }
     }
   },
   "definitions": {

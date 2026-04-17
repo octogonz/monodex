@@ -2,6 +2,7 @@
 name = "monodex"
 version = "0.3.0"
 edition = "2024"
+rust-version = "1.93"
 description = "Semantic search indexer for Rush monorepos using Qdrant vector database"
 license = "MIT"
 repository = "https://github.com/microsoft/monodex"
@@ -50,6 +51,7 @@ hex = "0.4"
 num_cpus = "1.16"
 rayon = "1.10"
 crossbeam-channel = "0.5"
+sysinfo = "0.33"
 
 # Tree-sitter for AST parsing
 tree-sitter = "0.26"

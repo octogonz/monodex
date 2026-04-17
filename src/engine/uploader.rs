@@ -148,12 +148,12 @@ pub struct LabelMetadata {
 }
 
 /// Information about a file for incremental sync
-/// Note: Fields are currently unused but kept for future incremental sync implementation
 #[derive(Debug, Clone)]
 #[allow(dead_code)]
 pub struct FileSyncInfo {
     pub content_hash: String,
     pub file_complete: bool,
+    pub active_label_ids: Vec<String>,
 }
 
 /// Response from Qdrant upsert
@@ -252,6 +252,11 @@ impl QdrantUploader {
             debug,
             max_upload_bytes,
         })
+    }
+
+    /// Get the max upload bytes limit
+    pub fn max_upload_bytes(&self) -> usize {
+        self.max_upload_bytes
     }
 
     /// Delete all points for a specific catalog
@@ -403,6 +408,7 @@ impl QdrantUploader {
                     FileSyncInfo {
                         content_hash: point.payload.content_hash.clone(),
                         file_complete: point.payload.file_complete,
+                        active_label_ids: point.payload.active_label_ids.clone(),
                     },
                 );
             }
@@ -557,6 +563,53 @@ impl QdrantUploader {
                 },
             })
             .collect()
+    }
+
+    /// Estimate serialized size of a point without full JSON serialization.
+    ///
+    /// This uses a cheap heuristic instead of building and serializing the full Point struct.
+    /// The estimate does not need to be exact - it's used for accumulation threshold checks.
+    pub fn estimate_serialized_size(chunk: &crate::engine::Chunk, embedding: &[f32]) -> usize {
+        // Heuristic estimate based on the actual upload structure:
+        // - Vector: embedding.len() * 4 bytes (f32) + JSON overhead (~2 chars per number)
+        // - Text: chunk.text.len() + JSON string overhead (~2 bytes for quotes)
+        // - Other string fields: estimate based on typical lengths
+        // - Fixed overhead for JSON structure (~500 bytes)
+
+        // Vector: each f32 becomes a number string, roughly 8-12 chars average
+        let vector_size = embedding.len() * 10 + 50; // rough estimate
+
+        // Text field with JSON overhead
+        let text_size = chunk.text.len() + 20;
+
+        // String fields (most are small UUIDs or short strings)
+        let string_fields_size = chunk.point_id().len()
+            + chunk.source_type.len()
+            + chunk.catalog.len()
+            + chunk.label_id.len()
+            + chunk
+                .active_label_ids
+                .iter()
+                .map(|s| s.len() + 4)
+                .sum::<usize>()
+            + chunk.embedder_id.len()
+            + chunk.chunker_id.len()
+            + chunk.blob_id.len()
+            + chunk.content_hash.len()
+            + chunk.file_id.len()
+            + chunk.relative_path.len()
+            + chunk.package_name.len()
+            + chunk.source_uri.len()
+            + chunk.symbol_name.as_ref().map(|s| s.len()).unwrap_or(0)
+            + chunk.chunk_type.len()
+            + chunk.chunk_kind.len()
+            + chunk.breadcrumb.len()
+            + 200; // JSON string overhead (quotes, colons, etc.)
+
+        // Fixed overhead for JSON structure, numeric fields, and wrapper
+        let fixed_overhead = 500;
+
+        vector_size + text_size + string_fields_size + fixed_overhead
     }
 
     /// Send pre-serialized upload batch to Qdrant (helper for upload_batch)
@@ -954,6 +1007,7 @@ impl QdrantUploader {
             return Ok(Some(FileSyncInfo {
                 content_hash: point_response.result.payload.content_hash.clone(),
                 file_complete: true,
+                active_label_ids: point_response.result.payload.active_label_ids.clone(),
             }));
         }
 
@@ -965,7 +1019,8 @@ impl QdrantUploader {
     pub fn add_label_to_file_chunks(&self, file_id: &str, label_id: &str) -> Result<()> {
         // Get all chunks for this file with their current labels
         // We need to read-modify-write to properly append the label
-        let mut chunks_to_update: Vec<(String, Vec<String>)> = Vec::new();
+        // Each entry: (point_id, active_label_ids, is_sentinel)
+        let mut chunks_to_update: Vec<(String, Vec<String>, bool)> = Vec::new();
         let mut offset: Option<QdrantId> = None;
         const LIMIT: u32 = 100;
 
@@ -1036,6 +1091,8 @@ impl QdrantUploader {
             struct LabelPayload {
                 #[serde(default, deserialize_with = "deserialize_label_ids")]
                 active_label_ids: Vec<String>,
+                #[serde(default)]
+                file_complete: bool,
             }
 
             let labels_response: LabelsResponse = response.json()?;
@@ -1049,7 +1106,11 @@ impl QdrantUploader {
                     QdrantId::String(s) => s,
                     QdrantId::Integer(n) => n.to_string(),
                 };
-                chunks_to_update.push((id_str, point.payload.active_label_ids));
+                chunks_to_update.push((
+                    id_str,
+                    point.payload.active_label_ids,
+                    point.payload.file_complete,
+                ));
             }
 
             offset = labels_response.result.next_page_offset;
@@ -1058,8 +1119,41 @@ impl QdrantUploader {
             }
         }
 
-        // Now update each chunk, appending the new label if not already present
-        for (point_id, mut current_labels) in chunks_to_update {
+        // Now update each chunk, appending the new label if not already present.
+        // IMPORTANT: Process sentinel (file_complete=true) LAST to ensure correct
+        // incremental behavior - sentinel presence implies all chunks are labeled.
+
+        // Partition into non-sentinel and sentinel chunks
+        let mut non_sentinel: Vec<(String, Vec<String>)> = Vec::new();
+        let mut sentinel: Option<(String, Vec<String>)> = None;
+
+        for (point_id, current_labels, is_sentinel) in chunks_to_update {
+            if is_sentinel {
+                if sentinel.is_some() {
+                    // Multiple sentinels found - this indicates data corruption or a bug
+                    // The last sentinel wins, previous ones are overwritten (not skipped)
+                    eprintln!(
+                        "Warning: Multiple sentinel chunks found for file_id={}, \
+                         this indicates data corruption. Previous sentinel will be replaced by point {}.",
+                        file_id, point_id
+                    );
+                }
+                sentinel = Some((point_id, current_labels));
+            } else {
+                non_sentinel.push((point_id, current_labels));
+            }
+        }
+
+        // Update non-sentinel chunks first
+        for (point_id, mut current_labels) in non_sentinel {
+            if !current_labels.contains(&label_id.to_string()) {
+                current_labels.push(label_id.to_string());
+            }
+            self.set_active_labels(&point_id, &current_labels)?;
+        }
+
+        // Update sentinel last
+        if let Some((point_id, mut current_labels)) = sentinel {
             if !current_labels.contains(&label_id.to_string()) {
                 current_labels.push(label_id.to_string());
             }
@@ -1457,5 +1551,162 @@ mod tests {
         // Unrelated error
         let body = r#"{"status":{"error":"Collection not found"}}"#;
         assert!(!is_payload_limit_error(body));
+    }
+
+    #[test]
+    fn test_estimate_serialized_size_reasonable_estimate() {
+        use crate::engine::Chunk;
+
+        // Create a sample chunk with typical content
+        let chunk = Chunk {
+            text: "fn main() { println!(\"Hello, world!\"); }".repeat(10), // ~450 bytes
+            source_uri: "src/main.rs".to_string(),
+            source_type: "file".to_string(),
+            catalog: "test-catalog".to_string(),
+            content_hash: "abc123def456".to_string(),
+            start_line: 1,
+            end_line: 100,
+            symbol_name: Some("main".to_string()),
+            chunk_type: "function".to_string(),
+            chunk_kind: "code".to_string(),
+            breadcrumb: "main.rs:main".to_string(),
+            label_id: "test-catalog:test-label".to_string(),
+            active_label_ids: vec!["test-catalog:label1".to_string()],
+            embedder_id: "test-embedder".to_string(),
+            chunker_id: "test-chunker".to_string(),
+            blob_id: "abc123".to_string(),
+            file_id: "file123".to_string(),
+            relative_path: "src/main.rs".to_string(),
+            package_name: "test-package".to_string(),
+            chunk_ordinal: 1,
+            chunk_count: 1,
+        };
+
+        // 384-dim embedding (typical for small models)
+        let embedding = vec![0.0f32; 384];
+
+        let estimated = QdrantUploader::estimate_serialized_size(&chunk, &embedding);
+
+        // The heuristic should produce a reasonable estimate
+        let text_len = chunk.text.len();
+        let embedding_bytes = embedding.len() * 4;
+
+        // Sanity check: estimate should be at least the sum of major components
+        // (embedding is estimated as ~10 chars per number, not 4 bytes)
+        let minimum_expected = text_len + embedding.len() * 8; // conservative lower bound
+        assert!(
+            estimated >= minimum_expected,
+            "Estimated size {} is less than minimum expected {}",
+            estimated,
+            minimum_expected
+        );
+
+        // Sanity check: estimate should not be ridiculously large
+        // (no more than 10x the text + embedding size)
+        let maximum_expected = (text_len + embedding_bytes) * 10;
+        assert!(
+            estimated <= maximum_expected,
+            "Estimated size {} is greater than maximum expected {}",
+            estimated,
+            maximum_expected
+        );
+    }
+
+    #[test]
+    fn test_estimate_serialized_size_vs_actual_json() {
+        use crate::engine::Chunk;
+
+        // Create a sample chunk with realistic field sizes
+        let chunk = Chunk {
+            text: "fn main() { println!(\"Hello, world!\"); }".repeat(100), // ~4500 bytes
+            source_uri: "libraries/rushstack/node-core-library/src/JsonFile.ts".to_string(),
+            source_type: "file".to_string(),
+            catalog: "rushstack".to_string(),
+            content_hash: "a1b2c3d4e5f6789012345678901234567890abcd".to_string(),
+            start_line: 1,
+            end_line: 100,
+            symbol_name: Some("JsonFile".to_string()),
+            chunk_type: "function".to_string(),
+            chunk_kind: "code".to_string(),
+            breadcrumb: "@rushstack/node-core-library:JsonFile.ts:JsonFile.load".to_string(),
+            label_id: "rushstack:main".to_string(),
+            active_label_ids: vec!["rushstack:main".to_string(), "rushstack:pr-123".to_string()],
+            embedder_id: "onnx-all-MiniLM-L6-v2".to_string(),
+            chunker_id: "typescript-ast-partitioner".to_string(),
+            blob_id: "abc123def456".to_string(),
+            file_id: "1234567890abcdef".to_string(),
+            relative_path: "libraries/rushstack/node-core-library/src/JsonFile.ts".to_string(),
+            package_name: "@rushstack/node-core-library".to_string(),
+            chunk_ordinal: 1,
+            chunk_count: 5,
+        };
+
+        // 384-dim embedding
+        let embedding = vec![0.1f32; 384];
+
+        // Get heuristic estimate
+        let estimated = QdrantUploader::estimate_serialized_size(&chunk, &embedding);
+
+        // Build actual Point and serialize to get real size
+        let point = Point {
+            id: chunk.point_id(),
+            vector: embedding.clone(),
+            payload: PointPayload {
+                text: chunk.text.clone(),
+                source_type: chunk.source_type.clone(),
+                catalog: chunk.catalog.clone(),
+                label_id: chunk.label_id.clone(),
+                active_label_ids: chunk.active_label_ids.clone(),
+                embedder_id: chunk.embedder_id.clone(),
+                chunker_id: chunk.chunker_id.clone(),
+                blob_id: chunk.blob_id.clone(),
+                content_hash: chunk.content_hash.clone(),
+                file_id: chunk.file_id.clone(),
+                relative_path: chunk.relative_path.clone(),
+                package_name: chunk.package_name.clone(),
+                source_uri: chunk.source_uri.clone(),
+                chunk_ordinal: chunk.chunk_ordinal,
+                chunk_count: chunk.chunk_count,
+                start_line: chunk.start_line,
+                end_line: chunk.end_line,
+                symbol_name: chunk.symbol_name.clone(),
+                chunk_type: chunk.chunk_type.clone(),
+                chunk_kind: chunk.chunk_kind.clone(),
+                breadcrumb: Some(chunk.breadcrumb.clone()),
+                file_complete: false,
+            },
+        };
+
+        let actual_json = serde_json::to_vec(&point).expect("Failed to serialize point");
+        let actual_size = actual_json.len();
+
+        // The heuristic should be within 50% of the actual size
+        // This is a reasonable tolerance for accumulation tracking purposes
+        let lower_bound = actual_size as f64 * 0.5;
+        let upper_bound = actual_size as f64 * 1.5;
+
+        assert!(
+            estimated >= lower_bound as usize,
+            "Heuristic estimate {} is too low compared to actual {} (lower bound: {:.0})",
+            estimated,
+            actual_size,
+            lower_bound
+        );
+
+        assert!(
+            estimated <= upper_bound as usize,
+            "Heuristic estimate {} is too high compared to actual {} (upper bound: {:.0})",
+            estimated,
+            actual_size,
+            upper_bound
+        );
+
+        // Log the comparison for informational purposes
+        eprintln!(
+            "Size comparison: heuristic={}, actual={}, ratio={:.2}",
+            estimated,
+            actual_size,
+            estimated as f64 / actual_size as f64
+        );
     }
 }

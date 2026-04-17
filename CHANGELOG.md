@@ -1,9 +1,15 @@
-# Change Log - monodex
-
-This log was last updated on Wed, 16 Apr 2026 17:50:00 GMT.
+# Change Log - Rush Monodex
 
 <!--
-PUBLISHING INSTRUCTIONS (DO NOT MODIFY):
+CHANGELOG GUIDANCE:
+
+- When starting new work after publishing, add an `## Unreleased` section
+- `###` headings must be one of: Added, Changed, Fixed, Deprecated, Removed, Security
+- CHANGELOG.md is for user-facing changes only (implementation details go in your Git commit description)
+- Focus on user experience ("Fixed a problem where the crawler sometimes would report X") not implementation ("Added stricter validation in the f() function")
+- Avoid jargon and complex sentences; assume your audience is a professional engineer with only superficial knowledge about Monodex
+
+PUBLISHING PROCEDURE:
 
 1. Choose an appropriate version number based on semantic versioning:
    - MAJOR: Breaking changes that require user action
@@ -12,17 +18,26 @@ PUBLISHING INSTRUCTIONS (DO NOT MODIFY):
 
 2. Update `version` in Cargo.toml
 
-3. Rename "## Unreleased" to "## X.Y.Z" and add release date:
-   ## 0.3.0 (2026-04-14)
+3. Rename "## Unreleased" to "## X.Y.Z" and add the timestamp (UTC)
 
-4. Update the "last generated" date in the header
-
-5. After publishing, the next PR author will add a new "## Unreleased" section
-
-Subsubheadings must be one of: Added, Changed, Fixed, Deprecated, Removed, Security
+4. After publishing, the next PR author will add a new "## Unreleased" section
 -->
 
-## 0.3.0 (2026-04-16)
+## Unreleased
+
+### Added
+
+- **Deterministic embedding memory control**: The `embeddingModel` config section now supports `"auto"` values for `modelInstances` and `threadsPerInstance`, which are computed deterministically from system properties (total RAM, CPU cores, and Linux cgroup limits). This prevents OOM failures on memory-constrained machines while maximizing parallelism on capable hardware.
+- **Startup memory warning**: Before embedding begins, monodex prints available RAM and estimated usage (based on resolved config). If the estimate exceeds available RAM, a warning suggests adjusting config values.
+
+### Fixed
+
+- **Cgroup-aware memory warning**: Fixed a bug where memory warnings in containerized environments would compare against host-level available RAM instead of cgroup-limited available RAM. This caused the warning to never fire even when the container was at risk of OOM.
+- **Config field mapping**: The `embeddingModel` field in `config.json` is now correctly mapped to the Rust struct via `#[serde(rename = "embeddingModel")]`. Previously, this field was silently ignored due to snake_case/camelCase mismatch.
+
+## 0.3.0
+
+_Released on April 16, 2026 (UTC)_
 
 ### Changed
 
@@ -38,6 +53,8 @@ Subsubheadings must be one of: Added, Changed, Fixed, Deprecated, Removed, Secur
 
 ## 0.2.0
 
+_Released on April 14, 2026 (UTC)_
+
 ### Updates
 
 - Add `--debug` CLI flag for verbose network request logging
@@ -46,6 +63,8 @@ Subsubheadings must be one of: Added, Changed, Fixed, Deprecated, Removed, Secur
 - Improve upload error handling: preserve chunks on failure, report clear error messages
 
 ## 0.1.0
+
+_Released on April 10, 2026 (UTC)_
 
 ### Minor changes
 
@@ -67,5 +86,7 @@ Subsubheadings must be one of: Added, Changed, Fixed, Deprecated, Removed, Secur
 - Increase HTTP timeout for wait=true operations
 
 ## 0.0.1
+
+_Released on April 8, 2026 (UTC)_
 
 - Initial release

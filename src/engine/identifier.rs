@@ -200,9 +200,8 @@ fn validate_label_payload(payload: &str) -> Result<(), IdentifierError> {
 
     // Track position for better error messages
     let mut segment_len = 0usize;
-    let mut pos = 0usize;
 
-    for c in payload.chars() {
+    for (pos, c) in payload.chars().enumerate() {
         if c.is_ascii_lowercase() || c.is_ascii_digit() {
             segment_len += 1;
         } else if c == '.' || c == '/' || c == '-' || c == '=' {
@@ -242,7 +241,6 @@ fn validate_label_payload(payload: &str) -> Result<(), IdentifierError> {
                 ),
             });
         }
-        pos += 1;
     }
 
     // Must end with an alphanumeric segment

@@ -1436,9 +1436,6 @@ fn run_crawl_label(
 
     // Compute label_id (internal storage form)
     let label_id = LabelId::new(catalog_name, label).map_err(|e| anyhow::anyhow!("{}", e))?;
-    println!("Catalog: {}", catalog_name);
-    println!("Label: {}", label);
-    println!();
 
     // B.1: Load repo-specific crawl configuration
     let crawl_config = load_compiled_crawl_config(Some(repo_path))?;
@@ -1819,9 +1816,6 @@ fn run_crawl_working_dir(
 
     // Compute label_id (internal storage form)
     let label_id = LabelId::new(catalog_name, label).map_err(|e| anyhow::anyhow!("{}", e))?;
-    println!("Catalog: {}", catalog_name);
-    println!("Label: {}", label);
-    println!();
 
     // B.1: Load repo-specific crawl configuration
     let crawl_config = load_compiled_crawl_config(Some(repo_path))?;

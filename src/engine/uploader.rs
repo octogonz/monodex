@@ -7,6 +7,8 @@ use anyhow::{Result, anyhow};
 use reqwest::blocking::Client;
 use serde::{Deserialize, Serialize};
 
+use super::identifier::{validate_catalog, validate_label};
+
 const DEFAULT_QDRANT_URL: &str = "http://localhost:6333";
 
 /// Check if an error response from Qdrant indicates a payload size limit error.
@@ -145,6 +147,17 @@ pub struct LabelMetadata {
     #[serde(default)]
     pub crawl_complete: bool,
     pub updated_at_unix_secs: u64,
+}
+
+impl LabelMetadata {
+    /// Validate all identifier fields in this metadata
+    pub fn validate(&self) -> Result<()> {
+        validate_catalog(&self.catalog)
+            .map_err(|e| anyhow!("Invalid catalog in stored metadata: {}", e))?;
+        validate_label(&self.label)
+            .map_err(|e| anyhow!("Invalid label in stored metadata: {}", e))?;
+        Ok(())
+    }
 }
 
 /// Information about a file for incremental sync
@@ -972,7 +985,12 @@ impl QdrantUploader {
         }
 
         let label_response: LabelPointResponse = response.json()?;
-        Ok(Some(label_response.result.payload))
+        let metadata = label_response.result.payload;
+
+        // Validate identifiers from stored data
+        metadata.validate()?;
+
+        Ok(Some(metadata))
     }
 
     /// Get sentinel (chunk 1) for a file to check if already indexed

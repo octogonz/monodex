@@ -16,7 +16,7 @@ use engine::{
         enumerate_working_directory, read_blob_content, read_working_file_content,
         resolve_commit_oid,
     },
-    identifier::{LabelId, validate_catalog, validate_label},
+    identifier::{LabelId, validate_catalog, validate_label, validate_relative_path},
     partitioner::{ChunkQualityReport, PartitionConfig, PartitionDebug, partition_typescript},
     system_info::{
         ResolvedEmbeddingConfig, compute_auto_embedding_config, estimate_ram_usage, format_bytes,
@@ -718,8 +718,10 @@ fn load_config(path: &PathBuf) -> anyhow::Result<Config> {
     let config: Config = serde_json::from_str(&content)
         .map_err(|e| anyhow::anyhow!("Failed to parse config file: {}", e))?;
 
-    // Validate catalog types
+    // Validate catalog names and types
     for (name, catalog) in &config.catalogs {
+        validate_catalog(name)
+            .map_err(|e| anyhow::anyhow!("Invalid catalog name '{}' in config: {}", name, e))?;
         catalog
             .validate()
             .map_err(|e| anyhow::anyhow!("Invalid catalog '{}': {}", name, e))?;
@@ -1447,7 +1449,14 @@ fn run_crawl_label(
     println!("📂 Filtering files...");
     let files_to_process: Vec<_> = files
         .iter()
-        .filter(|f| crawl_config.should_crawl(&f.relative_path))
+        .filter(|f| {
+            // Validate path doesn't contain reserved characters
+            if let Err(e) = validate_relative_path(&f.relative_path) {
+                eprintln!("  ⚠️  Skipping file with invalid path: {}", e);
+                return false;
+            }
+            crawl_config.should_crawl(&f.relative_path)
+        })
         .cloned()
         .collect();
     println!(
@@ -1831,7 +1840,14 @@ fn run_crawl_working_dir(
     println!("📂 Filtering files...");
     let files_to_process: Vec<_> = files
         .iter()
-        .filter(|f| crawl_config.should_crawl(&f.relative_path))
+        .filter(|f| {
+            // Validate path doesn't contain reserved characters
+            if let Err(e) = validate_relative_path(&f.relative_path) {
+                eprintln!("  ⚠️  Skipping file with invalid path: {}", e);
+                return false;
+            }
+            crawl_config.should_crawl(&f.relative_path)
+        })
         .cloned()
         .collect();
     println!(

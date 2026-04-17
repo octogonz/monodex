@@ -35,6 +35,10 @@ pub enum IdentifierError {
     /// Label ID has invalid syntax.
     #[error("[invalid_label_id] {message}")]
     LabelId { code: &'static str, message: String },
+
+    /// Relative path is invalid.
+    #[error("[invalid_path] {message}")]
+    Path { code: &'static str, message: String },
 }
 
 impl IdentifierError {
@@ -45,6 +49,7 @@ impl IdentifierError {
             Self::Catalog { code, .. } => code,
             Self::Label { code, .. } => code,
             Self::LabelId { code, .. } => code,
+            Self::Path { code, .. } => code,
         }
     }
 }
@@ -203,6 +208,51 @@ fn validate_label_payload(payload: &str) -> Result<(), IdentifierError> {
             code: "label_payload_trailing_separator",
             message: format!("Label payload '{}' cannot end with a separator", payload),
         });
+    }
+
+    Ok(())
+}
+
+/// Validates a relative path for crawl-time indexing.
+///
+/// Paths cannot contain reserved grammar characters: `:`, `@`, or `=`.
+/// These characters are reserved for future reference syntax.
+pub fn validate_relative_path(path: &str) -> Result<(), IdentifierError> {
+    if path.is_empty() {
+        return Err(IdentifierError::Path {
+            code: "path_empty",
+            message: "Relative path cannot be empty".to_string(),
+        });
+    }
+
+    for c in path.chars() {
+        if c == ':' {
+            return Err(IdentifierError::Path {
+                code: "path_contains_colon",
+                message: format!(
+                    "Relative path '{}' contains ':', which is reserved for future reference syntax",
+                    path
+                ),
+            });
+        }
+        if c == '@' {
+            return Err(IdentifierError::Path {
+                code: "path_contains_at",
+                message: format!(
+                    "Relative path '{}' contains '@', which is reserved for future reference syntax",
+                    path
+                ),
+            });
+        }
+        if c == '=' {
+            return Err(IdentifierError::Path {
+                code: "path_contains_equals",
+                message: format!(
+                    "Relative path '{}' contains '=', which is reserved for future reference syntax",
+                    path
+                ),
+            });
+        }
     }
 
     Ok(())

@@ -23,7 +23,7 @@ PUBLISHING PROCEDURE:
 4. After publishing, the next PR author will add a new "## Unreleased" section
 -->
 
-## Unreleased
+## 0.4.0 (2025-01-17)
 
 ### Changed
 

@@ -95,11 +95,6 @@ pub fn display_file_id(file_id: u64) -> String {
     format!("{:016x}", file_id)
 }
 
-/// Compute label_id from catalog and label name
-pub fn compute_label_id(catalog: &str, label_name: &str) -> String {
-    format!("{}:{}", catalog, label_name)
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;

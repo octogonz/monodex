@@ -5,10 +5,12 @@
 //!
 //! Repository-specific configuration lives in `../config.rs`
 
+pub mod breadcrumb;
 pub mod chunker;
 pub mod config;
 pub mod crawl_config;
 pub mod git_ops;
+pub mod identifier;
 pub mod markdown_partitioner;
 pub mod package_lookup;
 pub mod parallel_embedder;

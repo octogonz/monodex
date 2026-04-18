@@ -76,6 +76,13 @@ pub struct Chunk {
 
     /// Total number of chunks in this file
     pub chunk_count: usize,
+
+    // --- Split metadata ---
+    /// For split sections: which part this is (1-indexed)
+    pub split_part_ordinal: Option<usize>,
+
+    /// For split sections: total number of parts
+    pub split_part_count: Option<usize>,
 }
 
 impl Chunk {
@@ -89,7 +96,7 @@ impl Chunk {
 pub struct ChunkContext {
     /// Catalog name
     pub catalog: String,
-    /// Label ID (e.g., "rushstack:main")
+    /// Label ID (internal storage form: catalog:label)
     pub label_id: String,
     /// Package name for breadcrumb
     pub package_name: String,
@@ -238,6 +245,8 @@ impl Chunk {
             relative_path: ctx.relative_path.clone(),
             chunk_ordinal,
             chunk_count,
+            split_part_ordinal: p.split_part_ordinal,
+            split_part_count: p.split_part_count,
         }
     }
 }
@@ -269,6 +278,8 @@ impl From<PartitionedChunk> for Chunk {
             relative_path: String::new(),
             chunk_ordinal: 0,
             chunk_count: 0,
+            split_part_ordinal: p.split_part_ordinal,
+            split_part_count: p.split_part_count,
         }
     }
 }
@@ -281,6 +292,8 @@ fn chunk_by_lines(
     max_chars: usize,
     chunk_type: &str,
 ) -> Result<Vec<Chunk>> {
+    use super::breadcrumb::encode_path_component;
+
     let content_hash = compute_hash(content);
     let lines: Vec<&str> = content.lines().collect();
 
@@ -290,6 +303,9 @@ fn chunk_by_lines(
         .file_name()
         .map(|n| n.to_string_lossy().to_string())
         .unwrap_or_else(|| ctx.relative_path.to_string());
+
+    // Encode file name for breadcrumb
+    let encoded_file_name = encode_path_component(&file_name);
 
     while start < lines.len() {
         let mut end = start;
@@ -321,7 +337,7 @@ fn chunk_by_lines(
                 symbol_name: None,
                 chunk_type: chunk_type.to_string(),
                 chunk_kind: "content".to_string(),
-                breadcrumb: file_name.clone(),
+                breadcrumb: encoded_file_name.clone(),
                 // Phase 2 fields
                 label_id: ctx.label_id.clone(),
                 active_label_ids: vec![ctx.label_id.clone()],
@@ -333,6 +349,8 @@ fn chunk_by_lines(
                 relative_path: ctx.relative_path.clone(),
                 chunk_ordinal: 0, // Will update after loop
                 chunk_count: 0,   // Will update after loop
+                split_part_ordinal: None,
+                split_part_count: None,
             });
         }
 
@@ -495,15 +513,15 @@ export class JsonFile {
         // Point IDs should be different
         assert_ne!(chunks1[0].point_id(), chunks2[0].point_id());
 
-        // Breadcrumbs should reflect the different package context
+        // Breadcrumbs should reflect the different package context (percent-encoded @scope)
         assert!(
-            chunks1[0].breadcrumb.starts_with("@scope/foo"),
-            "Breadcrumb should start with @scope/foo, got: {}",
+            chunks1[0].breadcrumb.starts_with("%40scope/foo"),
+            "Breadcrumb should start with %40scope/foo, got: {}",
             chunks1[0].breadcrumb
         );
         assert!(
-            chunks2[0].breadcrumb.starts_with("@scope/bar"),
-            "Breadcrumb should start with @scope/bar, got: {}",
+            chunks2[0].breadcrumb.starts_with("%40scope/bar"),
+            "Breadcrumb should start with %40scope/bar, got: {}",
             chunks2[0].breadcrumb
         );
     }
@@ -639,12 +657,12 @@ Content for section two.
         // Markdown strategy splits at headings, producing chunks with heading breadcrumbs
         // lineBased strategy splits at line boundaries, producing chunks without heading awareness
 
-        // Check that markdown chunks have heading-based breadcrumbs
-        // (e.g., "Main Title", "Section One", etc.)
+        // Check that markdown chunks have heading-based breadcrumbs (slugified)
+        // (e.g., "main-title", "section-one", etc.)
         let has_heading_breadcrumbs = markdown_chunks.iter().any(|c| {
-            c.breadcrumb.contains("Main Title")
-                || c.breadcrumb.contains("Section One")
-                || c.breadcrumb.contains("Section Two")
+            c.breadcrumb.contains("main-title")
+                || c.breadcrumb.contains("section-one")
+                || c.breadcrumb.contains("section-two")
         });
         assert!(
             has_heading_breadcrumbs,

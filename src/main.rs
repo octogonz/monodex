@@ -16,13 +16,13 @@ use engine::{
         enumerate_working_directory, read_blob_content, read_working_file_content,
         resolve_commit_oid,
     },
+    identifier::{LabelId, validate_catalog, validate_label},
     partitioner::{ChunkQualityReport, PartitionConfig, PartitionDebug, partition_typescript},
     system_info::{
         ResolvedEmbeddingConfig, compute_auto_embedding_config, estimate_ram_usage, format_bytes,
         get_physical_core_count,
     },
     uploader::{LabelMetadata, PointResult, QdrantUploader, is_payload_limit_error},
-    util::compute_label_id,
 };
 use std::collections::{HashMap, HashSet};
 use std::path::PathBuf;
@@ -319,7 +319,6 @@ enum Commands {
 
         /// Label name for this crawl (e.g., "main", "feature-x", "local")
         /// REQUIRED: Must be explicitly specified to avoid accidental overwrites.
-        /// Label ID will be computed as <catalog>:<label>
         #[arg(long)]
         label: String,
 
@@ -380,7 +379,6 @@ enum Commands {
         limit: usize,
 
         /// Filter by label (uses default context if not provided)
-        /// Format: <catalog>:<label>
         #[arg(long)]
         label: Option<String>,
 
@@ -401,9 +399,12 @@ enum Commands {
         id: Vec<String>,
 
         /// Filter by label (uses default context if not provided)
-        /// Format: <catalog>:<label>
         #[arg(long)]
         label: Option<String>,
+
+        /// Filter by catalog (optional - uses label or default context)
+        #[arg(long)]
+        catalog: Option<String>,
 
         /// Show full filesystem paths
         #[arg(long)]
@@ -459,13 +460,46 @@ struct DefaultContext {
     set_at: String,
 }
 
-/// Load default context from file
+/// Load default context from file, validating identifiers at the boundary
 fn load_default_context() -> Option<DefaultContext> {
     let path = shellexpand::tilde(DEFAULT_CONTEXT_PATH);
     let path = std::path::Path::new(path.as_ref());
 
     match std::fs::read_to_string(path) {
-        Ok(content) => serde_json::from_str(&content).ok(),
+        Ok(content) => {
+            let ctx: DefaultContext = match serde_json::from_str(&content) {
+                Ok(ctx) => ctx,
+                Err(e) => {
+                    eprintln!(
+                        "Warning: Failed to parse default context file ({}): {}. \
+                         Run 'monodex use --catalog <name> --label <name>' to reset.",
+                        path.display(),
+                        e
+                    );
+                    return None;
+                }
+            };
+
+            // Validate identifiers at boundary per ISSUE_25_WORK_PLAN.md §6
+            if let Err(e) = validate_catalog(&ctx.catalog) {
+                eprintln!(
+                    "Warning: Invalid catalog '{}' in default context: {}. \
+                     Run 'monodex use --catalog <name> --label <name>' to reset.",
+                    ctx.catalog, e
+                );
+                return None;
+            }
+            if let Err(e) = validate_label(&ctx.label) {
+                eprintln!(
+                    "Warning: Invalid label '{}' in default context: {}. \
+                     Run 'monodex use --catalog <name> --label <name>' to reset.",
+                    ctx.label, e
+                );
+                return None;
+            }
+
+            Some(ctx)
+        }
         Err(_) => None,
     }
 }
@@ -492,40 +526,81 @@ fn save_default_context(catalog: &str, label: &str) -> anyhow::Result<()> {
     Ok(())
 }
 
-/// Resolve label ID from explicit flag or default context
-/// Returns (label_id, catalog, label_name) or error if neither provided
-fn resolve_label_id(
+/// Resolve label context from explicit flags or default context.
+/// Returns (label_id, catalog, label) or error if neither provided.
+///
+/// Per #25: --label takes a bare label name, --catalog takes a bare catalog name.
+/// The qualified "catalog:label" form is no longer accepted.
+fn resolve_label_context(
     explicit_label: Option<&str>,
     explicit_catalog: Option<&str>,
-) -> anyhow::Result<(String, String, String)> {
-    // If explicit label provided, use it
+) -> anyhow::Result<(LabelId, String, String)> {
+    // If explicit label provided, validate it
     if let Some(label_str) = explicit_label {
-        // Parse label format: <catalog>:<label>
-        let parts: Vec<&str> = label_str.splitn(2, ':').collect();
-        if parts.len() != 2 {
+        // Reject legacy qualified form "catalog:label"
+        if label_str.contains(':') {
             return Err(anyhow::anyhow!(
-                "Invalid label format '{}'. Expected <catalog>:<label>",
+                "Invalid --label value '{}'. Use separate flags: --catalog <catalog> --label <label>",
                 label_str
             ));
         }
-        let catalog = parts[0].to_string();
-        let label_name = parts[1].to_string();
-        let label_id = compute_label_id(&catalog, &label_name);
-        return Ok((label_id, catalog, label_name));
+
+        // Validate the bare label name
+        validate_label(label_str)
+            .map_err(|e| anyhow::anyhow!("Invalid label name '{}': {}", label_str, e))?;
     }
 
-    // Try default context
-    if let Some(context) = load_default_context() {
-        // If explicit catalog provided, use it with default label
-        let catalog = explicit_catalog.unwrap_or(&context.catalog).to_string();
-        let label_name = context.label.clone();
-        let label_id = compute_label_id(&catalog, &label_name);
-        return Ok((label_id, catalog, label_name));
+    // If explicit catalog provided, validate it
+    if let Some(catalog_str) = explicit_catalog {
+        validate_catalog(catalog_str)
+            .map_err(|e| anyhow::anyhow!("Invalid catalog name '{}': {}", catalog_str, e))?;
     }
 
-    Err(anyhow::anyhow!(
-        "No label specified. Use --label <catalog>:<label> or set a default with 'monodex use <catalog> <label>'"
-    ))
+    // Resolve from explicit flags or default context
+    match (explicit_catalog, explicit_label, load_default_context()) {
+        (Some(catalog), Some(label), _) => {
+            // Both explicitly provided
+            let label_id = LabelId::new(catalog, label).map_err(|e| anyhow::anyhow!("{}", e))?;
+            Ok((label_id, catalog.to_string(), label.to_string()))
+        }
+        (Some(catalog), None, Some(ctx)) => {
+            // Catalog explicit, label from context
+            let label = ctx.label;
+            validate_label(&label).map_err(|e| {
+                anyhow::anyhow!("Invalid label in default context '{}': {}", label, e)
+            })?;
+            let label_id = LabelId::new(catalog, &label).map_err(|e| anyhow::anyhow!("{}", e))?;
+            Ok((label_id, catalog.to_string(), label))
+        }
+        (None, Some(label), Some(ctx)) => {
+            // Label explicit, catalog from context
+            let catalog = ctx.catalog;
+            validate_catalog(&catalog).map_err(|e| {
+                anyhow::anyhow!("Invalid catalog in default context '{}': {}", catalog, e)
+            })?;
+            let label_id = LabelId::new(&catalog, label).map_err(|e| anyhow::anyhow!("{}", e))?;
+            Ok((label_id, catalog, label.to_string()))
+        }
+        (None, None, Some(ctx)) => {
+            // Both from context
+            let catalog = ctx.catalog;
+            let label = ctx.label;
+            validate_catalog(&catalog).map_err(|e| {
+                anyhow::anyhow!("Invalid catalog in default context '{}': {}", catalog, e)
+            })?;
+            validate_label(&label).map_err(|e| {
+                anyhow::anyhow!("Invalid label in default context '{}': {}", label, e)
+            })?;
+            let label_id = LabelId::new(&catalog, &label).map_err(|e| anyhow::anyhow!("{}", e))?;
+            Ok((label_id, catalog, label))
+        }
+        (None, Some(_), None) | (Some(_), None, None) => Err(anyhow::anyhow!(
+            "Missing context. Provide both --catalog and --label, or set defaults with:\n  monodex use --catalog <name> --label <name>"
+        )),
+        (None, None, None) => Err(anyhow::anyhow!(
+            "No context set. Use --catalog and --label, or set defaults with:\n  monodex use --catalog <name> --label <name>"
+        )),
+    }
 }
 
 /// Get current timestamp for logging
@@ -596,15 +671,15 @@ fn main() -> anyhow::Result<()> {
             source,
             incremental_warnings,
         } => {
-            // Resolve label ID from explicit flags or default context
-            let (_label_id, catalog_name, label_name) =
-                resolve_label_id(Some(&label), catalog.as_deref())?;
+            // Resolve label context from explicit flags or default context
+            let (_label_id, catalog_name, label) =
+                resolve_label_context(Some(&label), catalog.as_deref())?;
 
             if source.working_dir {
                 run_crawl_working_dir(
                     &config,
                     &catalog_name,
-                    &label_name,
+                    &label,
                     incremental_warnings,
                     cli.debug,
                 )?;
@@ -613,7 +688,7 @@ fn main() -> anyhow::Result<()> {
                 run_crawl_label(
                     &config,
                     &catalog_name,
-                    &label_name,
+                    &label,
                     source.commit.as_ref().unwrap(),
                     incremental_warnings,
                     cli.debug,
@@ -650,6 +725,7 @@ fn main() -> anyhow::Result<()> {
         Commands::View {
             id,
             label,
+            catalog,
             full_paths,
             chunks_only,
         } => {
@@ -657,6 +733,7 @@ fn main() -> anyhow::Result<()> {
                 &config,
                 &id,
                 label.as_deref(),
+                catalog.as_deref(),
                 full_paths,
                 chunks_only,
                 cli.debug,
@@ -678,8 +755,10 @@ fn load_config(path: &PathBuf) -> anyhow::Result<Config> {
     let config: Config = serde_json::from_str(&content)
         .map_err(|e| anyhow::anyhow!("Failed to parse config file: {}", e))?;
 
-    // Validate catalog types
+    // Validate catalog names and types
     for (name, catalog) in &config.catalogs {
+        validate_catalog(name)
+            .map_err(|e| anyhow::anyhow!("Invalid catalog name '{}' in config: {}", name, e))?;
         catalog
             .validate()
             .map_err(|e| anyhow::anyhow!("Invalid catalog '{}': {}", name, e))?;
@@ -698,7 +777,6 @@ fn run_use(catalog: Option<&str>, label: Option<String>, config: &Config) -> any
                     println!("Current context:");
                     println!("  Catalog: {}", ctx.catalog);
                     println!("  Label: {}", ctx.label);
-                    println!("  Label ID: {}:{}", ctx.catalog, ctx.label);
                 }
                 None => {
                     println!("No default context set.");
@@ -708,7 +786,15 @@ fn run_use(catalog: Option<&str>, label: Option<String>, config: &Config) -> any
                 }
             }
         }
-        (Some(catalog_name), Some(label_name)) => {
+        (Some(catalog_name), Some(label)) => {
+            // Validate catalog name syntax
+            validate_catalog(catalog_name)
+                .map_err(|e| anyhow::anyhow!("Invalid catalog name '{}': {}", catalog_name, e))?;
+
+            // Validate label name syntax
+            validate_label(&label)
+                .map_err(|e| anyhow::anyhow!("Invalid label name '{}': {}", label, e))?;
+
             // Validate that catalog exists in config
             if !config.catalogs.contains_key(catalog_name) {
                 return Err(anyhow::anyhow!(
@@ -724,13 +810,15 @@ fn run_use(catalog: Option<&str>, label: Option<String>, config: &Config) -> any
             }
 
             // Set new context
-            save_default_context(catalog_name, &label_name)?;
+            save_default_context(catalog_name, &label)?;
 
-            let label_id = compute_label_id(catalog_name, &label_name);
-            println!("✓ Default context set to {}:{}", catalog_name, label_name);
-            println!("  Label ID: {}", label_id);
+            println!("✓ Default context set to:");
+            println!("  Catalog: {}", catalog_name);
+            println!("  Label: {}", label);
             println!();
-            println!("Commands will now use this context when --label is not specified.");
+            println!(
+                "Commands will now use this context when --catalog/--label are not specified."
+            );
         }
         (Some(_), None) | (None, Some(_)) => {
             // Partial specification - error
@@ -1319,7 +1407,7 @@ fn run_embed_upload_pipeline(
 fn run_crawl_label(
     config: &Config,
     catalog_name: &str,
-    label_name: &str,
+    label: &str,
     commit: &str,
     _incremental_warnings: bool,
     debug: bool,
@@ -1329,7 +1417,7 @@ fn run_crawl_label(
     let total_start = std::time::Instant::now();
     println!("🔍 Starting label-aware crawl...");
     println!("Catalog: {}", catalog_name);
-    println!("Label: {}", label_name);
+    println!("Label: {}", label);
 
     // Get catalog config
     let catalog_config = config
@@ -1346,10 +1434,8 @@ fn run_crawl_label(
     println!("Commit: {}", commit);
     println!();
 
-    // Compute label_id
-    let label_id = compute_label_id(catalog_name, label_name);
-    println!("Label ID: {}", label_id);
-    println!();
+    // Compute label_id (internal storage form)
+    let label_id = LabelId::new(catalog_name, label).map_err(|e| anyhow::anyhow!("{}", e))?;
 
     // B.1: Load repo-specific crawl configuration
     let crawl_config = load_compiled_crawl_config(Some(repo_path))?;
@@ -1372,8 +1458,8 @@ fn run_crawl_label(
     let in_progress_metadata = LabelMetadata {
         source_type: "label-metadata".to_string(),
         catalog: catalog_name.to_string(),
-        label_id: label_id.clone(),
-        label_name: label_name.to_string(),
+        label_id: label_id.to_string(),
+        label: label.to_string(),
         commit_oid: commit_oid.clone(),
         source_kind: "git-commit".to_string(),
         crawl_complete: false,
@@ -1427,7 +1513,7 @@ fn run_crawl_label(
         match uploader.get_file_sentinel(&file_id) {
             Ok(Some(sync_info)) => {
                 // File already indexed - check if it already has this label
-                if sync_info.active_label_ids.contains(&label_id) {
+                if sync_info.active_label_ids.contains(&label_id.to_string()) {
                     // Already has the label - no action needed, but mark as touched for cleanup
                     existing_files_already_labeled.insert(file_id);
                 } else {
@@ -1543,7 +1629,7 @@ fn run_crawl_label(
             // Create chunk context
             let ctx = ChunkContext {
                 catalog: catalog_name.to_string(),
-                label_id: label_id.clone(),
+                label_id: label_id.to_string(),
                 package_name,
                 relative_path: relative_path.clone(),
                 blob_id: blob_id.clone(),
@@ -1621,8 +1707,8 @@ fn run_crawl_label(
     let metadata = LabelMetadata {
         source_type: "label-metadata".to_string(),
         catalog: catalog_name.to_string(),
-        label_id: label_id.clone(),
-        label_name: label_name.to_string(),
+        label_id: label_id.to_string(),
+        label: label.to_string(),
         commit_oid: commit_oid.clone(),
         source_kind: "git-commit".to_string(),
         crawl_complete,
@@ -1702,7 +1788,7 @@ fn run_crawl_label(
 fn run_crawl_working_dir(
     config: &Config,
     catalog_name: &str,
-    label_name: &str,
+    label: &str,
     _incremental_warnings: bool,
     debug: bool,
 ) -> anyhow::Result<()> {
@@ -1711,7 +1797,7 @@ fn run_crawl_working_dir(
     let total_start = std::time::Instant::now();
     println!("🔍 Starting working directory crawl...");
     println!("Catalog: {}", catalog_name);
-    println!("Label: {}", label_name);
+    println!("Label: {}", label);
 
     // Get catalog config
     let catalog_config = config
@@ -1728,10 +1814,8 @@ fn run_crawl_working_dir(
     println!("Source: working directory (uncommitted changes)");
     println!();
 
-    // Compute label_id
-    let label_id = compute_label_id(catalog_name, label_name);
-    println!("Label ID: {}", label_id);
-    println!();
+    // Compute label_id (internal storage form)
+    let label_id = LabelId::new(catalog_name, label).map_err(|e| anyhow::anyhow!("{}", e))?;
 
     // B.1: Load repo-specific crawl configuration
     let crawl_config = load_compiled_crawl_config(Some(repo_path))?;
@@ -1749,8 +1833,8 @@ fn run_crawl_working_dir(
     let in_progress_metadata = LabelMetadata {
         source_type: "label-metadata".to_string(),
         catalog: catalog_name.to_string(),
-        label_id: label_id.clone(),
-        label_name: label_name.to_string(),
+        label_id: label_id.to_string(),
+        label: label.to_string(),
         commit_oid: "".to_string(), // No commit for working directory
         source_kind: "working-directory".to_string(),
         crawl_complete: false,
@@ -1809,7 +1893,7 @@ fn run_crawl_working_dir(
         match uploader.get_file_sentinel(&file_id) {
             Ok(Some(sync_info)) => {
                 // File already indexed - check if it already has this label
-                if sync_info.active_label_ids.contains(&label_id) {
+                if sync_info.active_label_ids.contains(&label_id.to_string()) {
                     // Already has the label - no action needed, but mark as touched for cleanup
                     existing_files_already_labeled.insert(file_id);
                 } else {
@@ -1914,7 +1998,7 @@ fn run_crawl_working_dir(
             // Create chunk context
             let ctx = ChunkContext {
                 catalog: catalog_name.to_string(),
-                label_id: label_id.clone(),
+                label_id: label_id.to_string(),
                 package_name,
                 relative_path: relative_path.clone(),
                 blob_id: blob_id.clone(),
@@ -1988,8 +2072,8 @@ fn run_crawl_working_dir(
     let metadata = LabelMetadata {
         source_type: "label-metadata".to_string(),
         catalog: catalog_name.to_string(),
-        label_id: label_id.clone(),
-        label_name: label_name.to_string(),
+        label_id: label_id.to_string(),
+        label: label.to_string(),
         commit_oid: "".to_string(),
         source_kind: "working-directory".to_string(),
         crawl_complete,
@@ -2065,8 +2149,8 @@ fn run_search(
     catalog: Option<&str>,
     debug: bool,
 ) -> anyhow::Result<()> {
-    // Resolve label ID from explicit flag or default context
-    let (label_id, _, _) = resolve_label_id(label, catalog)?;
+    // Resolve label context from explicit flags or default context
+    let (label_id, catalog_name, label) = resolve_label_context(label, catalog)?;
 
     // Generate embedding for query
     let embedder = ParallelEmbedder::new()?;
@@ -2080,19 +2164,35 @@ fn run_search(
         config.qdrant.get_max_upload_bytes(),
     )?;
 
-    // Extract catalog from label_id (format: catalog:label)
-    let catalog = label_id.split(':').next().unwrap_or("");
-    let results = uploader.search_with_label(&embedding, limit, catalog, &label_id)?;
+    println!("Catalog: {}", catalog_name);
+    println!("Label: {}", label);
+    println!();
+
+    let results =
+        uploader.search_with_label(&embedding, limit, &catalog_name, label_id.as_str())?;
 
     // Display results as blurbs
     for result in &results {
-        // Line 1: file_id:chunk_ordinal  score  breadcrumb
+        // Line 1: file_id:chunk_ordinal  score  breadcrumb [chunk_kind] (part N/M)
         // E.1: Sanitize breadcrumb to prevent terminal injection
         let breadcrumb =
             sanitize_for_terminal(result.payload.breadcrumb.as_deref().unwrap_or("unknown"));
+
+        // Build the report form with chunk_kind and split metadata
+        let mut report = breadcrumb.clone();
+        if let (Some(ordinal), Some(count)) = (
+            result.payload.split_part_ordinal,
+            result.payload.split_part_count,
+        ) {
+            report = format!("{} (part {}/{})", report, ordinal, count);
+        }
+        if result.payload.chunk_kind != "content" {
+            report = format!("{} [{}]", report, result.payload.chunk_kind);
+        }
+
         println!(
             "{}:{}  {:.3}  {}",
-            result.payload.file_id, result.payload.chunk_ordinal, result.score, breadcrumb
+            result.payload.file_id, result.payload.chunk_ordinal, result.score, report
         );
 
         // Lines 2-4: first 3 lines of code (quoted with >)
@@ -2217,6 +2317,7 @@ fn run_view(
     config: &Config,
     id_specs: &[String],
     label: Option<&str>,
+    catalog: Option<&str>,
     show_full_paths: bool,
     chunks_only: bool,
     debug: bool,
@@ -2227,8 +2328,8 @@ fn run_view(
         ));
     }
 
-    // Resolve label ID from explicit flag or default context
-    let (label_id, _, _) = resolve_label_id(label, None)?;
+    // Resolve label context from explicit flag or default context
+    let (label_id, catalog_name, label) = resolve_label_context(label, catalog)?;
 
     // Parse all file IDs with selectors
     let mut requests: Vec<(String, ChunkSelector)> = Vec::new();
@@ -2245,11 +2346,17 @@ fn run_view(
         config.qdrant.get_max_upload_bytes(),
     )?;
 
+    if !chunks_only {
+        println!("Catalog: {}", catalog_name);
+        println!("Label: {}", label);
+        println!();
+    }
+
     // Collect all results with their original selectors for display
     let mut all_results: Vec<(String, ChunkSelector, Vec<PointResult>)> = Vec::new();
 
     for (file_id, selector) in requests {
-        let chunks = uploader.get_chunks_by_file_id_with_label(&file_id, &label_id)?;
+        let chunks = uploader.get_chunks_by_file_id_with_label(&file_id, label_id.as_str())?;
 
         // Filter by selector
         let filtered: Vec<PointResult> = match &selector {
@@ -2315,15 +2422,27 @@ fn run_view(
             let chunk_count = result.payload.chunk_count;
             let chunk_ordinal = result.payload.chunk_ordinal;
 
-            // Header line: <file_id>:<chunk_ordinal> (<n>/<total>) <breadcrumb>
+            // Build the report form with chunk_kind and split metadata
+            let mut report = breadcrumb.clone();
+            if let (Some(ordinal), Some(count)) = (
+                result.payload.split_part_ordinal,
+                result.payload.split_part_count,
+            ) {
+                report = format!("{} (part {}/{})", report, ordinal, count);
+            }
+            if result.payload.chunk_kind != "content" {
+                report = format!("{} [{}]", report, result.payload.chunk_kind);
+            }
+
+            // Header line: <file_id>:<chunk_ordinal> (<n>/<total>) <breadcrumb> [kind] (part N/M)
             println!(
                 "{}:{} ({}/{}) {}",
-                file_id, chunk_ordinal, chunk_ordinal, chunk_count, breadcrumb
+                file_id, chunk_ordinal, chunk_ordinal, chunk_count, report
             );
 
-            // Source line
+            // Source line (non-grammar format per spec §8.6)
             println!(
-                "Source: {}:{}",
+                "Source: ({}) {}",
                 sanitize_for_terminal(&result.payload.catalog),
                 sanitize_for_terminal(&result.payload.relative_path)
             );

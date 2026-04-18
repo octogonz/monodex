@@ -47,6 +47,7 @@
 //!    f. If no AST candidates at all, fall back to line-based splitting
 //! 3. Done - all chunks fit budget
 
+use super::breadcrumb::encode_path_component;
 use super::util::compute_hash;
 use tree_sitter::{Language, Node, Parser};
 
@@ -362,11 +363,17 @@ pub struct PartitionedChunk {
     /// Chunk type (function, class, method, etc.)
     pub chunk_type: String,
 
-    /// Chunk kind (content, imports, changelog, config)
+    /// Chunk kind (content, imports, changelog, config, fallback-split, degraded-ast-split)
     pub chunk_kind: String,
 
     /// Symbol name (if applicable)
     pub symbol_name: Option<String>,
+
+    /// For split sections: which part this is (1-indexed)
+    pub split_part_ordinal: Option<usize>,
+
+    /// For split sections: total number of parts
+    pub split_part_count: Option<usize>,
 }
 
 /// A line range representing a chunk-in-progress
@@ -902,10 +909,13 @@ pub fn partition_typescript(
     let total_lines = lines.len();
 
     // Build base breadcrumb: package:file
-    let base_breadcrumb = if config.package_name.is_empty() {
-        config.file_name.clone()
+    // Both package name and file name are percent-encoded to handle reserved characters
+    let encoded_package = encode_path_component(&config.package_name);
+    let encoded_file_name = encode_path_component(&config.file_name);
+    let base_breadcrumb = if encoded_package.is_empty() {
+        encoded_file_name
     } else {
-        format!("{}:{}", config.package_name, config.file_name)
+        format!("{}:{}", encoded_package, encoded_file_name)
     };
 
     // Step 1: Start with the whole file as one chunk
@@ -1021,19 +1031,23 @@ pub fn partition_typescript(
             chunk_range.end_line,
         );
 
-        let mut breadcrumb = if breadcrumb_suffix.is_empty() {
+        // Build breadcrumb with encoded symbol name
+        let breadcrumb = if breadcrumb_suffix.is_empty() {
             base_breadcrumb.clone()
         } else {
-            format!("{}:{}", base_breadcrumb, breadcrumb_suffix)
+            format!(
+                "{}:{}",
+                base_breadcrumb,
+                encode_path_component(&breadcrumb_suffix)
+            )
         };
 
-        if chunk_range.from_fallback {
-            breadcrumb.push_str(":[fallback-split]");
+        // Determine chunk_kind based on split type
+        let chunk_kind = if chunk_range.from_fallback {
+            "fallback-split".to_string()
         } else if chunk_range.from_degraded_ast_split {
-            breadcrumb.push_str(":[degraded-ast-split]");
-        }
-
-        let chunk_kind = if import_end_line > 0 && chunk_range.end_line <= import_end_line {
+            "degraded-ast-split".to_string()
+        } else if import_end_line > 0 && chunk_range.end_line <= import_end_line {
             "imports".to_string()
         } else {
             "content".to_string()
@@ -1050,6 +1064,8 @@ pub fn partition_typescript(
             chunk_type,
             chunk_kind,
             symbol_name,
+            split_part_ordinal: None,
+            split_part_count: None,
         });
     }
 
@@ -2160,5 +2176,52 @@ export function* parseGitStatus() {
         // Note: This file currently has fallback splits due to a large function body
         // that lacks natural split boundaries. This is a known limitation that may
         // be addressed in a future update.
+    }
+
+    #[test]
+    fn test_breadcrumb_percent_encoding_round_trip() {
+        // Test that file names with reserved characters are percent-encoded in breadcrumbs.
+        // Per spec §8.3, `:` must be encoded as `%3A` in locators/breadcrumbs.
+        // This test uses a file named `weird:file.ts` and verifies the emitted breadcrumb
+        // contains `weird%3Afile.ts` (not `weird:file.ts` which would be ambiguous).
+        let source = r#"
+export function hello(): string {
+    return "Hello, world!";
+}
+"#;
+        let config = PartitionConfig {
+            // File name contains `:` which is a reserved character in the locator grammar
+            file_name: "weird:file.ts".to_string(),
+            package_name: "test-package".to_string(),
+            allow_fallback: false,
+            ..Default::default()
+        };
+        let chunks = partition_typescript(source, &config, "weird:file.ts", "test-catalog");
+
+        // There should be exactly one chunk (the function)
+        assert!(!chunks.is_empty(), "Expected at least one chunk");
+
+        let chunk = &chunks[0];
+
+        // The breadcrumb should have `:` encoded as `%3A` in the file name component
+        // Expected format: "test-package:weird%3Afile.ts[:symbol]"
+        // NOT: "test-package:weird:file.ts[:symbol]" (ambiguous - `:` in file name creates extra segments)
+        assert!(
+            chunk.breadcrumb.contains("weird%3Afile.ts"),
+            "Breadcrumb should have percent-encoded colon in file name. Got: {}",
+            chunk.breadcrumb
+        );
+        assert!(
+            !chunk.breadcrumb.contains("weird:file.ts"),
+            "Breadcrumb should NOT contain unencoded colon in file name. Got: {}",
+            chunk.breadcrumb
+        );
+
+        // Verify the base format: package:encoded_file[:symbol]
+        assert!(
+            chunk.breadcrumb.starts_with("test-package:weird%3Afile.ts"),
+            "Breadcrumb should start with 'test-package:weird%3Afile.ts', got: {}",
+            chunk.breadcrumb
+        );
     }
 }

@@ -9,12 +9,12 @@ Small chunks (<500 chars): 0
 Chars: 3071-4141 (mean 3524)
 
 === CHUNK 1 ===
-Breadcrumb: @rushstack/eslint-patch:generate-patched-file.ts
+Breadcrumb: %40rushstack/eslint-patch:generate-patched-file.ts
 Type: code
 Kind: content
 Symbol: None
 Lines: 1-91
-Size: 3278 chars
+Size: 3280 chars
 Text preview (5 lines):
 // Copyright (c) Microsoft Corporation. All rights reserved. Licensed under the MIT license.
 // See LICENSE in the project root for license information.
@@ -23,12 +23,12 @@ import fs from 'node:fs';
 
 
 === CHUNK 2 ===
-Breadcrumb: @rushstack/eslint-patch:generate-patched-file.ts:generatePatchedLinterJsFileIfDoesNotExist
+Breadcrumb: %40rushstack/eslint-patch:generate-patched-file.ts:generatePatchedLinterJsFileIfDoesNotExist
 Type: function
 Kind: content
 Symbol: Some("generatePatchedLinterJsFileIfDoesNotExist")
 Lines: 92-179
-Size: 3161 chars
+Size: 3163 chars
 Text preview (5 lines):
 
   /**
@@ -37,12 +37,12 @@ Text preview (5 lines):
    * @returns -1 if public method does not exist or index of next public method
 
 === CHUNK 3 ===
-Breadcrumb: @rushstack/eslint-patch:generate-patched-file.ts:generatePatchedLinterJsFileIfDoesNotExist
+Breadcrumb: %40rushstack/eslint-patch:generate-patched-file.ts:generatePatchedLinterJsFileIfDoesNotExist
 Type: function
 Kind: content
 Symbol: Some("generatePatchedLinterJsFileIfDoesNotExist")
 Lines: 180-285
-Size: 3746 chars
+Size: 3748 chars
 Text preview (5 lines):
   outputFile += `--- END MONKEY PATCH ---
 `;
@@ -51,12 +51,12 @@ Text preview (5 lines):
     if (minorVersion >= 37) {
 
 === CHUNK 4 ===
-Breadcrumb: @rushstack/eslint-patch:generate-patched-file.ts:generatePatchedLinterJsFileIfDoesNotExist
+Breadcrumb: %40rushstack/eslint-patch:generate-patched-file.ts:generatePatchedLinterJsFileIfDoesNotExist
 Type: function
 Kind: content
 Symbol: Some("generatePatchedLinterJsFileIfDoesNotExist")
 Lines: 286-399
-Size: 4231 chars
+Size: 4233 chars
 Text preview (5 lines):
 
   outputFile += `

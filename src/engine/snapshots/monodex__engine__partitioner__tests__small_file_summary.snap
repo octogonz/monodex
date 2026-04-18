@@ -9,12 +9,12 @@ Small chunks (<500 chars): 1
 Chars: 68-68 (mean 68)
 
 === CHUNK 1 ===
-Breadcrumb: @test/package:tiny.ts
+Breadcrumb: %40test/package:tiny.ts
 Type: code
 Kind: content
 Symbol: None
 Lines: 1-4
-Size: 89 chars
+Size: 91 chars
 Text preview (5 lines):
 // Small test file
 export function tiny(): number {

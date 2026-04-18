@@ -9,12 +9,12 @@ Small chunks (<500 chars): 0
 Chars: 1248-5807 (mean 3960)
 
 === CHUNK 1 ===
-Breadcrumb: @rushstack/webpack5-module-minifier-plugin:ModuleMinifierPlugin.ts
+Breadcrumb: %40rushstack/webpack5-module-minifier-plugin:ModuleMinifierPlugin.ts
 Type: code
 Kind: content
 Symbol: None
 Lines: 1-169
-Size: 5490 chars
+Size: 5492 chars
 Text preview (5 lines):
 // Copyright (c) Microsoft Corporation. All rights reserved. Licensed under the MIT license.
 // See LICENSE in the project root for license information.
@@ -23,12 +23,12 @@ import { createHash } from 'node:crypto';
 
 
 === CHUNK 2 ===
-Breadcrumb: @rushstack/webpack5-module-minifier-plugin:ModuleMinifierPlugin.ts
+Breadcrumb: %40rushstack/webpack5-module-minifier-plugin:ModuleMinifierPlugin.ts
 Type: code
 Kind: content
 Symbol: None
 Lines: 170-209
-Size: 1314 chars
+Size: 1316 chars
 Text preview (5 lines):
 
 /**
@@ -37,12 +37,12 @@ Text preview (5 lines):
  */
 
 === CHUNK 3 ===
-Breadcrumb: @rushstack/webpack5-module-minifier-plugin:ModuleMinifierPlugin.ts:ModuleMinifierPlugin
+Breadcrumb: %40rushstack/webpack5-module-minifier-plugin:ModuleMinifierPlugin.ts:ModuleMinifierPlugin
 Type: class
 Kind: content
 Symbol: Some("ModuleMinifierPlugin")
 Lines: 210-349
-Size: 5894 chars
+Size: 5896 chars
 Text preview (5 lines):
 
   public apply(compiler: Compiler): void {
@@ -51,12 +51,12 @@ Text preview (5 lines):
     }
 
 === CHUNK 4 ===
-Breadcrumb: @rushstack/webpack5-module-minifier-plugin:ModuleMinifierPlugin.ts
+Breadcrumb: %40rushstack/webpack5-module-minifier-plugin:ModuleMinifierPlugin.ts
 Type: code
 Kind: content
 Symbol: None
 Lines: 350-400
-Size: 2123 chars
+Size: 2125 chars
 Text preview (5 lines):
       javascriptHooks.renderModulePackage.tap(
         TAP_AFTER,
@@ -65,12 +65,12 @@ Text preview (5 lines):
          */
 
 === CHUNK 5 ===
-Breadcrumb: @rushstack/webpack5-module-minifier-plugin:ModuleMinifierPlugin.ts
+Breadcrumb: %40rushstack/webpack5-module-minifier-plugin:ModuleMinifierPlugin.ts
 Type: code
 Kind: content
 Symbol: None
 Lines: 401-489
-Size: 4049 chars
+Size: 4051 chars
 Text preview (5 lines):
           metadata.hashByChunk.set(chunkRenderContext.chunk, hash);
           if (!submittedModules.has(hash)) {
@@ -79,12 +79,12 @@ Text preview (5 lines):
             ++pendingMinificationRequests;
 
 === CHUNK 6 ===
-Breadcrumb: @rushstack/webpack5-module-minifier-plugin:ModuleMinifierPlugin.ts:ModuleMinifierPlugin
+Breadcrumb: %40rushstack/webpack5-module-minifier-plugin:ModuleMinifierPlugin.ts:ModuleMinifierPlugin
 Type: class
 Kind: content
 Symbol: Some("ModuleMinifierPlugin")
 Lines: 490-630
-Size: 5325 chars
+Size: 5327 chars
 Text preview (5 lines):
 
       // The optimizeChunkModules hook is the last async hook that occurs before chunk rendering

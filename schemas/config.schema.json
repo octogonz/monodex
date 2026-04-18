@@ -34,7 +34,7 @@
     },
     "catalogs": {
       "type": "object",
-      "description": "Named catalog configurations",
+      "description": "Named catalog configurations. Keys are catalog names (kebab-case, 1-64 chars, e.g., my-repo, frontend-app). The schema pattern is intentionally permissive; full syntax is validated at runtime with detailed error messages.",
       "additionalProperties": {
         "$ref": "#/definitions/CatalogConfig"
       },

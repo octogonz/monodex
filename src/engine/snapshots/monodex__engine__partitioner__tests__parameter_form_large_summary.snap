@@ -9,12 +9,12 @@ Small chunks (<500 chars): 0
 Chars: 1943-5151 (mean 3279)
 
 === CHUNK 1 ===
-Breadcrumb: @rushstack/rush-vscode-command-webview:ParameterForm.tsx
+Breadcrumb: %40rushstack/rush-vscode-command-webview:ParameterForm.tsx
 Type: code
 Kind: content
 Symbol: None
 Lines: 1-41
-Size: 1999 chars
+Size: 2001 chars
 Text preview (5 lines):
 // Copyright (c) Microsoft Corporation. All rights reserved. Licensed under the MIT license.
 // See LICENSE in the project root for license information.
@@ -23,12 +23,12 @@ import * as React from 'react';
 import { type CSSProperties, type ReactNode, useCallback, useEffect, useMemo } from 'react';
 
 === CHUNK 2 ===
-Breadcrumb: @rushstack/rush-vscode-command-webview:ParameterForm.tsx
+Breadcrumb: %40rushstack/rush-vscode-command-webview:ParameterForm.tsx
 Type: code
 Kind: content
 Symbol: None
 Lines: 42-115
-Size: 2800 chars
+Size: 2802 chars
 Text preview (5 lines):
 
 export const ParameterForm = (): React.ReactElement => {
@@ -37,12 +37,12 @@ export const ParameterForm = (): React.ReactElement => {
   const filteredParameters: ICommandLineParameter[] = useFilteredParameters();
 
 === CHUNK 3 ===
-Breadcrumb: @rushstack/rush-vscode-command-webview:ParameterForm.tsx
+Breadcrumb: %40rushstack/rush-vscode-command-webview:ParameterForm.tsx
 Type: variable
 Kind: content
 Symbol: None
 Lines: 116-256
-Size: 5207 chars
+Size: 5209 chars
 Text preview (5 lines):
 
   useEffect(() => {

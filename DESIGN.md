@@ -19,12 +19,60 @@ monodex is a semantic search indexer for Rush monorepos, using Qdrant vector dat
 A **label** is a named, queryable fileset within a catalog. Examples:
 - `catalog = rushstack`
 - `label = main`
-- `label = feature-x`
-
-**label_id** is the fully qualified identity: `<catalog>:<label_name>`
-- Example: `rushstack:main`, `rushstack:feature-x`
+- `label = feature/login-flow`
 
 A search is scoped by both catalog and label.
+
+### Identifier Syntax
+
+**Catalog names** are strict kebab-case identifiers:
+
+```
+^[a-z0-9]+(?:-[a-z0-9]+)*$
+```
+
+- Length 1–64 characters
+- Lowercase ASCII alphanumeric words separated by single `-`
+- No leading, trailing, or consecutive `-`
+
+**Examples:**
+- ✅ Valid: `my-repo`, `frontend`, `backend-api`
+- ❌ Invalid: `My-Repo` (uppercase), `foo--bar` (consecutive `-`), `foo_` (trailing separator)
+
+**Label names** are Git-like identifiers:
+
+```
+^[a-z0-9]+(?:[./=-][a-z0-9]+)*$
+```
+
+- Length 1–128 characters
+- Lowercase ASCII alphanumeric words separated by `.`, `/`, `-`, or `=`
+- No leading, trailing, or consecutive separators
+
+**Examples:**
+- ✅ Valid: `main`, `feature/login-flow`, `release/v1.2.3`, `branch=main`
+- ❌ Invalid: `feature_login` (underscore), `FOO` (uppercase), `foo//bar` (consecutive separators)
+
+**Reserved characters:** The characters `:`, `@`, `+`, `#`, whitespace, and control characters are forbidden in both catalog and label names. They are reserved for future grammar extensions (see below).
+
+**The `=` character in labels:** The `=` character is permitted but not interpreted. A user who types `--label branch=main` gets a label literally named `branch=main`. This permits users to adopt a `kind=payload` naming convention in their own automation and ensures compatibility when Monodex later adds native typed-label support.
+
+**Planned grammar extensions:** The full identifier syntax (see [issue #25](https://github.com/microsoft/monodex/issues/25)) includes:
+- Typed labels: `kind=payload` (e.g., `branch=main`, `commit=abc123`, `tag=v1.2.3`)
+- Cross-catalog references: `@catalog:label`
+- Path references: `label:path`, `@catalog:label:path`
+- Additional reserved characters: `+` and `#`
+
+None of this grammar is parsed today. The reserved characters are rejected now to prevent breaking changes when these features land.
+
+### Storage Format (Internal)
+
+The **label_id** is the fully qualified storage key `<catalog>:<label>`. This is an internal representation used only in:
+- Qdrant payload fields (`active_label_ids`, `label_id`)
+- UUID derivation for label-metadata points
+- Internal log/debug output
+
+Users never type or see the qualified form directly. The CLI accepts `--catalog` and `--label` as two separate flags.
 
 ### Content vs Membership
 
@@ -127,8 +175,8 @@ Label metadata is stored as special points in the main Qdrant collection:
 pub struct LabelMetadata {
     pub source_type: String,          // "label-metadata"
     pub catalog: String,
-    pub label_id: String,             // e.g., "rushstack:main"
-    pub label_name: String,           // e.g., "main"
+    pub label_id: String,             // e.g., "rushstack:main" (internal storage form)
+    pub label: String,                // e.g., "main" (bare label name)
     pub commit_oid: String,           // Resolved commit SHA
     pub source_kind: String,          // "git-commit"
     pub crawl_complete: bool,

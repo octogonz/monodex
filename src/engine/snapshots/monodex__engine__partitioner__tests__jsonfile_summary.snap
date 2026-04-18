@@ -9,12 +9,12 @@ Small chunks (<500 chars): 0
 Chars: 3051-4046 (mean 3453)
 
 === CHUNK 1 ===
-Breadcrumb: @rushstack/node-core-library:JsonFile.ts
+Breadcrumb: %40rushstack/node-core-library:JsonFile.ts
 Type: code
 Kind: content
 Symbol: None
 Lines: 1-101
-Size: 4086 chars
+Size: 4088 chars
 Text preview (5 lines):
 // Copyright (c) Microsoft Corporation. All rights reserved. Licensed under the MIT license.
 // See LICENSE in the project root for license information.
@@ -23,12 +23,12 @@ import * as os from 'node:os';
 
 
 === CHUNK 2 ===
-Breadcrumb: @rushstack/node-core-library:JsonFile.ts
+Breadcrumb: %40rushstack/node-core-library:JsonFile.ts
 Type: code
 Kind: content
 Symbol: None
 Lines: 102-200
-Size: 3555 chars
+Size: 3557 chars
 Text preview (5 lines):
 
 /**
@@ -37,12 +37,12 @@ Text preview (5 lines):
  * @public
 
 === CHUNK 3 ===
-Breadcrumb: @rushstack/node-core-library:JsonFile.ts
+Breadcrumb: %40rushstack/node-core-library:JsonFile.ts
 Type: code
 Kind: content
 Symbol: None
 Lines: 201-305
-Size: 3245 chars
+Size: 3247 chars
 Text preview (5 lines):
 
 /**
@@ -51,12 +51,12 @@ Text preview (5 lines):
  */
 
 === CHUNK 4 ===
-Breadcrumb: @rushstack/node-core-library:JsonFile.ts:JsonFile
+Breadcrumb: %40rushstack/node-core-library:JsonFile.ts:JsonFile
 Type: class
 Kind: content
 Symbol: Some("JsonFile")
 Lines: 306-395
-Size: 3100 chars
+Size: 3102 chars
 Text preview (5 lines):
 
   /**
@@ -65,12 +65,12 @@ Text preview (5 lines):
   public static async loadAndValidateWithCallbackAsync(
 
 === CHUNK 5 ===
-Breadcrumb: @rushstack/node-core-library:JsonFile.ts:JsonFile
+Breadcrumb: %40rushstack/node-core-library:JsonFile.ts:JsonFile
 Type: class
 Kind: content
 Symbol: Some("JsonFile")
 Lines: 396-507
-Size: 3723 chars
+Size: 3725 chars
 Text preview (5 lines):
 
   /**
@@ -79,12 +79,12 @@ Text preview (5 lines):
    * @param jsonFilename - the file path to write
 
 === CHUNK 6 ===
-Breadcrumb: @rushstack/node-core-library:JsonFile.ts:JsonFile
+Breadcrumb: %40rushstack/node-core-library:JsonFile.ts:JsonFile
 Type: class
 Kind: content
 Symbol: Some("JsonFile")
 Lines: 508-607
-Size: 3275 chars
+Size: 3277 chars
 Text preview (5 lines):
 
   /**

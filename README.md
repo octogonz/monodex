@@ -211,9 +211,9 @@ The `embeddingModel` section controls memory and CPU usage for embedding generat
 
 A **label** is a named, queryable fileset within a catalog. Labels typically represent branches or specific commits:
 
-- `rushstack:main` - main branch
-- `rushstack:feature-x` - feature branch
-- `rushstack:v1.0.0` - specific release tag
+- a label named `main` under the `rushstack` catalog (main branch)
+- a label named `feature-x` (a feature branch)
+- a label named `v1.0.0` (a specific release tag)
 
 **Key concept:** Chunks are immutable content. Labels track which chunks belong to which fileset. When you crawl a new commit under a label, membership is updated but identical content is reused.
 
@@ -268,8 +268,8 @@ monodex crawl --catalog rushstack --label v1.0.0 --commit a1b2c3d4e5f6
 # Semantic search (uses default context if set)
 monodex search --text "how to read JSON files"
 
-# With explicit label (full format: catalog:label)
-monodex search --text "API Extractor" --label rushstack:main --limit 10
+# With explicit catalog and label
+monodex search --text "API Extractor" --catalog rushstack --label main --limit 10
 ```
 
 ### View Full Chunks
@@ -296,8 +296,8 @@ monodex view --id 30440fb2ecd5fa62 --full-paths
 # Omit catalog preamble (chunks only)
 monodex view --id 30440fb2ecd5fa62 --chunks-only
 
-# Filter by label (full format: catalog:label)
-monodex view --id 30440fb2ecd5fa62 --label rushstack:main
+# Filter by catalog and label
+monodex view --id 30440fb2ecd5fa62 --catalog rushstack --label main
 ```
 
 ### Debug Chunking Algorithm

@@ -7,6 +7,8 @@ use anyhow::{Result, anyhow};
 use reqwest::blocking::Client;
 use serde::{Deserialize, Serialize};
 
+use super::identifier::{LabelId, validate_catalog};
+
 const DEFAULT_QDRANT_URL: &str = "http://localhost:6333";
 
 /// Check if an error response from Qdrant indicates a payload size limit error.
@@ -124,13 +126,54 @@ pub struct PointPayload {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub symbol_name: Option<String>,
     pub chunk_type: String, // AST node type: function, class, method, etc.
-    pub chunk_kind: String, // content, imports, changelog, config
+    pub chunk_kind: String, // content, imports, changelog, config, fallback-split, degraded-ast-split
     #[serde(skip_serializing_if = "Option::is_none")]
     pub breadcrumb: Option<String>, // Human-readable: package:File.ts:Symbol
+
+    // Split metadata (for oversized sections split into parts)
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub split_part_ordinal: Option<usize>, // Which part (1-indexed)
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub split_part_count: Option<usize>, // Total parts
 
     // Sentinel for incremental crawl
     #[serde(default)]
     pub file_complete: bool, // Only true on chunk_ordinal=1
+}
+
+impl PointPayload {
+    /// Validates all identifier fields after deserialization from Qdrant.
+    ///
+    /// This is the boundary where storage-form data enters the application.
+    /// Any malformed data from Qdrant is a hard error - we do not log-and-skip.
+    pub fn validate(&self) -> Result<()> {
+        // Validate catalog
+        validate_catalog(&self.catalog).map_err(|e| {
+            anyhow!(
+                "Invalid catalog in stored payload '{}': {}",
+                self.catalog,
+                e
+            )
+        })?;
+
+        // Validate each active_label_id using the canonical storage-form parser
+        for label_id in &self.active_label_ids {
+            LabelId::parse(label_id).map_err(|e| {
+                anyhow!("Invalid label_id in stored payload active_label_ids: {}", e)
+            })?;
+        }
+
+        // Validate that label_id is present in active_label_ids
+        if !self.active_label_ids.contains(&self.label_id) {
+            return Err(anyhow!(
+                "PointPayload label_id '{}' is not present in active_label_ids {:?}",
+                self.label_id,
+                self.active_label_ids
+            ));
+        }
+
+        Ok(())
+    }
 }
 
 /// Metadata for a label, stored as a special point in the collection
@@ -138,13 +181,33 @@ pub struct PointPayload {
 pub struct LabelMetadata {
     pub source_type: String, // "label-metadata"
     pub catalog: String,
-    pub label_id: String,    // e.g., "rushstack:main"
-    pub label_name: String,  // e.g., "main"
+    pub label_id: String,    // e.g., "rushstack:main" (internal storage form)
+    pub label: String,       // e.g., "main" (bare label name)
     pub commit_oid: String,  // Resolved commit SHA
     pub source_kind: String, // "git-commit"
     #[serde(default)]
     pub crawl_complete: bool,
     pub updated_at_unix_secs: u64,
+}
+
+impl LabelMetadata {
+    /// Validate all identifier fields in this metadata
+    pub fn validate(&self) -> Result<()> {
+        // Use LabelId::new as the canonical composition and validation path
+        let expected_label_id = LabelId::new(&self.catalog, &self.label)
+            .map_err(|e| anyhow!("Invalid identifier in stored metadata: {}", e))?;
+
+        // Check label_id consistency (authoritative key for UUID derivation)
+        if self.label_id != expected_label_id.as_str() {
+            return Err(anyhow!(
+                "Label metadata has inconsistent label_id: expected '{}', got '{}'",
+                expected_label_id.as_str(),
+                self.label_id
+            ));
+        }
+
+        Ok(())
+    }
 }
 
 /// Information about a file for incremental sync
@@ -559,6 +622,8 @@ impl QdrantUploader {
                     chunk_type: chunk.chunk_type.clone(),
                     chunk_kind: chunk.chunk_kind.clone(),
                     breadcrumb: Some(chunk.breadcrumb.clone()),
+                    split_part_ordinal: chunk.split_part_ordinal,
+                    split_part_count: chunk.split_part_count,
                     file_complete: false,
                 },
             })
@@ -890,6 +955,11 @@ impl QdrantUploader {
         // Sort by chunk_ordinal
         results.sort_by_key(|p| p.payload.chunk_ordinal);
 
+        // Validate each payload
+        for result in &results {
+            result.payload.validate()?;
+        }
+
         Ok(results)
     }
 
@@ -972,7 +1042,12 @@ impl QdrantUploader {
         }
 
         let label_response: LabelPointResponse = response.json()?;
-        Ok(Some(label_response.result.payload))
+        let metadata = label_response.result.payload;
+
+        // Validate identifiers from stored data
+        metadata.validate()?;
+
+        Ok(Some(metadata))
     }
 
     /// Get sentinel (chunk 1) for a file to check if already indexed
@@ -1002,6 +1077,9 @@ impl QdrantUploader {
         }
 
         let point_response: PointResponse = response.json()?;
+
+        // Validate the payload from storage
+        point_response.result.payload.validate()?;
 
         if point_response.result.payload.file_complete {
             return Ok(Some(FileSyncInfo {
@@ -1395,6 +1473,12 @@ impl QdrantUploader {
         }
 
         let search_response: SearchResponse = response.json()?;
+
+        // Validate each payload
+        for result in &search_response.result {
+            result.payload.validate()?;
+        }
+
         Ok(search_response.result)
     }
 
@@ -1489,6 +1573,11 @@ impl QdrantUploader {
         // Sort by chunk_ordinal
         results.sort_by_key(|p| p.payload.chunk_ordinal);
 
+        // Validate each payload
+        for result in &results {
+            result.payload.validate()?;
+        }
+
         Ok(results)
     }
 }
@@ -1512,7 +1601,7 @@ mod tests {
             source_type: "label-metadata".to_string(),
             catalog: "rushstack".to_string(),
             label_id: label_id.to_string(),
-            label_name: "feature/foo".to_string(),
+            label: "feature/foo".to_string(),
             commit_oid: "abc123".to_string(),
             source_kind: "git-commit".to_string(),
             crawl_complete: false,
@@ -1580,6 +1669,8 @@ mod tests {
             package_name: "test-package".to_string(),
             chunk_ordinal: 1,
             chunk_count: 1,
+            split_part_ordinal: None,
+            split_part_count: None,
         };
 
         // 384-dim embedding (typical for small models)
@@ -1639,6 +1730,8 @@ mod tests {
             package_name: "@rushstack/node-core-library".to_string(),
             chunk_ordinal: 1,
             chunk_count: 5,
+            split_part_ordinal: None,
+            split_part_count: None,
         };
 
         // 384-dim embedding
@@ -1673,6 +1766,8 @@ mod tests {
                 chunk_type: chunk.chunk_type.clone(),
                 chunk_kind: chunk.chunk_kind.clone(),
                 breadcrumb: Some(chunk.breadcrumb.clone()),
+                split_part_ordinal: chunk.split_part_ordinal,
+                split_part_count: chunk.split_part_count,
                 file_complete: false,
             },
         };

@@ -8,7 +8,7 @@
   "properties": {
     "catalog": {
       "type": "string",
-      "description": "Default catalog name for commands. Must match the regex: ^[a-z0-9]+(?:-[a-z0-9]+)*$ (kebab-case, 1-64 chars). Authoritative validation is in src/engine/identifier.rs.",
+      "description": "Default catalog name for commands. Kebab-case, 1-64 chars (e.g., my-repo, frontend-app). The schema pattern is intentionally permissive; full syntax is validated at runtime with detailed error messages.",
       "minLength": 1,
       "maxLength": 64,
       "pattern": "^[^\\s:@+#=]+$",
@@ -16,7 +16,7 @@
     },
     "label": {
       "type": "string",
-      "description": "Default label name for indexing/searching. Must match the regex: ^[a-z0-9]+(?:[./=-][a-z0-9]+)*$ (Git-like, 1-128 chars). The '=' character is permitted but not interpreted. Authoritative validation is in src/engine/identifier.rs.",
+      "description": "Default label name for indexing/searching. Git-like identifier, 1-128 chars (e.g., main, feature/login-flow, branch=main). The '=' character is permitted but not interpreted. The schema pattern is intentionally permissive; full syntax is validated at runtime with detailed error messages.",
       "minLength": 1,
       "maxLength": 128,
       "pattern": "^[^\\s:@+#]+$",

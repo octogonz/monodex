@@ -186,15 +186,15 @@ Create `~/.config/monodex/config.json`:
 
 **Fields:**
 
-| Field                              | Required | Description                                                        |
-| ---------------------------------- | -------- | ------------------------------------------------------------------ |
-| `qdrant.url`                       | No       | Qdrant server URL (default: `http://localhost:6333`)               |
-| `qdrant.collection`                | Yes      | Qdrant collection name                                             |
-| `qdrant.maxUploadBytes`            | No       | Max upload payload size in bytes (default: 30MB)                   |
-| `catalogs.<name>.type`             | Yes      | Catalog type: `"monorepo"`                                         |
-| `catalogs.<name>.path`             | Yes      | Absolute path to the repository root                               |
-| `embeddingModel.modelInstances`    | No       | Number of ONNX model instances (default: `"auto"`). Primary driver of memory usage. |
-| `embeddingModel.threadsPerInstance`| No       | Threads per model instance (default: `"auto"`). CPU tuning only.   |
+| Field                               | Required | Description                                                                         |
+| ----------------------------------- | -------- | ----------------------------------------------------------------------------------- |
+| `qdrant.url`                        | No       | Qdrant server URL (default: `http://localhost:6333`)                                |
+| `qdrant.collection`                 | Yes      | Qdrant collection name                                                              |
+| `qdrant.maxUploadBytes`             | No       | Max upload payload size in bytes (default: 30MB)                                    |
+| `catalogs.<name>.type`              | Yes      | Catalog type: `"monorepo"`                                                          |
+| `catalogs.<name>.path`              | Yes      | Absolute path to the repository root                                                |
+| `embeddingModel.modelInstances`     | No       | Number of ONNX model instances (default: `"auto"`). Primary driver of memory usage. |
+| `embeddingModel.threadsPerInstance` | No       | Threads per model instance (default: `"auto"`). CPU tuning only.                    |
 
 **Embedding model configuration:**
 
@@ -511,8 +511,17 @@ This project is under active development. The crate is published to reserve the 
 
 MIT
 
-## Related
+## Links
+
+In this repo:
+
+- [CODE_ORGANIZATION_POLICY.md](./CODE_ORGANIZATION_POLICY.md) - guidelines for where to add new code
+- [DESIGN.md](./DESIGN.md) - more detailed architectural notes
+
+Online references:
 
 - [Qdrant](https://qdrant.ai/) - Vector similarity search engine
 - [ONNX Runtime](https://onnxruntime.ai/) - Cross-platform ML inference
 - [Rush Stack](https://rushstack.io/) - Monorepo toolkit for JavaScript/TypeScript
+
+_This project was primarily developed using the Linux Foundation's [Goose](https://goose-docs.ai) AI agent with an open source LLM._

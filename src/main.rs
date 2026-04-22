@@ -3,11 +3,9 @@
 //! Uses Qdrant vector database with jina-embeddings-v2-base-code embeddings
 //! Intelligently chunks code and documentation for high-quality semantic search
 
-mod engine;
-
 use clap::{Args, Parser, Subcommand};
 use crossbeam_channel::{Receiver, Sender};
-use engine::{
+use monodex::engine::{
     ParallelEmbedder, SMALL_CHUNK_CHARS,
     chunker::{ChunkContext, chunk_content},
     crawl_config::load_compiled_crawl_config,
@@ -29,8 +27,8 @@ use std::path::PathBuf;
 
 /// Type alias for the embedding channel (reduces type complexity)
 type EmbedChannel = (
-    Sender<(engine::Chunk, Vec<f32>)>,
-    Receiver<(engine::Chunk, Vec<f32>)>,
+    Sender<(monodex::engine::Chunk, Vec<f32>)>,
+    Receiver<(monodex::engine::Chunk, Vec<f32>)>,
 );
 
 // ============================================================================
@@ -995,7 +993,7 @@ fn print_memory_warning(resolved: &ResolvedEmbeddingConfig) {
 /// Run the embedding and upload pipeline with progress reporting
 /// Returns (touched_file_ids, failures) for the crawl
 fn run_embed_upload_pipeline(
-    all_chunks: Vec<engine::Chunk>,
+    all_chunks: Vec<monodex::engine::Chunk>,
     uploader: QdrantUploader,
     label_id: &str,
     embedding_config: &EmbeddingModelConfig,
@@ -1028,7 +1026,7 @@ fn run_embed_upload_pipeline(
     print_memory_warning(&resolved);
 
     // Initialize parallel embedder with resolved config
-    let embedder = ParallelEmbedder::with_config(engine::ParallelConfig {
+    let embedder = ParallelEmbedder::with_config(monodex::engine::ParallelConfig {
         num_workers: resolved.model_instances,
         intra_threads: resolved.threads_per_instance,
     })?;
@@ -1097,7 +1095,7 @@ fn run_embed_upload_pipeline(
     let label_add_failures_clone = Arc::clone(&label_add_failures);
 
     let uploader_thread = std::thread::spawn(move || {
-        let mut accumulated: Vec<(engine::Chunk, Vec<f32>)> = Vec::new();
+        let mut accumulated: Vec<(monodex::engine::Chunk, Vec<f32>)> = Vec::new();
         let mut accumulated_bytes: usize = 0;
         // Use the same limit as max_upload_bytes for now
         // These are separate concepts even if they share the same value
@@ -1412,7 +1410,7 @@ fn run_crawl_label(
     _incremental_warnings: bool,
     debug: bool,
 ) -> anyhow::Result<()> {
-    use engine::util::{CHUNKER_ID, EMBEDDER_ID, compute_file_id};
+    use monodex::engine::util::{CHUNKER_ID, EMBEDDER_ID, compute_file_id};
 
     let total_start = std::time::Instant::now();
     println!("🔍 Starting label-aware crawl...");
@@ -1583,7 +1581,7 @@ fn run_crawl_label(
         .collect();
 
     // Step 6: Index new files
-    let mut all_chunks: Vec<engine::Chunk> = Vec::new();
+    let mut all_chunks: Vec<monodex::engine::Chunk> = Vec::new();
     let mut touched_file_ids: HashSet<String> = HashSet::new();
 
     if !new_files.is_empty() {
@@ -1792,7 +1790,7 @@ fn run_crawl_working_dir(
     _incremental_warnings: bool,
     debug: bool,
 ) -> anyhow::Result<()> {
-    use engine::util::{CHUNKER_ID, EMBEDDER_ID, compute_file_id};
+    use monodex::engine::util::{CHUNKER_ID, EMBEDDER_ID, compute_file_id};
 
     let total_start = std::time::Instant::now();
     println!("🔍 Starting working directory crawl...");
@@ -1960,7 +1958,7 @@ fn run_crawl_working_dir(
         .collect();
 
     // Step 6: Index new files
-    let mut all_chunks: Vec<engine::Chunk> = Vec::new();
+    let mut all_chunks: Vec<monodex::engine::Chunk> = Vec::new();
     let mut touched_file_ids: HashSet<String> = HashSet::new();
 
     if !new_files.is_empty() {
@@ -2563,7 +2561,7 @@ fn run_dump_chunks(
 
     // Find package name by walking upward to find nearest package.json
     let file_path = file.to_string_lossy().to_string();
-    let package_name = engine::package_lookup::find_package_name(&file_path, "");
+    let package_name = monodex::engine::package_lookup::find_package_name(&file_path, "");
 
     // Create config
     let config = PartitionConfig {

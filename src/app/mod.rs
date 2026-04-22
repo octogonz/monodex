@@ -9,3 +9,5 @@ pub mod config;
 pub mod context;
 pub mod crawl;
 pub mod util;
+
+pub use cli::{Cli, Commands, CrawlSourceArgs};

@@ -12,11 +12,11 @@ pub mod util;
 
 pub use cli::{Cli, Commands, CrawlSourceArgs};
 pub use config::{
-    Config, CatalogConfig, EmbeddingModelConfig, EmbeddingSizeValue, QdrantConfig,
-    load_config, resolve_embedding_config, print_memory_warning,
+    CatalogConfig, Config, EmbeddingModelConfig, EmbeddingSizeValue, QdrantConfig, load_config,
+    print_memory_warning, resolve_embedding_config,
 };
 pub use context::{
-    DefaultContext, DEFAULT_CONTEXT_PATH, load_default_context, save_default_context,
-    resolve_label_context,
+    DEFAULT_CONTEXT_PATH, DefaultContext, load_default_context, resolve_label_context,
+    save_default_context,
 };
 pub use util::chrono_timestamp;

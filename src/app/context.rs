@@ -6,8 +6,8 @@
 
 use anyhow::anyhow;
 
-use crate::engine::identifier::{validate_catalog, validate_label, LabelId};
 use crate::app::util::chrono_timestamp;
+use crate::engine::identifier::{LabelId, validate_catalog, validate_label};
 
 /// Context file for storing default catalog/label
 pub const DEFAULT_CONTEXT_PATH: &str = "~/.config/monodex/context.json";
@@ -129,18 +129,16 @@ pub fn resolve_label_context(
         (Some(catalog), None, Some(ctx)) => {
             // Catalog explicit, label from context
             let label = ctx.label;
-            validate_label(&label).map_err(|e| {
-                anyhow!("Invalid label in default context '{}': {}", label, e)
-            })?;
+            validate_label(&label)
+                .map_err(|e| anyhow!("Invalid label in default context '{}': {}", label, e))?;
             let label_id = LabelId::new(catalog, &label).map_err(|e| anyhow!("{}", e))?;
             Ok((label_id, catalog.to_string(), label))
         }
         (None, Some(label), Some(ctx)) => {
             // Label explicit, catalog from context
             let catalog = ctx.catalog;
-            validate_catalog(&catalog).map_err(|e| {
-                anyhow!("Invalid catalog in default context '{}': {}", catalog, e)
-            })?;
+            validate_catalog(&catalog)
+                .map_err(|e| anyhow!("Invalid catalog in default context '{}': {}", catalog, e))?;
             let label_id = LabelId::new(&catalog, label).map_err(|e| anyhow!("{}", e))?;
             Ok((label_id, catalog, label.to_string()))
         }
@@ -148,12 +146,10 @@ pub fn resolve_label_context(
             // Both from context
             let catalog = ctx.catalog;
             let label = ctx.label;
-            validate_catalog(&catalog).map_err(|e| {
-                anyhow!("Invalid catalog in default context '{}': {}", catalog, e)
-            })?;
-            validate_label(&label).map_err(|e| {
-                anyhow!("Invalid label in default context '{}': {}", label, e)
-            })?;
+            validate_catalog(&catalog)
+                .map_err(|e| anyhow!("Invalid catalog in default context '{}': {}", catalog, e))?;
+            validate_label(&label)
+                .map_err(|e| anyhow!("Invalid label in default context '{}': {}", label, e))?;
             let label_id = LabelId::new(&catalog, &label).map_err(|e| anyhow!("{}", e))?;
             Ok((label_id, catalog, label))
         }

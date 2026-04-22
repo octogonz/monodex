@@ -6,6 +6,10 @@
 use clap::Parser;
 use crossbeam_channel::{Receiver, Sender};
 use monodex::app::{Cli, Commands};
+use monodex::app::{
+    Config, EmbeddingModelConfig, chrono_timestamp, load_config, load_default_context,
+    print_memory_warning, resolve_embedding_config, resolve_label_context, save_default_context,
+};
 use monodex::engine::{
     ParallelEmbedder, SMALL_CHUNK_CHARS,
     chunker::{ChunkContext, chunk_content},
@@ -18,13 +22,6 @@ use monodex::engine::{
     identifier::{LabelId, validate_catalog, validate_label},
     partitioner::{ChunkQualityReport, PartitionConfig, PartitionDebug, partition_typescript},
     uploader::{LabelMetadata, PointResult, QdrantUploader, is_payload_limit_error},
-};
-use monodex::app::{
-    Config, EmbeddingModelConfig,
-    load_config, resolve_embedding_config, print_memory_warning,
-    load_default_context, save_default_context,
-    resolve_label_context,
-    chrono_timestamp,
 };
 use std::collections::{HashMap, HashSet};
 use std::path::PathBuf;

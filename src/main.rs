@@ -7,9 +7,10 @@ use clap::Parser;
 use crossbeam_channel::{Receiver, Sender};
 use monodex::app::{Cli, Commands};
 use monodex::app::{
-    Config, EmbeddingModelConfig, CrawlFailures, CrawlFileEntry, CrawlSource, chrono_timestamp,
-    format_duration, format_eta, load_config, load_default_context, print_memory_warning,
-    resolve_embedding_config, resolve_label_context, sanitize_for_terminal, save_default_context,
+    Config, EmbeddingModelConfig, CrawlFailures, chrono_timestamp,
+    format_duration, format_eta, load_config, print_memory_warning,
+    resolve_embedding_config, resolve_label_context, sanitize_for_terminal,
+    run_use,
 };
 use monodex::engine::{
     ParallelEmbedder, SMALL_CHUNK_CHARS,
@@ -20,7 +21,7 @@ use monodex::engine::{
         enumerate_working_directory, read_blob_content, read_working_file_content,
         resolve_commit_oid,
     },
-    identifier::{LabelId, validate_catalog, validate_label},
+    identifier::LabelId,
     partitioner::{ChunkQualityReport, PartitionConfig, PartitionDebug, partition_typescript},
     uploader::{LabelMetadata, PointResult, QdrantUploader, is_payload_limit_error},
 };
@@ -124,70 +125,6 @@ fn main() -> anyhow::Result<()> {
         }
         Commands::AuditChunks { count, dir } => {
             run_audit_chunks(count, dir)?;
-        }
-    }
-
-    Ok(())
-}
-
-/// Run the `use` command to set default context
-fn run_use(catalog: Option<&str>, label: Option<String>, config: &Config) -> anyhow::Result<()> {
-    match (catalog, label) {
-        (None, None) => {
-            // Show current context
-            match load_default_context() {
-                Some(ctx) => {
-                    println!("Current context:");
-                    println!("  Catalog: {}", ctx.catalog);
-                    println!("  Label: {}", ctx.label);
-                }
-                None => {
-                    println!("No default context set.");
-                    println!();
-                    println!("Usage:");
-                    println!("  monodex use --catalog <name> --label <name>");
-                }
-            }
-        }
-        (Some(catalog_name), Some(label)) => {
-            // Validate catalog name syntax
-            validate_catalog(catalog_name)
-                .map_err(|e| anyhow::anyhow!("Invalid catalog name '{}': {}", catalog_name, e))?;
-
-            // Validate label name syntax
-            validate_label(&label)
-                .map_err(|e| anyhow::anyhow!("Invalid label name '{}': {}", label, e))?;
-
-            // Validate that catalog exists in config
-            if !config.catalogs.contains_key(catalog_name) {
-                return Err(anyhow::anyhow!(
-                    "Catalog '{}' not found in config. Available catalogs: {}",
-                    catalog_name,
-                    config
-                        .catalogs
-                        .keys()
-                        .cloned()
-                        .collect::<Vec<_>>()
-                        .join(", ")
-                ));
-            }
-
-            // Set new context
-            save_default_context(catalog_name, &label)?;
-
-            println!("✓ Default context set to:");
-            println!("  Catalog: {}", catalog_name);
-            println!("  Label: {}", label);
-            println!();
-            println!(
-                "Commands will now use this context when --catalog/--label are not specified."
-            );
-        }
-        (Some(_), None) | (None, Some(_)) => {
-            // Partial specification - error
-            return Err(anyhow::anyhow!(
-                "Both --catalog and --label are required to set context.\n\n                Usage:\n  monodex use --catalog <name> --label <name>\n\n                Or run 'monodex use' without arguments to see current context."
-            ));
         }
     }
 

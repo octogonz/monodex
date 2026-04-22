@@ -11,3 +11,7 @@ pub mod crawl;
 pub mod util;
 
 pub use cli::{Cli, Commands, CrawlSourceArgs};
+pub use config::{
+    Config, CatalogConfig, EmbeddingModelConfig, EmbeddingSizeValue, QdrantConfig,
+    load_config, resolve_embedding_config, print_memory_warning,
+};

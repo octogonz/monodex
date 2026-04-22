@@ -7,9 +7,9 @@ use clap::Parser;
 use crossbeam_channel::{Receiver, Sender};
 use monodex::app::{Cli, Commands};
 use monodex::app::{
-    Config, EmbeddingModelConfig, chrono_timestamp, format_duration, format_eta, load_config,
-    load_default_context, print_memory_warning, resolve_embedding_config, resolve_label_context,
-    sanitize_for_terminal, save_default_context,
+    Config, EmbeddingModelConfig, CrawlFailures, CrawlFileEntry, CrawlSource, chrono_timestamp,
+    format_duration, format_eta, load_config, load_default_context, print_memory_warning,
+    resolve_embedding_config, resolve_label_context, sanitize_for_terminal, save_default_context,
 };
 use monodex::engine::{
     ParallelEmbedder, SMALL_CHUNK_CHARS,
@@ -32,72 +32,6 @@ type EmbedChannel = (
     Sender<(monodex::engine::Chunk, Vec<f32>)>,
     Receiver<(monodex::engine::Chunk, Vec<f32>)>,
 );
-
-// ============================================================================
-// C.1: Shared types for crawl pipeline extraction
-// ============================================================================
-
-/// Source type for crawling
-/// (Prepared for future refactoring to further unify crawl entry points)
-#[allow(dead_code)]
-#[derive(Debug, Clone)]
-enum CrawlSource {
-    /// Git commit-based crawling
-    GitCommit { commit_oid: String },
-    /// Working directory crawling (uncommitted changes)
-    WorkingDirectory,
-}
-
-impl CrawlSource {
-    #[allow(dead_code)]
-    /// Get the source kind string for label metadata
-    fn source_kind(&self) -> &'static str {
-        match self {
-            CrawlSource::GitCommit { .. } => "git-commit",
-            CrawlSource::WorkingDirectory => "working-directory",
-        }
-    }
-
-    /// Get the commit OID (empty string for working directory)
-    #[allow(dead_code)]
-    fn commit_oid(&self) -> &str {
-        match self {
-            CrawlSource::GitCommit { commit_oid } => commit_oid,
-            CrawlSource::WorkingDirectory => "",
-        }
-    }
-}
-
-/// File entry from crawl source
-/// (Prepared for future refactoring to further unify crawl entry points)
-#[allow(dead_code)]
-#[derive(Debug, Clone)]
-struct CrawlFileEntry {
-    relative_path: String,
-    blob_id: String,
-}
-
-/// Failure tracking for crawl pipeline
-#[derive(Debug, Default)]
-struct CrawlFailures {
-    upload_failures: Vec<String>,
-    file_complete_failures: Vec<String>,
-    label_add_failures: Vec<String>,
-    embedding_failures: Vec<String>,
-}
-
-impl CrawlFailures {
-    fn total(&self) -> usize {
-        self.upload_failures.len()
-            + self.file_complete_failures.len()
-            + self.label_add_failures.len()
-            + self.embedding_failures.len()
-    }
-
-    fn has_failures(&self) -> bool {
-        self.total() > 0
-    }
-}
 
 const DEFAULT_CONFIG_PATH: &str = "~/.config/monodex/config.json";
 

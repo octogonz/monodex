@@ -19,4 +19,4 @@ pub use context::{
     DEFAULT_CONTEXT_PATH, DefaultContext, load_default_context, resolve_label_context,
     save_default_context,
 };
-pub use util::chrono_timestamp;
+pub use util::{chrono_timestamp, format_duration, format_eta, sanitize_for_terminal};

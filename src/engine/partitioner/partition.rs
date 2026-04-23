@@ -4,9 +4,9 @@ use crate::engine::breadcrumb::encode_path_component;
 use crate::engine::util::compute_hash;
 use tree_sitter::{Language, Parser};
 
-use super::types::{ChunkRange, PartitionConfig, PartitionedChunk, MIN_CHUNK_RATIO, SplitResult};
 use super::node_analysis::{extract_imports_end_line, get_chunk_metadata, get_lines_text};
 use super::split_search::find_best_split;
+use super::types::{ChunkRange, MIN_CHUNK_RATIO, PartitionConfig, PartitionedChunk, SplitResult};
 
 /// Partition a TypeScript/TSX file into chunks
 pub fn partition_typescript(
@@ -202,4 +202,3 @@ pub fn partition_typescript(
 
     result
 }
-

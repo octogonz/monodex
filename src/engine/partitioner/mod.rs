@@ -56,7 +56,7 @@ mod types;
 
 pub use debug::PartitionDebug;
 pub use partition::partition_typescript;
-pub use scoring::{chunk_quality_score, ChunkQualityReport};
+pub use scoring::{ChunkQualityReport, chunk_quality_score};
 pub use types::{
     MIN_CHUNK_RATIO, PartitionConfig, PartitionedChunk, SMALL_CHUNK_CHARS, TARGET_CHARS,
 };

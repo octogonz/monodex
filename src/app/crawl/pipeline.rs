@@ -19,10 +19,7 @@ use crate::engine::{
 };
 
 /// Type alias for the embedding channel (reduces type complexity)
-type EmbedChannel = (
-    Sender<(Chunk, Vec<f32>)>,
-    Receiver<(Chunk, Vec<f32>)>,
-);
+type EmbedChannel = (Sender<(Chunk, Vec<f32>)>, Receiver<(Chunk, Vec<f32>)>);
 
 /// Run the embedding and upload pipeline with progress reporting
 /// Returns (touched_file_ids, failures) for the crawl

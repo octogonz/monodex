@@ -1,7 +1,6 @@
 //! Purpose: Partition-based code chunking for TypeScript/TSX files.
 //! Edit here when: Changing the public API of the partitioner module, or adding new submodules.
 //! Do not edit here for: Algorithm changes — edit split_search.rs, node_analysis.rs, or scoring.rs.
-
 //!
 //! ## Algorithm: Two Worlds Model
 //!

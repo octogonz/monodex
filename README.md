@@ -379,22 +379,59 @@ RUST_LOG=debug ./target/release/monodex crawl --catalog sparo --label main --com
 ```
 monodex/
 ├── src/
-│   ├── main.rs                    # CLI entry point
-│   └── engine/                    # Reusable indexing engine
-│       ├── mod.rs                 # Module exports
-│       ├── crawl_config.rs        # Crawl config loading, validation, and pattern matching
-│       ├── config.rs              # Legacy compatibility wrapper (delegates to crawl_config)
-│       ├── chunker.rs             # File chunking dispatcher
-│       ├── partitioner.rs         # AST-based TypeScript chunking
+│   ├── lib.rs                    # Crate root module exports
+│   ├── main.rs                   # CLI entry point and command dispatch
+│   ├── app/                      # Application layer (CLI-specific)
+│   │   ├── mod.rs                # Module exports
+│   │   ├── cli.rs                # Clap CLI definitions
+│   │   ├── config.rs             # App configuration loading
+│   │   ├── context.rs            # Default catalog/label persistence
+│   │   ├── util.rs               # Formatting and display utilities
+│   │   ├── commands/             # CLI command handlers
+│   │   │   ├── mod.rs            # Module exports
+│   │   │   ├── use_cmd.rs        # `use` command
+│   │   │   ├── crawl.rs          # `crawl` command
+│   │   │   ├── search.rs         # `search` command
+│   │   │   ├── view.rs           # `view` command
+│   │   │   ├── purge.rs          # `purge` command
+│   │   │   ├── dump_chunks.rs    # `dump-chunks` command
+│   │   │   └── audit_chunks.rs   # `audit-chunks` command
+│   │   └── crawl/                # Crawl pipeline implementation
+│   │       ├── mod.rs            # Module exports
+│   │       ├── types.rs          # Crawl-specific types
+│   │       └── pipeline.rs       # Embed/upload orchestration
+│   └── engine/                   # Reusable indexing engine
+│       ├── mod.rs                # Module exports
+│       ├── breadcrumb.rs         # Breadcrumb context generation
+│       ├── chunker.rs            # File chunking dispatcher
+│       ├── config.rs             # Engine configuration types
+│       ├── crawl_config.rs       # Crawl filtering rules
+│       ├── git_ops.rs            # Git tree enumeration and blob reading
+│       ├── identifier.rs         # Catalog/label identifier validation
 │       ├── markdown_partitioner.rs # Markdown heading-based chunking
-│       ├── git_ops.rs             # Git tree enumeration and blob reading
-│       ├── parallel_embedder.rs   # Parallel embedding with multiple ONNX sessions
-│       ├── package_lookup.rs      # Package name resolution (walk up to package.json)
-│       ├── uploader.rs            # Qdrant HTTP client
-│       └── util.rs                # Hash utilities for chunk IDs
-├── Cargo.toml                     # Dependencies
-├── DESIGN.md                      # Design documentation
-└── README.md
+│       ├── package_lookup.rs     # Package name resolution
+│       ├── parallel_embedder.rs  # Parallel embedding with ONNX sessions
+│       ├── system_info.rs        # Memory and CPU detection
+│       ├── util.rs               # Hash utilities for chunk IDs
+│       ├── partitioner/          # TypeScript/TSX AST-based chunking
+│       │   ├── mod.rs            # Module exports
+│       │   ├── types.rs          # Partitioner types and config
+│       │   ├── partition.rs      # Main entry point
+│       │   ├── split_search.rs   # Split-point search algorithm
+│       │   ├── node_analysis.rs  # AST node analysis helpers
+│       │   ├── scoring.rs        # Chunk quality scoring
+│       │   └── debug.rs          # Debug output types
+│       └── uploader/             # Qdrant HTTP client
+│           ├── mod.rs            # Module exports
+│           ├── client.rs         # HTTP client and connection
+│           ├── models.rs         # Request/response types
+│           ├── upload.rs         # Batch upload operations
+│           ├── file_ops.rs       # File-level operations
+│           ├── label_ops.rs      # Label metadata operations
+│           └── search.rs         # Query operations
+├── Cargo.toml                    # Dependencies
+├── DESIGN.md                     # Design documentation
+└── README.md                     # This file
 ```
 
 ### Chunking Strategy

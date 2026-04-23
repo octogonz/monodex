@@ -1,5 +1,7 @@
 # monodex Development Plan
 
+> **Note:** Many file paths in this document predate a recent refactor and may be incorrect. The current source layout is documented in `README.md` under "Architecture".
+
 ## Overview
 
 This plan implements label-based semantic indexing with incremental crawl. The work is organized into phases with clear dependencies and testable milestones.

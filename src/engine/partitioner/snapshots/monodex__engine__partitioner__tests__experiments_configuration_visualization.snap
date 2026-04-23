@@ -1,6 +1,5 @@
 ---
-source: src/engine/partitioner.rs
-assertion_line: 1882
+source: src/engine/partitioner/tests.rs
 expression: visualization
 ---
 -- [CHUNK 1] [70 lines] [2871 chars] --

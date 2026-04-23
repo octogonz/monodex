@@ -51,71 +51,15 @@ use super::breadcrumb::encode_path_component;
 use super::util::compute_hash;
 use tree_sitter::{Language, Node, Parser};
 
-/// Target chunk size in characters (same as runtime chunker's target_size)
-pub const TARGET_CHARS: usize = 6000;
+mod debug;
+mod types;
 
-/// Threshold for "small" chunks in characters (roughly 20 lines × 50 chars)
-pub const SMALL_CHUNK_CHARS: usize = 500;
+pub use debug::PartitionDebug;
+pub use types::{
+    MIN_CHUNK_RATIO, PartitionConfig, PartitionedChunk, SMALL_CHUNK_CHARS, TARGET_CHARS,
+};
 
-/// Minimum chunk size as ratio of target (20%)
-const MIN_CHUNK_RATIO: f64 = 0.20;
-
-/// Debug logging for partitioning decisions
-#[derive(Debug, Clone, Copy, Default)]
-pub struct PartitionDebug {
-    /// Enable verbose logging of split decisions
-    pub enabled: bool,
-}
-
-impl PartitionDebug {
-    pub fn log(&self, msg: &str) {
-        if self.enabled {
-            eprintln!("[DEBUG] {}", msg);
-        }
-    }
-
-    pub fn log_split_attempt(&self, start_line: usize, end_line: usize, chunk_size: usize) {
-        if self.enabled {
-            eprintln!(
-                "[DEBUG] === Splitting chunk lines {}-{} ({} chars) ===",
-                start_line, end_line, chunk_size
-            );
-        }
-    }
-
-    pub fn log_scope(&self, scope_type: &str, kind: &str, start_line: usize, end_line: usize) {
-        if self.enabled {
-            eprintln!(
-                "[DEBUG] {} scope '{}' at lines {}-{}",
-                scope_type, kind, start_line, end_line
-            );
-        }
-    }
-
-    pub fn log_candidates(&self, candidates: &[usize]) {
-        if self.enabled {
-            eprintln!("[DEBUG]   Candidates: {:?}", candidates);
-        }
-    }
-
-    pub fn log_split_decision(&self, result: &str, split_line: Option<usize>) {
-        if self.enabled {
-            match split_line {
-                Some(line) => eprintln!("[DEBUG]   => {} at line {}", result, line),
-                None => eprintln!("[DEBUG]   => {}", result),
-            }
-        }
-    }
-
-    pub fn log_meaningful_child(&self, kind: &str, start_line: usize, end_line: usize) {
-        if self.enabled {
-            eprintln!(
-                "[DEBUG]   Meaningful child: '{}' at lines {}-{}",
-                kind, start_line, end_line
-            );
-        }
-    }
-}
+use types::{ChunkRange, SplitResult};
 
 /// Check if a node is a split scope - direct children define split boundaries.
 fn is_split_scope(kind: &str) -> bool {
@@ -302,112 +246,6 @@ impl ChunkQualityReport {
             self.mean_chars
         )
     }
-}
-
-/// Configuration for partition chunking
-pub struct PartitionConfig {
-    /// Target chunk size in characters (text only, breadcrumb is extra)
-    pub target_size: usize,
-
-    /// File name for breadcrumb prefix
-    pub file_name: String,
-
-    /// Package name for breadcrumb (e.g., "@rushstack/node-core-library")
-    pub package_name: String,
-
-    /// Debug logging for partitioning decisions
-    pub debug: PartitionDebug,
-
-    /// When false, disable fallback line-based splitting. Oversized chunks that
-    /// cannot be split via AST will remain oversized. This is used by audit-chunks
-    /// to measure AST-only chunking quality.
-    pub allow_fallback: bool,
-}
-
-impl Default for PartitionConfig {
-    fn default() -> Self {
-        Self {
-            target_size: 6000,
-            file_name: "unknown.ts".to_string(),
-            package_name: "unknown".to_string(),
-            debug: PartitionDebug::default(),
-            allow_fallback: true,
-        }
-    }
-}
-
-/// A chunk of code with breadcrumb context
-#[derive(Debug, Clone)]
-pub struct PartitionedChunk {
-    /// Source URI (file path, issue reference, etc.)
-    pub source_uri: String,
-
-    /// Catalog name (for multi-source partitioning)
-    pub catalog: String,
-
-    /// Content hash (SHA256) for incremental sync
-    pub content_hash: String,
-
-    /// Breadcrumb path (e.g., "@rushstack/node-core-library:JsonFile.ts:JsonFile.load")
-    pub breadcrumb: String,
-
-    /// Source code text (including preceding comments)
-    pub text: String,
-
-    /// Starting line number (1-indexed)
-    pub start_line: usize,
-
-    /// Ending line number (inclusive)
-    pub end_line: usize,
-
-    /// Chunk type (function, class, method, etc.)
-    pub chunk_type: String,
-
-    /// Chunk kind (content, imports, changelog, config, fallback-split, degraded-ast-split)
-    pub chunk_kind: String,
-
-    /// Symbol name (if applicable)
-    pub symbol_name: Option<String>,
-
-    /// For split sections: which part this is (1-indexed)
-    pub split_part_ordinal: Option<usize>,
-
-    /// For split sections: total number of parts
-    pub split_part_count: Option<usize>,
-}
-
-/// A line range representing a chunk-in-progress
-#[derive(Debug, Clone)]
-struct ChunkRange {
-    start_line: usize,             // 1-indexed, inclusive
-    end_line: usize,               // 1-indexed, inclusive
-    from_fallback: bool,           // This chunk was created by a fallback split
-    from_degraded_ast_split: bool, // This chunk was created by a degraded AST split
-}
-
-/// Result of attempting to split a chunk.
-///
-/// The algorithm distinguishes three outcomes:
-/// 1. Good AST split (success) - semantically meaningful, respects min_chunk_size
-/// 2. Degraded AST split (quality failure) - semantically meaningful but poor geometry
-/// 3. Fallback split (algorithm failure) - no acceptable AST split found
-///
-/// Important: Fallback is NOT a heuristic choice. It is an explicit failure mode
-/// indicating that the AST-based partitioner could not find any semantic structure
-/// to use. It provides damage control for production but should trigger investigation.
-enum SplitResult {
-    /// Successful AST split: semantically meaningful with good chunk geometry
-    Split(usize),
-    /// Degraded AST split: semantically meaningful but poor chunk geometry (tiny chunks)
-    /// This is a quality failure, but still preferable to fallback in production.
-    /// Marked in output with `:[degraded-ast-split]` breadcrumb suffix.
-    DegradedSplit(usize),
-    /// Fallback split: no acceptable AST split found, using line-based recovery.
-    /// This is explicit failure of semantic partitioning, not a heuristic choice.
-    /// Marked in output with `:[fallback-split]` breadcrumb suffix.
-    Fallback(usize),
-    /// Cannot split this chunk any further
-    CannotSplit,
 }
 
 /// Find the best split point for an oversized chunk using scope-based approach.
@@ -1544,7 +1382,7 @@ export class Calculator {
 
     #[test]
     fn test_jsonfile_partition() {
-        let source = include_str!("../../test_artifacts/JsonFile.ts");
+        let source = include_str!("../../../test_artifacts/JsonFile.ts");
         let config = PartitionConfig {
             file_name: "JsonFile.ts".to_string(),
             package_name: "@rushstack/node-core-library".to_string(),
@@ -1588,7 +1426,7 @@ export function tiny(): number {
     fn test_small_file_should_not_split() {
         // A 12-line .d.ts file (242 chars) should NOT be split into 2 chunks
         // This is a regression test for the "imports always split" bug
-        let source = include_str!("../../test_artifacts/rollup.d.ts");
+        let source = include_str!("../../../test_artifacts/rollup.d.ts");
         let config = PartitionConfig {
             file_name: "rollup.d.ts".to_string(),
             package_name: "api-extractor-scenarios".to_string(),
@@ -1609,7 +1447,7 @@ export function tiny(): number {
     fn test_tunneled_browser_connection() {
         // A 231-line file with nested functions that produces tiny chunks
         // This is a regression test for the "tiny chunks for variables" bug
-        let source = include_str!("../../test_artifacts/TunneledBrowserConnection.ts");
+        let source = include_str!("../../../test_artifacts/TunneledBrowserConnection.ts");
         let config = PartitionConfig {
             file_name: "TunneledBrowserConnection.ts".to_string(),
             package_name: "@rushstack/playwright-browser-tunnel".to_string(),
@@ -1682,7 +1520,7 @@ export function tiny(): number {
     fn test_colorize_class_with_enum() {
         // A 289-line file (8031 chars) with an enum and a class with many methods
         // This tests the ability to split a class into method-level chunks
-        let source = include_str!("../../test_artifacts/Colorize.ts");
+        let source = include_str!("../../../test_artifacts/Colorize.ts");
         let config = PartitionConfig {
             file_name: "Colorize.ts".to_string(),
             package_name: "@rushstack/terminal".to_string(),
@@ -1711,7 +1549,7 @@ export function tiny(): number {
     fn test_ipackagejson_interface_file() {
         // An interface-only file with large interfaces
         // Tests that interface boundaries are used as split points
-        let source = include_str!("../../test_artifacts/IPackageJson.ts");
+        let source = include_str!("../../../test_artifacts/IPackageJson.ts");
         let config = PartitionConfig {
             file_name: "IPackageJson.ts".to_string(),
             package_name: "@rushstack/node-core-library".to_string(),
@@ -1746,7 +1584,7 @@ export function tiny(): number {
         // This tests the "single giant construct" problem where we have very few
         // meaningful split points because the file is dominated by large object/class
         // literals that don't have natural internal split boundaries.
-        let source = include_str!("../../test_artifacts/EnvironmentConfiguration.ts");
+        let source = include_str!("../../../test_artifacts/EnvironmentConfiguration.ts");
         let config = PartitionConfig {
             file_name: "EnvironmentConfiguration.ts".to_string(),
             package_name: "rush-lib".to_string(),
@@ -1781,7 +1619,7 @@ export function tiny(): number {
         // A minimal test case for nested functions inside a generator.
         // The nested functions (advance, parseA, parseB, parseC) should be
         // recognized as meaningful split points.
-        let source = include_str!("../../test_artifacts/NestedFunctions.ts");
+        let source = include_str!("../../../test_artifacts/NestedFunctions.ts");
         let config = PartitionConfig {
             file_name: "NestedFunctions.ts".to_string(),
             package_name: "test".to_string(),
@@ -1815,7 +1653,7 @@ export function tiny(): number {
         // - parseRenamedOrCopiedEntry
         // - parseUnmergedEntry
         // These should be recognized as meaningful split points.
-        let source = include_str!("../../test_artifacts/GitStatusParser.ts");
+        let source = include_str!("../../../test_artifacts/GitStatusParser.ts");
         let config = PartitionConfig {
             file_name: "GitStatusParser.ts".to_string(),
             package_name: "rush-lib".to_string(),
@@ -1925,7 +1763,7 @@ export function* parseGitStatus() {
         // The waitForChangeAsync method contains several nested functions:
         // - onError, addWatcher, innerListener, changeListener
         // These should be recognized as meaningful split points.
-        let source = include_str!("../../test_artifacts/ProjectWatcher.ts");
+        let source = include_str!("../../../test_artifacts/ProjectWatcher.ts");
         let config = PartitionConfig {
             file_name: "ProjectWatcher.ts".to_string(),
             package_name: "rush-lib".to_string(),
@@ -1956,7 +1794,7 @@ export function* parseGitStatus() {
         // A TSX file with React hooks and JSX elements.
         // The file should use the TSX grammar (not TypeScript) and
         // split at JSX element boundaries.
-        let source = include_str!("../../test_artifacts/ParameterForm.tsx");
+        let source = include_str!("../../../test_artifacts/ParameterForm.tsx");
         let config = PartitionConfig {
             file_name: "ParameterForm.tsx".to_string(),
             package_name: "@rushstack/rush-vscode-command-webview".to_string(),
@@ -1992,7 +1830,7 @@ export function* parseGitStatus() {
         //
         // Before the fix: oversized interface chunk
         // After the fix: properly split at property boundaries
-        let source = include_str!("../../test_artifacts/ExperimentsConfiguration.ts");
+        let source = include_str!("../../../test_artifacts/ExperimentsConfiguration.ts");
         let config = PartitionConfig {
             file_name: "ExperimentsConfiguration.ts".to_string(),
             package_name: "@microsoft/rush-lib".to_string(),
@@ -2034,7 +1872,7 @@ export function* parseGitStatus() {
         //
         // Before the fix: oversized interface chunks
         // After the fix: properly split at property boundaries
-        let source = include_str!("../../test_artifacts/IYamlApiFile.ts");
+        let source = include_str!("../../../test_artifacts/IYamlApiFile.ts");
         let config = PartitionConfig {
             file_name: "IYamlApiFile.ts".to_string(),
             package_name: "@microsoft/api-documenter".to_string(),
@@ -2077,7 +1915,7 @@ export function* parseGitStatus() {
         //
         // Before the fix: fallback splits in large method body
         // After the fix: properly split at callback registration boundaries
-        let source = include_str!("../../test_artifacts/ModuleMinifierPlugin.ts");
+        let source = include_str!("../../../test_artifacts/ModuleMinifierPlugin.ts");
         let config = PartitionConfig {
             file_name: "ModuleMinifierPlugin.ts".to_string(),
             package_name: "@rushstack/webpack5-module-minifier-plugin".to_string(),
@@ -2114,7 +1952,7 @@ export function* parseGitStatus() {
         //
         // Before the fix: fallback splits in large component function
         // After the fix: properly split at hook/expression boundaries
-        let source = include_str!("../../test_artifacts/ParameterForm.tsx");
+        let source = include_str!("../../../test_artifacts/ParameterForm.tsx");
         let config = PartitionConfig {
             file_name: "ParameterForm.tsx".to_string(),
             package_name: "@rushstack/rush-vscode-command-webview".to_string(),
@@ -2152,7 +1990,7 @@ export function* parseGitStatus() {
         //
         // Before the fix: fallback splits in large function body
         // After the fix: properly split at logical boundaries
-        let source = include_str!("../../test_artifacts/generate-patched-file.ts");
+        let source = include_str!("../../../test_artifacts/generate-patched-file.ts");
         let config = PartitionConfig {
             file_name: "generate-patched-file.ts".to_string(),
             package_name: "@rushstack/eslint-patch".to_string(),

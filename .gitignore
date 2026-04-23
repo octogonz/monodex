@@ -20,3 +20,6 @@ Thumbs.db
 # Test outputs
 /test-output/
 .monodex-warnings-*.json
+
+# Refactoring plan - local only, not for git
+REFACTORING_PLAN.md

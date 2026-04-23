@@ -5,7 +5,11 @@
 use crate::app::{Config, load_default_context, save_default_context};
 use crate::engine::identifier::{validate_catalog, validate_label};
 
-pub fn run_use(catalog: Option<&str>, label: Option<String>, config: &Config) -> anyhow::Result<()> {
+pub fn run_use(
+    catalog: Option<&str>,
+    label: Option<String>,
+    config: &Config,
+) -> anyhow::Result<()> {
     match (catalog, label) {
         (None, None) => {
             // Show current context

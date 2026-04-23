@@ -1,0 +1,92 @@
+---
+source: src/engine/partitioner/tests.rs
+expression: summary
+---
+=== QUALITY SCORE ===
+Score: 80.0%
+Total chunks: 6
+Small chunks (<500 chars): 0
+Chars: 1248-5807 (mean 3960)
+
+=== CHUNK 1 ===
+Breadcrumb: %40rushstack/webpack5-module-minifier-plugin:ModuleMinifierPlugin.ts
+Type: code
+Kind: content
+Symbol: None
+Lines: 1-169
+Size: 5492 chars
+Text preview (5 lines):
+// Copyright (c) Microsoft Corporation. All rights reserved. Licensed under the MIT license.
+// See LICENSE in the project root for license information.
+
+import { createHash } from 'node:crypto';
+
+
+=== CHUNK 2 ===
+Breadcrumb: %40rushstack/webpack5-module-minifier-plugin:ModuleMinifierPlugin.ts
+Type: code
+Kind: content
+Symbol: None
+Lines: 170-209
+Size: 1316 chars
+Text preview (5 lines):
+
+/**
+ * Webpack plugin that minifies code on a per-module basis rather than per-asset. The actual minification is handled by the input `minifier` object.
+ * @public
+ */
+
+=== CHUNK 3 ===
+Breadcrumb: %40rushstack/webpack5-module-minifier-plugin:ModuleMinifierPlugin.ts:ModuleMinifierPlugin
+Type: class
+Kind: content
+Symbol: Some("ModuleMinifierPlugin")
+Lines: 210-349
+Size: 5896 chars
+Text preview (5 lines):
+
+  public apply(compiler: Compiler): void {
+    for (const enhancer of this._enhancers) {
+      enhancer.apply(compiler);
+    }
+
+=== CHUNK 4 ===
+Breadcrumb: %40rushstack/webpack5-module-minifier-plugin:ModuleMinifierPlugin.ts
+Type: code
+Kind: content
+Symbol: None
+Lines: 350-400
+Size: 2125 chars
+Text preview (5 lines):
+      javascriptHooks.renderModulePackage.tap(
+        TAP_AFTER,
+        /**
+         * Extracts the code for the module and sends it to be minified.
+         */
+
+=== CHUNK 5 ===
+Breadcrumb: %40rushstack/webpack5-module-minifier-plugin:ModuleMinifierPlugin.ts
+Type: code
+Kind: content
+Symbol: None
+Lines: 401-489
+Size: 4051 chars
+Text preview (5 lines):
+          metadata.hashByChunk.set(chunkRenderContext.chunk, hash);
+          if (!submittedModules.has(hash)) {
+            submittedModules.add(hash);
+
+            ++pendingMinificationRequests;
+
+=== CHUNK 6 ===
+Breadcrumb: %40rushstack/webpack5-module-minifier-plugin:ModuleMinifierPlugin.ts:ModuleMinifierPlugin
+Type: class
+Kind: content
+Symbol: Some("ModuleMinifierPlugin")
+Lines: 490-630
+Size: 5327 chars
+Text preview (5 lines):
+
+      // The optimizeChunkModules hook is the last async hook that occurs before chunk rendering
+      compilation.hooks.optimizeChunkModules.tapPromise(PLUGIN_NAME, async () => {
+        minifierConnection = await minifier.connectAsync();

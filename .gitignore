@@ -17,6 +17,10 @@ Thumbs.db
 # Build logs
 *.log
 
+# Temporary dev notes
+/jobsheets/
+
 # Test outputs
 /test-output/
 .monodex-warnings-*.json
+

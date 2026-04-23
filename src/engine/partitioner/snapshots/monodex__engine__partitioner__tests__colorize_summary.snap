@@ -1,0 +1,51 @@
+---
+source: src/engine/partitioner/tests.rs
+expression: summary
+---
+=== QUALITY SCORE ===
+Score: 86.1%
+Total chunks: 3
+Small chunks (<500 chars): 0
+Chars: 1467-3324 (mean 2676)
+
+=== CHUNK 1 ===
+Breadcrumb: %40rushstack/terminal:Colorize.ts
+Type: code
+Kind: content
+Symbol: None
+Lines: 1-55
+Size: 1500 chars
+Text preview (5 lines):
+// Copyright (c) Microsoft Corporation. All rights reserved. Licensed under the MIT license.
+// See LICENSE in the project root for license information.
+
+import { AnsiEscape } from './AnsiEscape';
+
+
+=== CHUNK 2 ===
+Breadcrumb: %40rushstack/terminal:Colorize.ts
+Type: code
+Kind: content
+Symbol: None
+Lines: 56-170
+Size: 3270 chars
+Text preview (5 lines):
+
+/**
+ * The static functions on this class are used to produce colored text
+ * for use with a terminal that supports ANSI escape codes.
+ *
+
+=== CHUNK 3 ===
+Breadcrumb: %40rushstack/terminal:Colorize.ts:Colorize
+Type: class
+Kind: content
+Symbol: Some("Colorize")
+Lines: 171-289
+Size: 3366 chars
+Text preview (5 lines):
+
+  public static yellowBackground(text: string): string {
+    return Colorize._wrapTextInAnsiEscapeCodes(
+      SgrParameterAttribute.YellowBackground,
+      SgrParameterAttribute.DefaultBackground,

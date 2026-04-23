@@ -1,0 +1,107 @@
+---
+source: src/engine/partitioner/tests.rs
+expression: summary
+---
+=== QUALITY SCORE ===
+Score: 88.9%
+Total chunks: 7
+Small chunks (<500 chars): 0
+Chars: 2860-5357 (mean 4160)
+
+=== CHUNK 1 ===
+Breadcrumb: rush-lib:EnvironmentConfiguration.ts
+Type: code
+Kind: content
+Symbol: None
+Lines: 1-128
+Size: 5393 chars
+Text preview (5 lines):
+// Copyright (c) Microsoft Corporation. All rights reserved. Licensed under the MIT license.
+// See LICENSE in the project root for license information.
+
+import * as path from 'node:path';
+
+
+=== CHUNK 2 ===
+Breadcrumb: rush-lib:EnvironmentConfiguration.ts
+Type: variable
+Kind: content
+Symbol: None
+Lines: 129-249
+Size: 5278 chars
+Text preview (5 lines):
+
+  /**
+   * Setting this environment variable overrides the value of `buildCacheEnabled` in the `build-cache.json`
+   * configuration file.
+   *
+
+=== CHUNK 3 ===
+Breadcrumb: rush-lib:EnvironmentConfiguration.ts
+Type: code
+Kind: content
+Symbol: None
+Lines: 250-358
+Size: 3957 chars
+Text preview (5 lines):
+
+/**
+ * Provides Rush-specific environment variable data. All Rush environment variables must start with "RUSH_". This class
+ * is designed to be used by RushConfiguration.
+ * @beta
+
+=== CHUNK 4 ===
+Breadcrumb: rush-lib:EnvironmentConfiguration.ts:EnvironmentConfiguration
+Type: class
+Kind: content
+Symbol: Some("EnvironmentConfiguration")
+Lines: 359-472
+Size: 4519 chars
+Text preview (5 lines):
+
+  /**
+   * Overrides the location of the `~/.rush` global folder where Rush stores temporary files.
+   * See {@link EnvironmentVariableNames.RUSH_GLOBAL_FOLDER}
+   */
+
+=== CHUNK 5 ===
+Breadcrumb: rush-lib:EnvironmentConfiguration.ts:EnvironmentConfiguration
+Type: class
+Kind: content
+Symbol: Some("EnvironmentConfiguration")
+Lines: 473-568
+Size: 4077 chars
+Text preview (5 lines):
+
+  /**
+   * Reads and validates environment variables. If any are invalid, this function will throw.
+   */
+  public static validate(options: IEnvironmentConfigurationInitializeOptions = {}): void {
+
+=== CHUNK 6 ===
+Breadcrumb: rush-lib:EnvironmentConfiguration.ts:validate
+Type: function
+Kind: content
+Symbol: Some("validate")
+Lines: 569-657
+Size: 3313 chars
+Text preview (5 lines):
+
+          case EnvironmentVariableNames.RUSH_BUILD_CACHE_OVERRIDE_JSON: {
+            EnvironmentConfiguration._buildCacheOverrideJson = value;
+            break;
+          }
+
+=== CHUNK 7 ===
+Breadcrumb: rush-lib:EnvironmentConfiguration.ts:EnvironmentConfiguration
+Type: class
+Kind: content
+Symbol: Some("EnvironmentConfiguration")
+Lines: 658-735
+Size: 2921 chars
+Text preview (5 lines):
+
+  /**
+   * Resets EnvironmentConfiguration into an un-initialized state.
+   */
+  public static reset(): void {

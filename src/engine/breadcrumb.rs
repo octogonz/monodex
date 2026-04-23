@@ -62,7 +62,7 @@ pub fn encode_path_component(s: &str) -> String {
 /// use monodex::engine::breadcrumb::slugify_heading;
 /// use github_slugger::Slugger;
 ///
-/// let mut slugger = Slugger::new();
+/// let mut slugger = Slugger::default();
 /// assert_eq!(slugify_heading(&mut slugger, "API: Configuration"), "api-configuration");
 /// assert_eq!(slugify_heading(&mut slugger, "Examples"), "examples");
 /// assert_eq!(slugify_heading(&mut slugger, "Examples"), "examples-1");

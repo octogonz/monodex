@@ -3,7 +3,7 @@
 //! This module contains general-purpose indexing logic that works
 //! for any Rush monorepo. It is designed to be reusable across projects.
 //!
-//! Repository-specific configuration lives in `../config.rs`
+//! Repository-specific configuration lives in `src/app/config.rs`
 
 pub mod breadcrumb;
 pub mod chunker;

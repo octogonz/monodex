@@ -1,0 +1,9 @@
+---
+source: src/engine/partitioner/tests.rs
+expression: visualization
+---
+-- [CHUNK 1] [4 lines] [68 chars] --
+// Small test file
+export function tiny(): number {
+    return 42;
+}

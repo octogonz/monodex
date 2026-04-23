@@ -1,0 +1,93 @@
+---
+source: src/engine/partitioner/tests.rs
+expression: summary
+---
+=== QUALITY SCORE ===
+Score: 88.3%
+Total chunks: 6
+Small chunks (<500 chars): 0
+Chars: 3051-4046 (mean 3453)
+
+=== CHUNK 1 ===
+Breadcrumb: %40rushstack/node-core-library:JsonFile.ts
+Type: code
+Kind: content
+Symbol: None
+Lines: 1-101
+Size: 4088 chars
+Text preview (5 lines):
+// Copyright (c) Microsoft Corporation. All rights reserved. Licensed under the MIT license.
+// See LICENSE in the project root for license information.
+
+import * as os from 'node:os';
+
+
+=== CHUNK 2 ===
+Breadcrumb: %40rushstack/node-core-library:JsonFile.ts
+Type: code
+Kind: content
+Symbol: None
+Lines: 102-200
+Size: 3557 chars
+Text preview (5 lines):
+
+/**
+ * Options for {@link JsonFile.parseString}, {@link JsonFile.load}, and {@link JsonFile.loadAsync}.
+ *
+ * @public
+
+=== CHUNK 3 ===
+Breadcrumb: %40rushstack/node-core-library:JsonFile.ts
+Type: code
+Kind: content
+Symbol: None
+Lines: 201-305
+Size: 3247 chars
+Text preview (5 lines):
+
+/**
+ * Utilities for reading/writing JSON files.
+ * @public
+ */
+
+=== CHUNK 4 ===
+Breadcrumb: %40rushstack/node-core-library:JsonFile.ts:JsonFile
+Type: class
+Kind: content
+Symbol: Some("JsonFile")
+Lines: 306-395
+Size: 3102 chars
+Text preview (5 lines):
+
+  /**
+   * An async version of {@link JsonFile.loadAndValidateWithCallback}.
+   */
+  public static async loadAndValidateWithCallbackAsync(
+
+=== CHUNK 5 ===
+Breadcrumb: %40rushstack/node-core-library:JsonFile.ts:JsonFile
+Type: class
+Kind: content
+Symbol: Some("JsonFile")
+Lines: 396-507
+Size: 3725 chars
+Text preview (5 lines):
+
+  /**
+   * Saves the file to disk.  Returns false if nothing was written due to options.onlyIfChanged.
+   * @param jsonObject - the object to be saved
+   * @param jsonFilename - the file path to write
+
+=== CHUNK 6 ===
+Breadcrumb: %40rushstack/node-core-library:JsonFile.ts:JsonFile
+Type: class
+Kind: content
+Symbol: Some("JsonFile")
+Lines: 508-607
+Size: 3277 chars
+Text preview (5 lines):
+
+  /**
+   * Used to validate a data structure before writing.  Reports an error if there
+   * are any undefined members.
+   */

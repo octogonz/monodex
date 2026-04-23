@@ -1,0 +1,23 @@
+---
+source: src/engine/partitioner/tests.rs
+expression: summary
+---
+=== QUALITY SCORE ===
+Score: 100.0%
+Total chunks: 1
+Small chunks (<500 chars): 1
+Chars: 424-424 (mean 424)
+
+=== CHUNK 1 ===
+Breadcrumb: %40math/package:Calculator.ts
+Type: code
+Kind: content
+Symbol: None
+Lines: 1-26
+Size: 453 chars
+Text preview (5 lines):
+
+/**
+ * A simple calculator class.
+ */
+export class Calculator {

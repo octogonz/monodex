@@ -1,11 +1,6 @@
 //! HTTP client for Qdrant API operations.
 //!
 //! Edit here when: Changing client configuration, timeout settings, or low-level HTTP handling.
-//! Do not edit here for: Upload logic (upload.rs), file operations (file_ops.rs), label operations (label_ops.rs).
-
-//! HTTP client for Qdrant API operations.
-//!
-//! Edit here when: Changing client configuration, timeout settings, or low-level HTTP handling.
 //! Do not edit here for: Upload logic (upload.rs), file operations (file_ops.rs), label operations (label_ops.rs), search (search.rs).
 
 use anyhow::{Result, anyhow};
@@ -13,7 +8,7 @@ use reqwest::blocking::Client;
 
 use super::models::{UpsertResponse, is_payload_limit_error};
 
-pub const DEFAULT_QDRANT_URL: &str = "http://localhost:6333";
+const DEFAULT_QDRANT_URL: &str = "http://localhost:6333";
 
 /// Qdrant client for uploading embeddings
 pub struct QdrantUploader {

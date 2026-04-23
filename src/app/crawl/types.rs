@@ -1,6 +1,7 @@
 //! Crawl-related types shared across command handlers.
 //!
 //! Edit here when: Adding new crawl source types or failure tracking.
+//! Do not edit here for: Pipeline logic (see `pipeline.rs`).
 
 /// Source type for crawling
 /// (Prepared for future refactoring to further unify crawl entry points)

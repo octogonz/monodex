@@ -1,6 +1,7 @@
 //! Handler for the `dump-chunks` command.
 //!
 //! Edit here when: Modifying chunk visualization or quality reporting.
+//! Do not edit here for: Chunking algorithm (see `engine/partitioner/`).
 
 use std::path::PathBuf;
 

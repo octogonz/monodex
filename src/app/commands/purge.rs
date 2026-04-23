@@ -1,6 +1,7 @@
 //! Handler for the `purge` command.
 //!
 //! Edit here when: Modifying purge behavior (delete catalog or collection).
+//! Do not edit here for: Qdrant delete operations (see `engine/uploader/file_ops.rs`).
 
 use crate::app::Config;
 use crate::engine::uploader::QdrantUploader;

@@ -12,7 +12,7 @@ pub const TARGET_CHARS: usize = 6000;
 pub const SMALL_CHUNK_CHARS: usize = 500;
 
 /// Minimum chunk size as ratio of target (20%)
-pub const MIN_CHUNK_RATIO: f64 = 0.20;
+pub(super) const MIN_CHUNK_RATIO: f64 = 0.20;
 
 /// Configuration for partition chunking
 pub struct PartitionConfig {

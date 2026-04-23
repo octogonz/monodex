@@ -17,7 +17,7 @@ pub fn is_payload_limit_error(body: &str) -> bool {
 /// Custom deserializer for active_label_ids that handles both formats:
 /// - Normal array: `["label1", "label2"]`
 /// - Qdrant values wrapper: `{"values": ["label1", "label2"]}`
-pub fn deserialize_label_ids<'de, D>(deserializer: D) -> Result<Vec<String>, D::Error>
+pub(super) fn deserialize_label_ids<'de, D>(deserializer: D) -> Result<Vec<String>, D::Error>
 where
     D: serde::Deserializer<'de>,
 {
@@ -41,36 +41,36 @@ where
 
 /// Qdrant filter for queries
 #[derive(Debug, Serialize)]
-pub struct Filter {
+pub(super) struct Filter {
     pub must: Vec<Condition>,
 }
 
 #[derive(Debug, Serialize)]
-pub struct Condition {
+pub(super) struct Condition {
     pub key: String,
     pub r#match: MatchValue,
 }
 
 #[derive(Debug, Serialize)]
-pub struct MatchValue {
+pub(super) struct MatchValue {
     pub value: String,
 }
 
 /// Request body for filter-based operations (delete, etc.)
 #[derive(Debug, Serialize)]
-pub struct FilterRequest {
+pub(super) struct FilterRequest {
     pub filter: Filter,
 }
 
 /// Request body for Qdrant upsert operation
 #[derive(Debug, Serialize)]
-pub struct UpsertRequest {
+pub(super) struct UpsertRequest {
     pub points: Vec<Point>,
 }
 
 /// A single point in Qdrant
 #[derive(Debug, Serialize)]
-pub struct Point {
+pub(super) struct Point {
     pub id: String, // Random UUID
     pub vector: Vec<f32>,
     pub payload: PointPayload,
@@ -209,26 +209,26 @@ pub struct FileSyncInfo {
 
 /// Response from Qdrant upsert
 #[derive(Debug, Deserialize)]
-pub struct UpsertResponse {
+pub(super) struct UpsertResponse {
     pub result: UpsertResult,
     pub status: String,
 }
 
 #[derive(Debug, Deserialize)]
-pub struct UpsertResult {
+pub(super) struct UpsertResult {
     pub operation_id: u64,
 }
 
 /// Response from scroll (list points)
 #[derive(Debug, Deserialize)]
-pub struct ScrollResponse {
+pub(super) struct ScrollResponse {
     pub result: ScrollResult,
     #[allow(dead_code)]
     pub status: String,
 }
 
 #[derive(Debug, Deserialize)]
-pub struct ScrollResult {
+pub(super) struct ScrollResult {
     pub points: Vec<ScrollPoint>,
     #[serde(default)]
     pub next_page_offset: Option<QdrantId>,
@@ -236,7 +236,7 @@ pub struct ScrollResult {
 
 /// Scroll point from Qdrant
 #[derive(Debug, Deserialize)]
-pub struct ScrollPoint {
+pub(super) struct ScrollPoint {
     #[allow(dead_code)]
     pub id: QdrantId,
     pub payload: PointPayload,
@@ -252,21 +252,21 @@ pub enum QdrantId {
 
 /// Response from delete
 #[derive(Debug, Deserialize)]
-pub struct DeleteResponse {
+pub(super) struct DeleteResponse {
     pub result: DeleteResult,
     #[allow(dead_code)]
     pub status: String,
 }
 
 #[derive(Debug, Deserialize)]
-pub struct DeleteResult {
+pub(super) struct DeleteResult {
     pub operation_id: u64,
 }
 
 /// Response from Qdrant search
 #[derive(Debug, Deserialize)]
 #[allow(dead_code)]
-pub struct SearchResponse {
+pub(super) struct SearchResponse {
     pub result: Vec<SearchResult>,
     pub status: String,
 }

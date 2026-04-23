@@ -1,6 +1,7 @@
 //! Handler for the `search` command.
 //!
 //! Edit here when: Modifying search output or result formatting.
+//! Do not edit here for: Qdrant search queries (see `engine/uploader/search.rs`).
 
 use crate::app::{Config, resolve_label_context, sanitize_for_terminal};
 use crate::engine::{ParallelEmbedder, uploader::QdrantUploader};

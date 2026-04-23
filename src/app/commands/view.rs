@@ -1,6 +1,7 @@
 //! Handler for the `view` command.
 //!
 //! Edit here when: Modifying view output or chunk selector parsing.
+//! Do not edit here for: Chunk retrieval (see `engine/uploader/search.rs`).
 
 use std::collections::HashSet;
 

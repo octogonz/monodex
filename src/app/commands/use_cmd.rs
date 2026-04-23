@@ -1,6 +1,7 @@
 //! Handler for the `use` command.
 //!
 //! Edit here when: Modifying how default context is set or displayed.
+//! Do not edit here for: Context persistence (see `../context.rs`).
 
 use crate::app::{Config, load_default_context, save_default_context};
 use crate::engine::identifier::{validate_catalog, validate_label};

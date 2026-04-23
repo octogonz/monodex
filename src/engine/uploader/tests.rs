@@ -1,4 +1,7 @@
-//! Tests for Qdrant uploader operations.
+//! Test suite for the uploader module.
+//!
+//! Edit here when: Adding or modifying uploader tests.
+//! Do not edit here for: Production code changes; edit the relevant submodule (`client.rs`, `upload.rs`, `file_ops.rs`, `label_ops.rs`, `search.rs`, or `models.rs`).
 
 use super::client::QdrantUploader;
 use super::models::{LabelMetadata, Point, PointPayload, is_payload_limit_error};

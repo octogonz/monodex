@@ -1,6 +1,7 @@
 //! Handler for the `crawl` command.
 //!
 //! Edit here when: Modifying crawl entry points or label creation.
+//! Do not edit here for: Embed/upload pipeline (see `../crawl/pipeline.rs`), crawl types (see `../crawl/types.rs`).
 
 use anyhow::Result;
 use std::collections::HashSet;

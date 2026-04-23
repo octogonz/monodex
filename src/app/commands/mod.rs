@@ -1,6 +1,7 @@
 //! CLI command handlers.
 //!
 //! Edit here when: Adding a new command or modifying command dispatch.
+//! Do not edit here for: CLI argument definitions (see `../cli.rs`).
 
 pub mod audit_chunks;
 pub mod crawl;

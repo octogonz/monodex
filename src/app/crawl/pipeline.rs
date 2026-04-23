@@ -1,6 +1,7 @@
 //! Embed and upload pipeline for crawl processing.
 //!
 //! Edit here when: Modifying how chunks are embedded and uploaded.
+//! Do not edit here for: Qdrant upload operations (see `engine/uploader/upload.rs`).
 
 use anyhow::Result;
 use crossbeam_channel::{Receiver, Sender, unbounded};

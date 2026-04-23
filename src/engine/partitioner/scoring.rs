@@ -5,13 +5,6 @@
 
 use super::types::{PartitionedChunk, SMALL_CHUNK_CHARS, TARGET_CHARS};
 
-/// Compute quality score for chunking results (0-100%, higher is better).
-///
-/// The score combines two factors:
-/// 1. Count badness: How many more chunks than ideal (0 if at ideal, 1 if all 1-line chunks)
-/// 2. Micro-chunk badness: How small the chunks are relative to ideal (0 if all at max size)
-///
-/// Final score = 100 × (1 - count_badness) × (1 - micro_badness)³
 pub fn chunk_quality_score(chunks: &[PartitionedChunk], file_chars: usize) -> f64 {
     if chunks.is_empty() || file_chars == 0 {
         return 100.0;

@@ -1,6 +1,7 @@
 //! Handler for the `audit-chunks` command.
 //!
 //! Edit here when: Modifying chunk quality auditing.
+//! Do not edit here for: Chunking algorithm (see `engine/partitioner/`).
 
 use anyhow::Result;
 use std::path::PathBuf;

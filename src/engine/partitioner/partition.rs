@@ -1,4 +1,7 @@
-//! Main partition entry point for TypeScript/TSX files.
+//! Orchestrator for TypeScript/TSX partitioning.
+//!
+//! Edit here when: Modifying the top-level partition flow, parser setup, or chunk finalization.
+//! Do not edit here for: Split-point search (see `split_search.rs`), AST node analysis (see `node_analysis.rs`), chunk types (see `types.rs`).
 
 use crate::engine::breadcrumb::encode_path_component;
 use crate::engine::util::compute_hash;

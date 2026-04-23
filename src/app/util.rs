@@ -1,8 +1,8 @@
 //! App-wide utility functions for formatting and display.
 //!
-//! Purpose: Shared helpers for formatting, timestamps, and terminal output.
 //! Edit here when: Adding formatting helpers, timestamp utilities,
 //! or terminal output functions.
+//! Do not edit here for: Engine-wide utilities (see `engine/util.rs`).
 
 /// Get current timestamp for logging (HH:MM:SS format)
 pub fn chrono_timestamp() -> String {

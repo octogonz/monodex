@@ -13,3 +13,4 @@ pub mod view;
 // Re-export command entry points
 pub use search::run_search;
 pub use use_cmd::run_use;
+pub use view::run_view;

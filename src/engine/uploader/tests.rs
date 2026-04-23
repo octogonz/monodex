@@ -1,7 +1,7 @@
 //! Tests for Qdrant uploader operations.
 
 use super::client::QdrantUploader;
-use super::models::{is_payload_limit_error, LabelMetadata, Point, PointPayload};
+use super::models::{LabelMetadata, Point, PointPayload, is_payload_limit_error};
 use crate::engine::Chunk;
 
 #[test]

@@ -3,7 +3,7 @@
 //! Edit here when: Changing batch upload logic, point building, or size estimation.
 //! Do not edit here for: File operations (file_ops.rs), label operations (label_ops.rs), search (search.rs).
 
-use anyhow::{anyhow, Result};
+use anyhow::{Result, anyhow};
 
 use super::client::QdrantUploader;
 use super::models::{Point, PointPayload, UpsertRequest};

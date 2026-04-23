@@ -3,13 +3,13 @@
 //! Edit here when: Changing file deletion, file sync info, or sentinel operations.
 //! Do not edit here for: Upload logic (upload.rs), label operations (label_ops.rs), search (search.rs).
 
-use anyhow::{anyhow, Result};
+use anyhow::{Result, anyhow};
 use serde::{Deserialize, Serialize};
 
 use super::client::QdrantUploader;
 use super::models::{
-    Condition, Filter, FilterRequest, MatchValue, PointResult, QdrantId, ScrollResponse,
-    FileSyncInfo,
+    Condition, FileSyncInfo, Filter, FilterRequest, MatchValue, PointResult, QdrantId,
+    ScrollResponse,
 };
 
 impl QdrantUploader {

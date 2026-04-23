@@ -3,7 +3,7 @@
 //! Edit here when: Changing label metadata, label membership, or label reassignment.
 //! Do not edit here for: Upload logic (upload.rs), file operations (file_ops.rs), search (search.rs).
 
-use anyhow::{anyhow, Result};
+use anyhow::{Result, anyhow};
 use serde::{Deserialize, Serialize};
 
 use super::client::QdrantUploader;

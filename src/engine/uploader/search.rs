@@ -3,7 +3,7 @@
 //! Edit here when: Changing search queries, result formatting, or point retrieval.
 //! Do not edit here for: Upload logic (upload.rs), file operations (file_ops.rs), label operations (label_ops.rs).
 
-use anyhow::{anyhow, Result};
+use anyhow::{Result, anyhow};
 use serde::{Deserialize, Serialize};
 
 use super::client::QdrantUploader;

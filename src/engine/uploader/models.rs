@@ -3,7 +3,7 @@
 //! Edit here when: Adding or modifying Qdrant wire types, payload schemas, or serialization logic.
 //! Do not edit here for: HTTP client logic (client.rs), upload operations (upload.rs).
 
-use anyhow::{anyhow, Result};
+use anyhow::{Result, anyhow};
 use serde::{Deserialize, Serialize};
 
 use crate::engine::identifier::{LabelId, validate_catalog};

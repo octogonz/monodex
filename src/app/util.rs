@@ -5,7 +5,6 @@
 //! Do not edit here for: Engine-wide utilities (see `engine/util.rs`).
 
 use std::collections::HashSet;
-use std::path::PathBuf;
 
 /// Get current timestamp for logging (HH:MM:SS format)
 pub fn chrono_timestamp() -> String {
@@ -61,11 +60,9 @@ pub fn sanitize_for_terminal(s: &str) -> String {
 // ============================================================================
 
 /// Get the path to the warning state file for a catalog.
-/// Path: ~/.config/monodex/warnings-<catalog>.json
-pub fn get_warning_state_path(catalog_name: &str) -> PathBuf {
-    PathBuf::from(
-        shellexpand::tilde(&format!("~/.config/monodex/warnings-{}.json", catalog_name)).as_ref(),
-    )
+/// Path: <tool_home>/warnings-<catalog>.json
+pub fn get_warning_state_path(catalog_name: &str) -> std::path::PathBuf {
+    crate::paths::warning_state_path(catalog_name).expect("tool home should be resolvable")
 }
 
 /// Load persisted chunking warning files for a catalog.
@@ -79,7 +76,7 @@ pub fn load_warning_state(catalog_name: &str) -> HashSet<String> {
 }
 
 /// Save chunking warning files for a catalog.
-/// Persists the sorted list of relative paths to ~/.config/monodex/warnings-<catalog>.json
+/// Persists the sorted list of relative paths to <tool_home>/warnings-<catalog>.json
 pub fn save_warning_state(catalog_name: &str, warning_files: &[String]) -> anyhow::Result<()> {
     let path = get_warning_state_path(catalog_name);
 

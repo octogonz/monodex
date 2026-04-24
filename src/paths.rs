@@ -1,4 +1,4 @@
-//! Purpose: Resolve filesystem paths for monodex tool state (config, context, crawl config).
+//! Purpose: Resolve filesystem paths for monodex tool state (config, context, crawl config, warning state).
 //!
 //! Edit here when: Changing where tool state lives on disk, adding MONODEX_HOME-style overrides,
 //!   or adding accessors for new files under the tool home.
@@ -84,6 +84,14 @@ pub fn context_path() -> Result<PathBuf> {
 /// This is a pure path constructor — it does NOT create parent directories.
 pub fn crawl_config_path() -> Result<PathBuf> {
     Ok(tool_home()?.join("crawl.json"))
+}
+
+/// Convenience accessor for the chunking warning state file for a catalog.
+///
+/// Returns `<tool_home>/warnings-<catalog>.json`.
+/// This is a pure path constructor — it does NOT create parent directories.
+pub fn warning_state_path(catalog_name: &str) -> Result<PathBuf> {
+    Ok(tool_home()?.join(format!("warnings-{}.json", catalog_name)))
 }
 
 /// Called once from main() early in startup. Prints a one-line warning to stderr

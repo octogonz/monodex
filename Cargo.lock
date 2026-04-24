@@ -4993,6 +4993,7 @@ dependencies = [
  "arrow-array",
  "arrow-buffer",
  "arrow-schema",
+ "chrono",
  "clap",
  "crossbeam-channel",
  "dirs 5.0.1",

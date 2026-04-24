@@ -54,6 +54,7 @@ reqwest = { version = "0.13", features = ["json", "blocking"] }
 # Utilities
 anyhow = "1.0.93"
 thiserror = "2.0"
+chrono = "0.4"
 globset = "0.4"
 dirs = "5.0"
 twox-hash = "2.1"

@@ -441,16 +441,16 @@ async fn test_vector_search_correctness() {
     // v8: [0.707, 0.707, 0, 0] - 45° between axes 0 and 1 (normalized)
     // v9: [0.5, 0.5, 0.5, 0.5] - equally along all axes (normalized)
     let vectors: Vec<Vec<f32>> = vec![
-        vec![1.0, 0.0, 0.0, 0.0],   // v0
-        vec![0.0, 1.0, 0.0, 0.0],   // v1
-        vec![0.0, 0.0, 1.0, 0.0],   // v2
-        vec![0.0, 0.0, 0.0, 1.0],   // v3
-        vec![-1.0, 0.0, 0.0, 0.0],  // v4
-        vec![0.0, -1.0, 0.0, 0.0],  // v5
-        vec![0.0, 0.0, -1.0, 0.0],  // v6
-        vec![0.0, 0.0, 0.0, -1.0],  // v7
+        vec![1.0, 0.0, 0.0, 0.0],     // v0
+        vec![0.0, 1.0, 0.0, 0.0],     // v1
+        vec![0.0, 0.0, 1.0, 0.0],     // v2
+        vec![0.0, 0.0, 0.0, 1.0],     // v3
+        vec![-1.0, 0.0, 0.0, 0.0],    // v4
+        vec![0.0, -1.0, 0.0, 0.0],    // v5
+        vec![0.0, 0.0, -1.0, 0.0],    // v6
+        vec![0.0, 0.0, 0.0, -1.0],    // v7
         vec![0.707, 0.707, 0.0, 0.0], // v8 (normalized: sqrt(2)/2 ≈ 0.707)
-        vec![0.5, 0.5, 0.5, 0.5],   // v9 (normalized: 0.5 = 1/sqrt(4) = 0.5)
+        vec![0.5, 0.5, 0.5, 0.5],     // v9 (normalized: 0.5 = 1/sqrt(4) = 0.5)
     ];
 
     let point_ids: Vec<String> = (0..10).map(|i| format!("v{i}")).collect();
@@ -460,7 +460,7 @@ async fn test_vector_search_correctness() {
     let label_ids = Arc::new(
         ListArray::try_new(
             Arc::new(Field::new("item", DataType::Utf8, true)),
-            OffsetBuffer::new(ScalarBuffer::from((0..=10).map(|i| i as i32).collect::<Vec<_>>())),
+            OffsetBuffer::new(ScalarBuffer::from((0..=10).collect::<Vec<_>>())),
             Arc::new(StringArray::from(vec![Some("test"); 10])),
             None,
         )
@@ -471,7 +471,8 @@ async fn test_vector_search_correctness() {
     let all_values: Vec<f32> = vectors.iter().flat_map(|v| v.iter().copied()).collect();
     let values = Float32Array::from(all_values);
     let field = Arc::new(Field::new("item", DataType::Float32, true));
-    let vectors_array = Arc::new(FixedSizeListArray::new(field, dim, Arc::new(values), None)) as ArrayRef;
+    let vectors_array =
+        Arc::new(FixedSizeListArray::new(field, dim, Arc::new(values), None)) as ArrayRef;
 
     let batch = RecordBatch::try_new(
         schema,
@@ -487,7 +488,7 @@ async fn test_vector_search_correctness() {
 
     // Test 1: Query with [1, 0, 0, 0] - should rank v0 first (cosine = 1.0)
     // and v4 last (cosine = -1.0)
-    let query = vec![1.0f32, 0.0, 0.0, 0.0];
+    let query = [1.0f32, 0.0, 0.0, 0.0];
     let results = table
         .query()
         .nearest_to(&query[..])
@@ -502,7 +503,7 @@ async fn test_vector_search_correctness() {
         .try_collect::<Vec<_>>()
         .await
         .expect("Collect failed");
-    
+
     // Extract point_ids in order of distance
     let mut ordered_ids: Vec<String> = Vec::new();
     for batch in &batches {
@@ -517,17 +518,23 @@ async fn test_vector_search_correctness() {
     }
 
     // v0 should be first (distance ~0, cosine similarity = 1)
-    assert_eq!(ordered_ids.first().map(|s| s.as_str()), Some("v0"), 
-        "v0 should be ranked first for query [1,0,0,0]");
-    
+    assert_eq!(
+        ordered_ids.first().map(|s| s.as_str()),
+        Some("v0"),
+        "v0 should be ranked first for query [1,0,0,0]"
+    );
+
     // v4 should be last (distance ~2, cosine similarity = -1)
-    assert_eq!(ordered_ids.last().map(|s| s.as_str()), Some("v4"),
-        "v4 should be ranked last for query [1,0,0,0]");
+    assert_eq!(
+        ordered_ids.last().map(|s| s.as_str()),
+        Some("v4"),
+        "v4 should be ranked last for query [1,0,0,0]"
+    );
 
     // Test 2: Query with [0.707, 0.707, 0, 0] - should rank v0, v1, v8 at top
     // v8 has the same direction (cosine = 1.0)
     // v0 and v1 have cosine = 0.707
-    let query = vec![0.707f32, 0.707, 0.0, 0.0];
+    let query = [0.707f32, 0.707, 0.0, 0.0];
     let results = table
         .query()
         .nearest_to(&query[..])
@@ -542,7 +549,7 @@ async fn test_vector_search_correctness() {
         .try_collect::<Vec<_>>()
         .await
         .expect("Collect failed");
-    
+
     let mut ordered_ids: Vec<String> = Vec::new();
     for batch in &batches {
         let ids = batch
@@ -556,19 +563,24 @@ async fn test_vector_search_correctness() {
     }
 
     // v8 should be first (exact match, cosine = 1)
-    assert_eq!(ordered_ids.first().map(|s| s.as_str()), Some("v8"),
-        "v8 should be ranked first for query at 45° between axes 0 and 1");
+    assert_eq!(
+        ordered_ids.first().map(|s| s.as_str()),
+        Some("v8"),
+        "v8 should be ranked first for query at 45° between axes 0 and 1"
+    );
 
     // v0 and v1 should be next (both have cosine = 0.707 with the query)
     // They may appear in any order, but both should be in top 4
     let top_4: Vec<&str> = ordered_ids.iter().take(4).map(|s| s.as_str()).collect();
-    assert!(top_4.contains(&"v0") && top_4.contains(&"v1"),
-        "v0 and v1 should both be in top 4 for query at 45° between axes 0 and 1");
+    assert!(
+        top_4.contains(&"v0") && top_4.contains(&"v1"),
+        "v0 and v1 should both be in top 4 for query at 45° between axes 0 and 1"
+    );
 
     // Test 3: Query with [1, 1, 1, 1] (not normalized) - should still work correctly
     // For cosine similarity, the query vector is normalized internally
     // v9 should be ranked first (cosine = 1.0)
-    let query = vec![1.0f32, 1.0, 1.0, 1.0];
+    let query = [1.0f32, 1.0, 1.0, 1.0];
     let results = table
         .query()
         .nearest_to(&query[..])
@@ -583,7 +595,7 @@ async fn test_vector_search_correctness() {
         .try_collect::<Vec<_>>()
         .await
         .expect("Collect failed");
-    
+
     let mut ordered_ids: Vec<String> = Vec::new();
     for batch in &batches {
         let ids = batch
@@ -597,13 +609,26 @@ async fn test_vector_search_correctness() {
     }
 
     // v9 should be first (all components equal, normalized)
-    assert_eq!(ordered_ids.first().map(|s| s.as_str()), Some("v9"),
-        "v9 should be ranked first for query [1,1,1,1] (equal components)");
+    assert_eq!(
+        ordered_ids.first().map(|s| s.as_str()),
+        Some("v9"),
+        "v9 should be ranked first for query [1,1,1,1] (equal components)"
+    );
 
     // v4-v7 should be last (opposite directions on at least one axis)
-    let last_4: Vec<&str> = ordered_ids.iter().rev().take(4).map(|s| s.as_str()).collect();
-    assert!(last_4.contains(&"v4") || last_4.contains(&"v5") || last_4.contains(&"v6") || last_4.contains(&"v7"),
-        "At least one negative-axis vector should be in the bottom 4");
+    let last_4: Vec<&str> = ordered_ids
+        .iter()
+        .rev()
+        .take(4)
+        .map(|s| s.as_str())
+        .collect();
+    assert!(
+        last_4.contains(&"v4")
+            || last_4.contains(&"v5")
+            || last_4.contains(&"v6")
+            || last_4.contains(&"v7"),
+        "At least one negative-axis vector should be in the bottom 4"
+    );
 }
 
 // =============================================================================

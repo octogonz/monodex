@@ -64,6 +64,7 @@ rand = "0.10"
 insta = { version = "1.47", features = ["yaml"] }
 jsonschema = "0.45"
 tempfile = "3"
+serial_test = "3"
 
 [features]
 default = []

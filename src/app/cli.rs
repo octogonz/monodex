@@ -12,7 +12,7 @@ use std::path::PathBuf;
 #[derive(Parser)]
 #[command(name = "monodex", version, about)]
 pub struct Cli {
-    /// Config file path (default: ~/.config/monodex/config.json)
+    /// Config file path (default: ~/.monodex/config.json)
     #[arg(long)]
     pub config: Option<PathBuf>,
 

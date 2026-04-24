@@ -157,7 +157,7 @@ monodex --debug crawl --catalog sparo --label main --commit HEAD
 
 ### Configuration
 
-Create `~/.config/monodex/config.json`:
+Create `~/.monodex/config.json`:
 
 ```json
 {
@@ -232,7 +232,7 @@ monodex use --catalog sparo --label main
 monodex search --text "how to read JSON files"
 ```
 
-Default context is stored in `~/.config/monodex/context.json`. Explicit flags always override defaults.
+Default context is stored in `~/.monodex/context.json`. Explicit flags always override defaults.
 
 ### Index a Repository
 
@@ -464,7 +464,7 @@ The crawl behavior (which files to index and how to chunk them) can be customize
 Configs are loaded in this precedence order:
 
 1. `<repo-root>/monodex-crawl.json` (repo-local)
-2. `~/.config/monodex/crawl.json` (user-global)
+2. `~/.monodex/crawl.json` (user-global)
 3. Embedded default (compiled into binary)
 
 No merging occurs — exactly one config is used.

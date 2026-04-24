@@ -7,7 +7,7 @@
 //!
 //! Configs are loaded in this precedence order:
 //! 1. `<repo-root>/monodex-crawl.json` (repo-local)
-//! 2. `~/.config/monodex/crawl.json` (user-global)
+//! 2. `~/.monodex/crawl.json` (user-global)
 //! 3. Embedded default (compiled into binary)
 //!
 //! ## Evaluation Rule
@@ -300,7 +300,7 @@ const DEFAULT_CRAWL_CONFIG_JSON: &str = r#"{
 ///
 /// Precedence order (first found wins):
 /// 1. `<repo-root>/monodex-crawl.json` (repo-local)
-/// 2. `~/.config/monodex/crawl.json` (user-global)
+/// 2. `~/.monodex/crawl.json` (user-global)
 /// 3. Embedded default (compiled into binary)
 ///
 /// No merging is performed - exactly one config is used.
@@ -322,19 +322,17 @@ pub fn load_crawl_config(repo_path: Option<&Path>) -> Result<CrawlConfig> {
     }
 
     // Try user-global config
-    if let Some(config_dir) = dirs::config_dir() {
-        let user_global_path = config_dir.join("monodex").join("crawl.json");
-        if user_global_path.exists() {
-            let content = std::fs::read_to_string(&user_global_path).map_err(|e| {
-                anyhow!(
-                    "Failed to read user-global config {:?}: {}",
-                    user_global_path,
-                    e
-                )
-            })?;
-            eprintln!("Using user-global crawl config: {:?}", user_global_path);
-            return CrawlConfig::from_json(&content);
-        }
+    let user_global_path = crate::paths::crawl_config_path()?;
+    if user_global_path.exists() {
+        let content = std::fs::read_to_string(&user_global_path).map_err(|e| {
+            anyhow!(
+                "Failed to read user-global config {:?}: {}",
+                user_global_path,
+                e
+            )
+        })?;
+        eprintln!("Using user-global crawl config: {:?}", user_global_path);
+        return CrawlConfig::from_json(&content);
     }
 
     // Fall back to embedded default

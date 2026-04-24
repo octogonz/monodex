@@ -6,17 +6,18 @@
 use clap::Parser;
 use monodex::app::{Cli, Commands};
 use monodex::app::{load_config, resolve_label_context, run_use};
-use std::path::PathBuf;
-
-const DEFAULT_CONFIG_PATH: &str = "~/.config/monodex/config.json";
 
 fn main() -> anyhow::Result<()> {
+    // Warn if old tool home files exist
+    monodex::paths::warn_old_tool_home_if_present();
+
     let cli = Cli::parse();
 
     // Load config
-    let config_path = cli
-        .config
-        .unwrap_or_else(|| PathBuf::from(shellexpand::tilde(DEFAULT_CONFIG_PATH).as_ref()));
+    let config_path = match cli.config {
+        Some(path) => path,
+        None => monodex::paths::config_path()?,
+    };
     let config = load_config(&config_path)?;
 
     match cli.command {

@@ -21,4 +21,7 @@ pub use context::{
     DefaultContext, load_default_context, resolve_label_context, save_default_context,
 };
 pub use crawl::{CrawlFailures, CrawlFileEntry, CrawlSource, run_embed_upload_pipeline};
-pub use util::{chrono_timestamp, format_duration, format_eta, sanitize_for_terminal};
+pub use util::{
+    chrono_timestamp, format_duration, format_eta, load_warning_state, sanitize_for_terminal,
+    save_warning_state,
+};

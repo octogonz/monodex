@@ -64,6 +64,7 @@ hex = "0.4"
 github-slugger = "0.1"
 num_cpus = "1.16"
 rayon = "1.10"
+fs4 = "0.12"
 crossbeam-channel = "0.5"
 sysinfo = "0.33"
 

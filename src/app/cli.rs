@@ -38,6 +38,11 @@ pub enum Commands {
         label: Option<String>,
     },
 
+    /// Initialize a new monodex database at the configured path.
+    /// Creates LanceDB tables for chunks and label metadata.
+    /// Idempotent: safe to run on an existing database.
+    InitDb,
+
     /// Crawl source and index into Qdrant (incremental sync).
     /// Reports warnings when AST chunking fails and fallback is used.
     /// These warnings indicate partitioner defects to investigate.

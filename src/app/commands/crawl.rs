@@ -32,7 +32,7 @@ pub fn run_crawl_label(
     label: &str,
     commit: &str,
     incremental_warnings: bool,
-    _debug: bool,
+    debug: bool,
 ) -> Result<()> {
     let total_start = std::time::Instant::now();
     println!("🔍 Starting label-aware crawl...");
@@ -87,6 +87,7 @@ pub fn run_crawl_label(
         &prior_warning_files,
         &db_path,
         total_start,
+        debug,
     ))
 }
 
@@ -103,11 +104,18 @@ async fn run_crawl_label_async(
     prior_warning_files: &HashSet<String>,
     db_path: &std::path::Path,
     total_start: std::time::Instant,
+    debug: bool,
 ) -> Result<()> {
     // Open database and get storage handles
     let db = Database::open(db_path).await?;
+    if debug {
+        println!("[DEBUG] Opened database at: {}", db_path.display());
+    }
     let chunk_storage = Arc::new(db.chunks_storage().await?);
     let label_storage = Arc::new(db.label_storage().await?);
+    if debug {
+        println!("[DEBUG] Opened chunks and label_metadata tables");
+    }
 
     // Step 1: Resolve commit to full SHA and write in-progress metadata
     println!("📦 Resolving commit...");
@@ -128,6 +136,9 @@ async fn run_crawl_label_async(
             .as_secs() as i64,
     };
     label_storage.upsert(&in_progress_metadata).await?;
+    if debug {
+        println!("[DEBUG] Wrote in-progress label metadata: {}", label_id);
+    }
 
     let files = enumerate_commit_tree(repo_path, commit)?;
     println!("Found {} files in commit tree", files.len());
@@ -353,7 +364,8 @@ async fn run_crawl_label_async(
         all_chunks,
         Arc::clone(&chunk_storage),
         &config.embedding_model,
-    )?;
+    )
+    .await?;
 
     touched_file_ids.extend(pipeline_file_ids);
 
@@ -529,7 +541,7 @@ pub fn run_crawl_working_dir(
     catalog_name: &str,
     label: &str,
     incremental_warnings: bool,
-    _debug: bool,
+    debug: bool,
 ) -> Result<()> {
     let total_start = std::time::Instant::now();
     println!("🔍 Starting working directory crawl...");
@@ -583,6 +595,7 @@ pub fn run_crawl_working_dir(
         &prior_warning_files,
         &db_path,
         total_start,
+        debug,
     ))
 }
 
@@ -598,11 +611,18 @@ async fn run_crawl_working_dir_async(
     prior_warning_files: &HashSet<String>,
     db_path: &std::path::Path,
     total_start: std::time::Instant,
+    debug: bool,
 ) -> Result<()> {
     // Open database and get storage handles
     let db = Database::open(db_path).await?;
+    if debug {
+        println!("[DEBUG] Opened database at: {}", db_path.display());
+    }
     let chunk_storage = Arc::new(db.chunks_storage().await?);
     let label_storage = Arc::new(db.label_storage().await?);
+    if debug {
+        println!("[DEBUG] Opened chunks and label_metadata tables");
+    }
 
     // Write in-progress metadata
     let in_progress_metadata = LabelMetadataRow {
@@ -842,7 +862,8 @@ async fn run_crawl_working_dir_async(
         all_chunks,
         Arc::clone(&chunk_storage),
         &config.embedding_model,
-    )?;
+    )
+    .await?;
 
     touched_file_ids.extend(pipeline_file_ids);
 

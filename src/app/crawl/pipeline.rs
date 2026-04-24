@@ -30,18 +30,14 @@ const UPSERT_BATCH_SIZE: usize = 1000;
 ///
 /// Returns an error immediately on any storage failure (disk full, corruption, etc.).
 /// Embedding failures are tracked per-chunk and returned in CrawlFailures.
-pub fn run_embed_upload_pipeline(
+///
+/// This is the async version that must be called from within a tokio runtime.
+pub async fn run_embed_upload_pipeline(
     all_chunks: Vec<Chunk>,
     chunk_storage: Arc<ChunkStorage>,
     embedding_config: &EmbeddingModelConfig,
 ) -> Result<(HashSet<String>, CrawlFailures)> {
-    // Use tokio runtime for async storage operations
-    let rt = tokio::runtime::Runtime::new()?;
-    rt.block_on(run_embed_upload_pipeline_async(
-        all_chunks,
-        chunk_storage,
-        embedding_config,
-    ))
+    run_embed_upload_pipeline_async(all_chunks, chunk_storage, embedding_config).await
 }
 
 async fn run_embed_upload_pipeline_async(

@@ -120,6 +120,140 @@ fn chunk_rows_to_record_batch<'a>(
         .map_err(|e| anyhow!("Failed to create RecordBatch: {}", e))
 }
 
+/// Convert an iterator of ChunkRows with their vectors to a RecordBatch.
+///
+/// This is the primary function for writing chunks during crawl, where we have
+/// both the row data and the computed embedding vectors.
+fn chunk_rows_to_record_batch_with_vectors<'a>(
+    rows: impl IntoIterator<Item = (&'a ChunkRow, &'a [f32])>,
+    schema: SchemaRef,
+) -> Result<RecordBatch> {
+    let rows: Vec<(&ChunkRow, &[f32])> = rows.into_iter().collect();
+    let n = rows.len();
+
+    let point_id: StringArray = rows
+        .iter()
+        .map(|(r, _)| Some(r.point_id.as_str()))
+        .collect();
+    let text: StringArray = rows.iter().map(|(r, _)| Some(r.text.as_str())).collect();
+
+    // Vector column with actual embedding values
+    let vector_field = Field::new("item", DataType::Float32, true);
+    let mut all_vector_values: Vec<f32> = Vec::with_capacity(VECTOR_DIMENSION * n);
+    for (_, vector) in &rows {
+        if vector.len() != VECTOR_DIMENSION {
+            return Err(anyhow!(
+                "Vector dimension mismatch: expected {}, got {}",
+                VECTOR_DIMENSION,
+                vector.len()
+            ));
+        }
+        all_vector_values.extend_from_slice(vector);
+    }
+    let vector_values: Float32Array = all_vector_values.into();
+    let vector: ArrayRef = Arc::new(FixedSizeListArray::new(
+        Arc::new(vector_field),
+        VECTOR_DIMENSION as i32,
+        Arc::new(vector_values),
+        None,
+    ));
+
+    let catalog: StringArray = rows.iter().map(|(r, _)| Some(r.catalog.as_str())).collect();
+    let label_id: StringArray = rows
+        .iter()
+        .map(|(r, _)| Some(r.label_id.as_str()))
+        .collect();
+
+    // active_label_ids: List<Utf8>
+    let active_label_ids = build_string_list_array(
+        &rows
+            .iter()
+            .map(|(r, _)| r.active_label_ids.as_slice())
+            .collect::<Vec<_>>(),
+    );
+
+    let embedder_id: StringArray = rows
+        .iter()
+        .map(|(r, _)| Some(r.embedder_id.as_str()))
+        .collect();
+    let chunker_id: StringArray = rows
+        .iter()
+        .map(|(r, _)| Some(r.chunker_id.as_str()))
+        .collect();
+    let blob_id: StringArray = rows.iter().map(|(r, _)| Some(r.blob_id.as_str())).collect();
+    let content_hash: StringArray = rows
+        .iter()
+        .map(|(r, _)| Some(r.content_hash.as_str()))
+        .collect();
+    let file_id: StringArray = rows.iter().map(|(r, _)| Some(r.file_id.as_str())).collect();
+    let relative_path: StringArray = rows
+        .iter()
+        .map(|(r, _)| Some(r.relative_path.as_str()))
+        .collect();
+    let package_name: StringArray = rows
+        .iter()
+        .map(|(r, _)| Some(r.package_name.as_str()))
+        .collect();
+    let source_uri: StringArray = rows
+        .iter()
+        .map(|(r, _)| Some(r.source_uri.as_str()))
+        .collect();
+
+    let chunk_ordinal: Int32Array = rows.iter().map(|(r, _)| Some(r.chunk_ordinal)).collect();
+    let chunk_count: Int32Array = rows.iter().map(|(r, _)| Some(r.chunk_count)).collect();
+    let start_line: Int32Array = rows.iter().map(|(r, _)| Some(r.start_line)).collect();
+    let end_line: Int32Array = rows.iter().map(|(r, _)| Some(r.end_line)).collect();
+
+    // Nullable string fields
+    let symbol_name: StringArray = rows.iter().map(|(r, _)| r.symbol_name.as_deref()).collect();
+    let chunk_type: StringArray = rows
+        .iter()
+        .map(|(r, _)| Some(r.chunk_type.as_str()))
+        .collect();
+    let chunk_kind: StringArray = rows
+        .iter()
+        .map(|(r, _)| Some(r.chunk_kind.as_str()))
+        .collect();
+    let breadcrumb: StringArray = rows.iter().map(|(r, _)| r.breadcrumb.as_deref()).collect();
+
+    // Nullable int fields
+    let split_part_ordinal: Int32Array = rows.iter().map(|(r, _)| r.split_part_ordinal).collect();
+    let split_part_count: Int32Array = rows.iter().map(|(r, _)| r.split_part_count).collect();
+
+    let file_complete: BooleanArray = rows.iter().map(|(r, _)| Some(r.file_complete)).collect();
+
+    let columns: Vec<ArrayRef> = vec![
+        Arc::new(point_id),
+        Arc::new(text),
+        vector,
+        Arc::new(catalog),
+        Arc::new(label_id),
+        active_label_ids,
+        Arc::new(embedder_id),
+        Arc::new(chunker_id),
+        Arc::new(blob_id),
+        Arc::new(content_hash),
+        Arc::new(file_id),
+        Arc::new(relative_path),
+        Arc::new(package_name),
+        Arc::new(source_uri),
+        Arc::new(chunk_ordinal),
+        Arc::new(chunk_count),
+        Arc::new(start_line),
+        Arc::new(end_line),
+        Arc::new(symbol_name),
+        Arc::new(chunk_type),
+        Arc::new(chunk_kind),
+        Arc::new(breadcrumb),
+        Arc::new(split_part_ordinal),
+        Arc::new(split_part_count),
+        Arc::new(file_complete),
+    ];
+
+    RecordBatch::try_new(schema, columns)
+        .map_err(|e| anyhow!("Failed to create RecordBatch: {}", e))
+}
+
 /// Build a List<Utf8> array from a slice of string slices.
 fn build_string_list_array(values: &[&[String]]) -> ArrayRef {
     let mut offsets = Vec::with_capacity(values.len() + 1);
@@ -439,6 +573,46 @@ impl ChunkStorage {
 
         let schema = self.table.schema().await?;
         let batch = chunk_rows_to_record_batch(rows.iter(), schema.clone())?;
+
+        // Use merge_insert for proper upsert semantics
+        let reader = RecordBatchIterator::new(std::iter::once(Ok(batch)), schema);
+        let mut builder = self.table.merge_insert(&["point_id"]);
+        builder
+            .when_matched_update_all(None)
+            .when_not_matched_insert_all();
+        builder.execute(Box::new(reader)).await?;
+
+        Ok(())
+    }
+
+    /// Upsert a batch of chunk rows with their embedding vectors by point_id.
+    ///
+    /// This is the primary method for writing chunks during crawl, where we have
+    /// both the row data and the computed embedding vectors.
+    ///
+    /// Matched rows are updated in place (same point_id implies same content
+    /// by construction, since file_id already incorporates blob_id + path +
+    /// embedder + chunker).
+    pub async fn upsert_with_vectors(&self, rows: &[ChunkRow], vectors: &[Vec<f32>]) -> Result<()> {
+        if rows.is_empty() {
+            return Ok(());
+        }
+
+        if rows.len() != vectors.len() {
+            return Err(anyhow!(
+                "Rows and vectors count mismatch: {} vs {}",
+                rows.len(),
+                vectors.len()
+            ));
+        }
+
+        let schema = self.table.schema().await?;
+        let rows_with_vectors: Vec<(&ChunkRow, &[f32])> = rows
+            .iter()
+            .zip(vectors.iter().map(|v| v.as_slice()))
+            .collect();
+        let batch =
+            chunk_rows_to_record_batch_with_vectors(rows_with_vectors.into_iter(), schema.clone())?;
 
         // Use merge_insert for proper upsert semantics
         let reader = RecordBatchIterator::new(std::iter::once(Ok(batch)), schema);

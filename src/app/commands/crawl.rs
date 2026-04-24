@@ -1,13 +1,16 @@
 //! Handler for the `crawl` command.
 //!
-//! Edit here when: Modifying crawl entry points or label creation.
-//! Do not edit here for: Embed/upload pipeline (see `../crawl/pipeline.rs`), crawl types (see `../crawl/types.rs`).
+//! Purpose: Crawl a repository and index chunks into LanceDB.
+//! Edit here when: Modifying crawl entry points, label creation, or storage interactions.
+//! Do not edit here for: Embed/upload pipeline (see ../crawl/pipeline.rs), crawl types (see ../crawl/types.rs).
 
 use anyhow::Result;
 use std::collections::HashSet;
+use std::sync::Arc;
 
 use crate::app::{
-    Config, format_duration, load_warning_state, run_embed_upload_pipeline, save_warning_state,
+    Config, format_duration, load_warning_state, resolve_database_path, run_embed_upload_pipeline,
+    save_warning_state,
 };
 use crate::engine::{
     chunker::{ChunkContext, chunk_content},
@@ -18,20 +21,19 @@ use crate::engine::{
         resolve_commit_oid,
     },
     identifier::LabelId,
-    uploader::{LabelMetadata, QdrantUploader},
+    storage::{ChunkStorage, Database, LabelMetadataRow},
 };
 
 /// Run crawl for a git commit label
+#[allow(clippy::too_many_arguments)]
 pub fn run_crawl_label(
     config: &Config,
     catalog_name: &str,
     label: &str,
     commit: &str,
     incremental_warnings: bool,
-    debug: bool,
+    _debug: bool,
 ) -> Result<()> {
-    use crate::engine::util::{CHUNKER_ID, EMBEDDER_ID, compute_file_id};
-
     let total_start = std::time::Instant::now();
     println!("🔍 Starting label-aware crawl...");
     println!("Catalog: {}", catalog_name);
@@ -43,19 +45,18 @@ pub fn run_crawl_label(
         .get(catalog_name)
         .ok_or_else(|| anyhow::anyhow!("Catalog '{}' not found in config", catalog_name))?;
 
-    // D.5: Expand tilde in catalog path
+    // Expand tilde in catalog path
     let expanded_path = shellexpand::tilde(&catalog_config.path);
     let repo_path = std::path::Path::new(expanded_path.as_ref());
     println!("Repository: {}", repo_path.display());
     println!("Type: {}", catalog_config.r#type);
-    println!("Collection: {}", config.qdrant.collection);
     println!("Commit: {}", commit);
     println!();
 
     // Compute label_id (internal storage form)
     let label_id = LabelId::new(catalog_name, label).map_err(|e| anyhow::anyhow!("{}", e))?;
 
-    // B.1: Load repo-specific crawl configuration
+    // Load repo-specific crawl configuration
     let crawl_config = load_compiled_crawl_config(Some(repo_path))?;
     println!("Loaded crawl configuration for repository");
 
@@ -69,13 +70,44 @@ pub fn run_crawl_label(
     }
     println!();
 
-    // Initialize uploader
-    let uploader = QdrantUploader::new(
-        &config.qdrant.collection,
-        config.qdrant.url.as_deref(),
-        debug,
-        config.qdrant.get_max_upload_bytes(),
-    )?;
+    // Open database
+    let db_path = resolve_database_path(Some(config))?;
+    println!("Database: {}", db_path.display());
+
+    let rt = tokio::runtime::Runtime::new()?;
+    rt.block_on(run_crawl_label_async(
+        config,
+        catalog_name,
+        label,
+        commit,
+        incremental_warnings,
+        repo_path,
+        &label_id,
+        &crawl_config,
+        &prior_warning_files,
+        &db_path,
+        total_start,
+    ))
+}
+
+#[allow(clippy::too_many_arguments)]
+async fn run_crawl_label_async(
+    config: &Config,
+    catalog_name: &str,
+    label: &str,
+    commit: &str,
+    incremental_warnings: bool,
+    repo_path: &std::path::Path,
+    label_id: &LabelId,
+    crawl_config: &crate::engine::crawl_config::CompiledCrawlConfig,
+    prior_warning_files: &HashSet<String>,
+    db_path: &std::path::Path,
+    total_start: std::time::Instant,
+) -> Result<()> {
+    // Open database and get storage handles
+    let db = Database::open(db_path).await?;
+    let chunk_storage = Arc::new(db.chunks_storage().await?);
+    let label_storage = Arc::new(db.label_storage().await?);
 
     // Step 1: Resolve commit to full SHA and write in-progress metadata
     println!("📦 Resolving commit...");
@@ -83,10 +115,9 @@ pub fn run_crawl_label(
     println!("Resolved {} to {}", commit, &commit_oid[..12]);
 
     // Write in-progress metadata before any work begins
-    let in_progress_metadata = LabelMetadata {
-        source_type: "label-metadata".to_string(),
-        catalog: catalog_name.to_string(),
+    let in_progress_metadata = LabelMetadataRow {
         label_id: label_id.to_string(),
+        catalog: catalog_name.to_string(),
         label: label.to_string(),
         commit_oid: commit_oid.clone(),
         source_kind: "git-commit".to_string(),
@@ -94,9 +125,9 @@ pub fn run_crawl_label(
         updated_at_unix_secs: std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
             .unwrap()
-            .as_secs(),
+            .as_secs() as i64,
     };
-    uploader.upsert_label_metadata(&in_progress_metadata)?;
+    label_storage.upsert(&in_progress_metadata).await?;
 
     let files = enumerate_commit_tree(repo_path, commit)?;
     println!("Found {} files in commit tree", files.len());
@@ -107,7 +138,7 @@ pub fn run_crawl_label(
     println!("Package index built successfully");
     println!();
 
-    // Step 3: Filter files using crawl config (B.1: now uses repo-specific config)
+    // Step 3: Filter files using crawl config
     println!("📂 Filtering files...");
     let files_to_process: Vec<_> = files
         .iter()
@@ -134,9 +165,9 @@ pub fn run_crawl_label(
         let force_reprocess =
             !incremental_warnings && prior_warning_files.contains(&file_entry.relative_path);
 
-        let file_id = compute_file_id(
-            EMBEDDER_ID,
-            CHUNKER_ID,
+        let file_id = crate::engine::util::compute_file_id(
+            crate::engine::util::EMBEDDER_ID,
+            crate::engine::util::CHUNKER_ID,
             &file_entry.blob_id,
             &file_entry.relative_path,
         );
@@ -149,10 +180,11 @@ pub fn run_crawl_label(
         }
 
         // Check if sentinel exists
-        match uploader.get_file_sentinel(&file_id) {
-            Ok(Some(sync_info)) => {
+        let sentinel_point_id = format!("{}:1", file_id);
+        match chunk_storage.get_by_point_id(&sentinel_point_id).await {
+            Ok(Some(chunk)) => {
                 // File already indexed - check if it already has this label
-                if sync_info.active_label_ids.contains(&label_id.to_string()) {
+                if chunk.active_label_ids.contains(&label_id.to_string()) {
                     existing_files_already_labeled.insert(file_id);
                 } else {
                     existing_files_needing_label.insert(file_id);
@@ -193,11 +225,34 @@ pub fn run_crawl_label(
             existing_files_needing_label.len()
         );
         for file_id in &existing_files_needing_label {
-            if let Err(e) = uploader.add_label_to_file_chunks(file_id, &label_id) {
-                eprintln!("  ❌ Failed to add label to file {}: {}", file_id, e);
-                existing_file_label_add_failures.push(format!("{}: {}", file_id, e));
-            } else {
-                label_add_success_files.insert(file_id.clone());
+            // Get all chunks for this file and add the label
+            match chunk_storage
+                .get_chunks_by_file_id_with_label(file_id, label_id.as_str())
+                .await
+            {
+                Ok(chunks) => {
+                    for chunk in &chunks {
+                        let mut new_labels = chunk.active_label_ids.clone();
+                        if !new_labels.contains(&label_id.to_string()) {
+                            new_labels.push(label_id.to_string());
+                        }
+                        if let Err(e) = chunk_storage
+                            .update_active_labels(&chunk.point_id, &new_labels)
+                            .await
+                        {
+                            eprintln!(
+                                "  ❌ Failed to add label to chunk {}: {}",
+                                chunk.point_id, e
+                            );
+                            existing_file_label_add_failures.push(format!("{}: {}", file_id, e));
+                        }
+                    }
+                    label_add_success_files.insert(file_id.clone());
+                }
+                Err(e) => {
+                    eprintln!("  ❌ Failed to get chunks for file {}: {}", file_id, e);
+                    existing_file_label_add_failures.push(format!("{}: {}", file_id, e));
+                }
             }
         }
         println!("  Done.");
@@ -293,9 +348,12 @@ pub fn run_crawl_label(
         println!();
     }
 
-    // Phase 3: Run the shared embed/upload pipeline
-    let (pipeline_file_ids, pipeline_failures) =
-        run_embed_upload_pipeline(all_chunks, uploader, &label_id, &config.embedding_model)?;
+    // Phase 3: Run the embed/upload pipeline
+    let (pipeline_file_ids, pipeline_failures) = run_embed_upload_pipeline(
+        all_chunks,
+        Arc::clone(&chunk_storage),
+        &config.embedding_model,
+    )?;
 
     touched_file_ids.extend(pipeline_file_ids);
 
@@ -313,13 +371,7 @@ pub fn run_crawl_label(
         let all_touched: HashSet<String> =
             existing_files.union(&touched_file_ids).cloned().collect();
 
-        let cleanup_uploader = QdrantUploader::new(
-            &config.qdrant.collection,
-            config.qdrant.url.as_deref(),
-            debug,
-            config.qdrant.get_max_upload_bytes(),
-        )?;
-        match cleanup_uploader.remove_label_from_chunks(&label_id, &all_touched) {
+        match remove_label_from_chunks(&chunk_storage, label_id.as_str(), &all_touched).await {
             Ok(processed) => {
                 println!("  Processed {} chunks for label cleanup", processed);
             }
@@ -334,10 +386,9 @@ pub fn run_crawl_label(
     // Step 8: Update label metadata
     println!("📝 Updating label metadata...");
     let crawl_complete = !had_failures && !cleanup_failed;
-    let metadata = LabelMetadata {
-        source_type: "label-metadata".to_string(),
-        catalog: catalog_name.to_string(),
+    let metadata = LabelMetadataRow {
         label_id: label_id.to_string(),
+        catalog: catalog_name.to_string(),
         label: label.to_string(),
         commit_oid: commit_oid.clone(),
         source_kind: "git-commit".to_string(),
@@ -345,16 +396,10 @@ pub fn run_crawl_label(
         updated_at_unix_secs: std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
             .unwrap()
-            .as_secs(),
+            .as_secs() as i64,
     };
 
-    let uploader = QdrantUploader::new(
-        &config.qdrant.collection,
-        config.qdrant.url.as_deref(),
-        debug,
-        config.qdrant.get_max_upload_bytes(),
-    )?;
-    uploader.upsert_label_metadata(&metadata)?;
+    label_storage.upsert(&metadata).await?;
     if crawl_complete {
         println!("  Label metadata saved.");
     } else {
@@ -403,20 +448,17 @@ pub fn run_crawl_label(
         );
     }
 
-    // Save warning state: keep files that had warnings this crawl
-    // plus any previous warning files that were skipped due to incremental mode.
+    // Save warning state
     let mut next_warning_files: HashSet<String> = HashSet::new();
     next_warning_files.extend(crawl_warning_files.iter().cloned());
     if incremental_warnings {
-        // In this mode, unchanged warning files may remain skipped; preserve prior state.
         next_warning_files.extend(prior_warning_files.iter().cloned());
     }
-    // Convert to sorted Vec for deterministic output
     let mut sorted_warning_files: Vec<String> = next_warning_files.iter().cloned().collect();
     sorted_warning_files.sort();
     save_warning_state(catalog_name, &sorted_warning_files)?;
 
-    // Warning summary (sorted for deterministic output)
+    // Warning summary
     if !crawl_warning_files.is_empty() {
         let mut sorted_summary: Vec<&String> = crawl_warning_files.iter().collect();
         sorted_summary.sort();
@@ -438,16 +480,57 @@ pub fn run_crawl_label(
     Ok(())
 }
 
+/// Remove a label from chunks where it's in active_label_ids, excluding specified files.
+///
+/// This scans all chunks with the label and removes the label from active_label_ids.
+/// If active_label_ids becomes empty, the chunk is deleted.
+async fn remove_label_from_chunks(
+    chunk_storage: &ChunkStorage,
+    label_id: &str,
+    exclude_file_ids: &HashSet<String>,
+) -> Result<u64> {
+    let mut processed: u64 = 0;
+
+    // Get all chunks with this label
+    let chunks = chunk_storage.get_chunks_for_label(label_id, None).await?;
+
+    for chunk in chunks {
+        // Skip if this file was touched in the current crawl
+        if exclude_file_ids.contains(&chunk.file_id) {
+            continue;
+        }
+
+        // Remove label from active_label_ids
+        let mut new_labels = chunk.active_label_ids.clone();
+        new_labels.retain(|l| l != label_id);
+
+        if new_labels.is_empty() {
+            // Delete the chunk
+            chunk_storage
+                .delete_by_point_ids(std::slice::from_ref(&chunk.point_id))
+                .await?;
+        } else {
+            // Update active_label_ids
+            chunk_storage
+                .update_active_labels(&chunk.point_id, &new_labels)
+                .await?;
+        }
+
+        processed += 1;
+    }
+
+    Ok(processed)
+}
+
 /// Run crawl for working directory (indexes uncommitted changes)
+#[allow(clippy::too_many_arguments)]
 pub fn run_crawl_working_dir(
     config: &Config,
     catalog_name: &str,
     label: &str,
     incremental_warnings: bool,
-    debug: bool,
+    _debug: bool,
 ) -> Result<()> {
-    use crate::engine::util::{CHUNKER_ID, EMBEDDER_ID, compute_file_id};
-
     let total_start = std::time::Instant::now();
     println!("🔍 Starting working directory crawl...");
     println!("Catalog: {}", catalog_name);
@@ -459,19 +542,18 @@ pub fn run_crawl_working_dir(
         .get(catalog_name)
         .ok_or_else(|| anyhow::anyhow!("Catalog '{}' not found in config", catalog_name))?;
 
-    // D.5: Expand tilde in catalog path
+    // Expand tilde in catalog path
     let expanded_path = shellexpand::tilde(&catalog_config.path);
     let repo_path = std::path::Path::new(expanded_path.as_ref());
     println!("Repository: {}", repo_path.display());
     println!("Type: {}", catalog_config.r#type);
-    println!("Collection: {}", config.qdrant.collection);
     println!("Source: working directory (uncommitted changes)");
     println!();
 
     // Compute label_id (internal storage form)
     let label_id = LabelId::new(catalog_name, label).map_err(|e| anyhow::anyhow!("{}", e))?;
 
-    // B.1: Load repo-specific crawl configuration
+    // Load repo-specific crawl configuration
     let crawl_config = load_compiled_crawl_config(Some(repo_path))?;
     println!("Loaded crawl configuration for repository");
 
@@ -485,19 +567,47 @@ pub fn run_crawl_working_dir(
     }
     println!();
 
-    // Initialize uploader
-    let uploader = QdrantUploader::new(
-        &config.qdrant.collection,
-        config.qdrant.url.as_deref(),
-        debug,
-        config.qdrant.get_max_upload_bytes(),
-    )?;
+    // Open database
+    let db_path = resolve_database_path(Some(config))?;
+    println!("Database: {}", db_path.display());
+
+    let rt = tokio::runtime::Runtime::new()?;
+    rt.block_on(run_crawl_working_dir_async(
+        config,
+        catalog_name,
+        label,
+        incremental_warnings,
+        repo_path,
+        &label_id,
+        &crawl_config,
+        &prior_warning_files,
+        &db_path,
+        total_start,
+    ))
+}
+
+#[allow(clippy::too_many_arguments)]
+async fn run_crawl_working_dir_async(
+    config: &Config,
+    catalog_name: &str,
+    label: &str,
+    incremental_warnings: bool,
+    repo_path: &std::path::Path,
+    label_id: &LabelId,
+    crawl_config: &crate::engine::crawl_config::CompiledCrawlConfig,
+    prior_warning_files: &HashSet<String>,
+    db_path: &std::path::Path,
+    total_start: std::time::Instant,
+) -> Result<()> {
+    // Open database and get storage handles
+    let db = Database::open(db_path).await?;
+    let chunk_storage = Arc::new(db.chunks_storage().await?);
+    let label_storage = Arc::new(db.label_storage().await?);
 
     // Write in-progress metadata
-    let in_progress_metadata = LabelMetadata {
-        source_type: "label-metadata".to_string(),
-        catalog: catalog_name.to_string(),
+    let in_progress_metadata = LabelMetadataRow {
         label_id: label_id.to_string(),
+        catalog: catalog_name.to_string(),
         label: label.to_string(),
         commit_oid: "".to_string(), // No commit for working directory
         source_kind: "working-directory".to_string(),
@@ -505,9 +615,9 @@ pub fn run_crawl_working_dir(
         updated_at_unix_secs: std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
             .unwrap()
-            .as_secs(),
+            .as_secs() as i64,
     };
-    uploader.upsert_label_metadata(&in_progress_metadata)?;
+    label_storage.upsert(&in_progress_metadata).await?;
 
     // Enumerate working directory files
     println!("📂 Enumerating working directory...");
@@ -551,9 +661,9 @@ pub fn run_crawl_working_dir(
         let force_reprocess =
             !incremental_warnings && prior_warning_files.contains(&file_entry.relative_path);
 
-        let file_id = compute_file_id(
-            EMBEDDER_ID,
-            CHUNKER_ID,
+        let file_id = crate::engine::util::compute_file_id(
+            crate::engine::util::EMBEDDER_ID,
+            crate::engine::util::CHUNKER_ID,
             &file_entry.blob_id,
             &file_entry.relative_path,
         );
@@ -565,10 +675,11 @@ pub fn run_crawl_working_dir(
             continue;
         }
 
-        match uploader.get_file_sentinel(&file_id) {
-            Ok(Some(sync_info)) => {
+        let sentinel_point_id = format!("{}:1", file_id);
+        match chunk_storage.get_by_point_id(&sentinel_point_id).await {
+            Ok(Some(chunk)) => {
                 // File already indexed - check if it already has this label
-                if sync_info.active_label_ids.contains(&label_id.to_string()) {
+                if chunk.active_label_ids.contains(&label_id.to_string()) {
                     existing_files_already_labeled.insert(file_id);
                 } else {
                     existing_files_needing_label.insert(file_id);
@@ -609,11 +720,33 @@ pub fn run_crawl_working_dir(
             existing_files_needing_label.len()
         );
         for file_id in &existing_files_needing_label {
-            if let Err(e) = uploader.add_label_to_file_chunks(file_id, &label_id) {
-                eprintln!("  ❌ Failed to add label to file {}: {}", file_id, e);
-                existing_file_label_add_failures.push(format!("{}: {}", file_id, e));
-            } else {
-                label_add_success_files.insert(file_id.clone());
+            match chunk_storage
+                .get_chunks_by_file_id_with_label(file_id, label_id.as_str())
+                .await
+            {
+                Ok(chunks) => {
+                    for chunk in &chunks {
+                        let mut new_labels = chunk.active_label_ids.clone();
+                        if !new_labels.contains(&label_id.to_string()) {
+                            new_labels.push(label_id.to_string());
+                        }
+                        if let Err(e) = chunk_storage
+                            .update_active_labels(&chunk.point_id, &new_labels)
+                            .await
+                        {
+                            eprintln!(
+                                "  ❌ Failed to add label to chunk {}: {}",
+                                chunk.point_id, e
+                            );
+                            existing_file_label_add_failures.push(format!("{}: {}", file_id, e));
+                        }
+                    }
+                    label_add_success_files.insert(file_id.clone());
+                }
+                Err(e) => {
+                    eprintln!("  ❌ Failed to get chunks for file {}: {}", file_id, e);
+                    existing_file_label_add_failures.push(format!("{}: {}", file_id, e));
+                }
             }
         }
         println!("  Done.");
@@ -630,7 +763,7 @@ pub fn run_crawl_working_dir(
         .cloned()
         .collect();
 
-    // Step 6: Index new files
+    // Index new files
     let mut all_chunks: Vec<crate::engine::Chunk> = Vec::new();
     let mut touched_file_ids: HashSet<String> = HashSet::new();
     let mut crawl_warning_files: HashSet<String> = HashSet::new();
@@ -704,9 +837,12 @@ pub fn run_crawl_working_dir(
         println!();
     }
 
-    // Phase 3: Run the shared embed/upload pipeline
-    let (pipeline_file_ids, pipeline_failures) =
-        run_embed_upload_pipeline(all_chunks, uploader, &label_id, &config.embedding_model)?;
+    // Phase 3: Run the embed/upload pipeline
+    let (pipeline_file_ids, pipeline_failures) = run_embed_upload_pipeline(
+        all_chunks,
+        Arc::clone(&chunk_storage),
+        &config.embedding_model,
+    )?;
 
     touched_file_ids.extend(pipeline_file_ids);
 
@@ -724,13 +860,7 @@ pub fn run_crawl_working_dir(
         let all_touched: HashSet<String> =
             existing_files.union(&touched_file_ids).cloned().collect();
 
-        let cleanup_uploader = QdrantUploader::new(
-            &config.qdrant.collection,
-            config.qdrant.url.as_deref(),
-            debug,
-            config.qdrant.get_max_upload_bytes(),
-        )?;
-        match cleanup_uploader.remove_label_from_chunks(&label_id, &all_touched) {
+        match remove_label_from_chunks(&chunk_storage, label_id.as_str(), &all_touched).await {
             Ok(processed) => println!("  Processed {} chunks for label cleanup", processed),
             Err(e) => {
                 eprintln!("  ❌ Label cleanup failed: {}", e);
@@ -743,10 +873,9 @@ pub fn run_crawl_working_dir(
     // Update label metadata
     println!("📝 Updating label metadata...");
     let crawl_complete = !had_failures && !cleanup_failed;
-    let metadata = LabelMetadata {
-        source_type: "label-metadata".to_string(),
-        catalog: catalog_name.to_string(),
+    let metadata = LabelMetadataRow {
         label_id: label_id.to_string(),
+        catalog: catalog_name.to_string(),
         label: label.to_string(),
         commit_oid: "".to_string(),
         source_kind: "working-directory".to_string(),
@@ -754,16 +883,10 @@ pub fn run_crawl_working_dir(
         updated_at_unix_secs: std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
             .unwrap()
-            .as_secs(),
+            .as_secs() as i64,
     };
 
-    let uploader = QdrantUploader::new(
-        &config.qdrant.collection,
-        config.qdrant.url.as_deref(),
-        debug,
-        config.qdrant.get_max_upload_bytes(),
-    )?;
-    uploader.upsert_label_metadata(&metadata)?;
+    label_storage.upsert(&metadata).await?;
     if crawl_complete {
         println!("  Label metadata saved.");
     } else {
@@ -811,20 +934,17 @@ pub fn run_crawl_working_dir(
         );
     }
 
-    // Save warning state: keep files that had warnings this crawl
-    // plus any previous warning files that were skipped due to incremental mode.
+    // Save warning state
     let mut next_warning_files: HashSet<String> = HashSet::new();
     next_warning_files.extend(crawl_warning_files.iter().cloned());
     if incremental_warnings {
-        // In this mode, unchanged warning files may remain skipped; preserve prior state.
         next_warning_files.extend(prior_warning_files.iter().cloned());
     }
-    // Convert to sorted Vec for deterministic output
     let mut sorted_warning_files: Vec<String> = next_warning_files.iter().cloned().collect();
     sorted_warning_files.sort();
     save_warning_state(catalog_name, &sorted_warning_files)?;
 
-    // Warning summary (sorted for deterministic output)
+    // Warning summary
     if !crawl_warning_files.is_empty() {
         let mut sorted_summary: Vec<&String> = crawl_warning_files.iter().collect();
         sorted_summary.sort();

@@ -13,6 +13,9 @@ use std::io::{BufReader, BufWriter};
 use std::path::{Path, PathBuf};
 
 use crate::engine::schema::{CHUNKS_TABLE, LABEL_METADATA_TABLE, MONODEX_SCHEMA_VERSION};
+use std::sync::Arc;
+
+use super::{ChunkStorage, LabelStorage};
 
 /// Metadata file name in the database root.
 pub const META_FILE: &str = "monodex-meta.json";
@@ -148,6 +151,38 @@ impl Database {
     /// Get the label metadata table name.
     pub fn label_metadata_table(&self) -> &'static str {
         LABEL_METADATA_TABLE
+    }
+
+    /// Open the chunks table and return a ChunkStorage wrapper.
+    ///
+    /// Returns an error if the table doesn't exist.
+    pub async fn chunks_storage(&self) -> Result<ChunkStorage> {
+        use crate::engine::storage::ChunkStorage;
+
+        let table = self
+            .conn
+            .open_table(CHUNKS_TABLE)
+            .execute()
+            .await
+            .map_err(|e| anyhow!("Failed to open chunks table: {}", e))?;
+
+        Ok(ChunkStorage::new(Arc::new(table)))
+    }
+
+    /// Open the label_metadata table and return a LabelStorage wrapper.
+    ///
+    /// Returns an error if the table doesn't exist.
+    pub async fn label_storage(&self) -> Result<LabelStorage> {
+        use crate::engine::storage::LabelStorage;
+
+        let table = self
+            .conn
+            .open_table(LABEL_METADATA_TABLE)
+            .execute()
+            .await
+            .map_err(|e| anyhow!("Failed to open label_metadata table: {}", e))?;
+
+        Ok(LabelStorage::new(Arc::new(table)))
     }
 }
 

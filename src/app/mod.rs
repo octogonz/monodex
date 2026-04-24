@@ -15,7 +15,7 @@ pub use cli::{Cli, Commands, CrawlSourceArgs};
 pub use commands::{run_dump_chunks, run_purge, run_search, run_use, run_view};
 pub use config::{
     CatalogConfig, Config, EmbeddingModelConfig, EmbeddingSizeValue, QdrantConfig, load_config,
-    print_memory_warning, resolve_embedding_config,
+    print_memory_warning, resolve_database_path, resolve_embedding_config,
 };
 pub use context::{
     DefaultContext, load_default_context, resolve_label_context, save_default_context,

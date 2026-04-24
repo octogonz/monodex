@@ -9,9 +9,6 @@ use anyhow::anyhow;
 use crate::app::util::chrono_timestamp;
 use crate::engine::identifier::{LabelId, validate_catalog, validate_label};
 
-/// Context file for storing default catalog/label
-pub const DEFAULT_CONTEXT_PATH: &str = "~/.config/monodex/context.json";
-
 /// Default context for commands
 #[derive(Debug, serde::Serialize, serde::Deserialize, Clone)]
 pub struct DefaultContext {
@@ -25,10 +22,12 @@ pub struct DefaultContext {
 
 /// Load default context from file, validating identifiers at the boundary
 pub fn load_default_context() -> Option<DefaultContext> {
-    let path = shellexpand::tilde(DEFAULT_CONTEXT_PATH);
-    let path = std::path::Path::new(path.as_ref());
+    let path = match crate::paths::context_path() {
+        Ok(p) => p,
+        Err(_) => return None,
+    };
 
-    match std::fs::read_to_string(path) {
+    match std::fs::read_to_string(&path) {
         Ok(content) => {
             let ctx: DefaultContext = match serde_json::from_str(&content) {
                 Ok(ctx) => ctx,
@@ -69,8 +68,7 @@ pub fn load_default_context() -> Option<DefaultContext> {
 
 /// Save default context to file
 pub fn save_default_context(catalog: &str, label: &str) -> anyhow::Result<()> {
-    let path = shellexpand::tilde(DEFAULT_CONTEXT_PATH);
-    let path = std::path::Path::new(path.as_ref());
+    let path = crate::paths::context_path()?;
 
     // Create parent directory if needed
     if let Some(parent) = path.parent() {

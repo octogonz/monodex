@@ -8,7 +8,7 @@
 //!
 //! Configs are loaded in this precedence order:
 //! 1. `<repo-root>/monodex-crawl.json` (repo-local)
-//! 2. `~/.config/monodex/crawl.json` (user-global)
+//! 2. `~/.monodex/crawl.json` (user-global)
 //! 3. Embedded default (compiled into binary)
 //!
 //! See `crawl_config.rs` for the full implementation.

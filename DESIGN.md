@@ -458,7 +458,7 @@ monodex search --catalog rushstack --label main --text "query"
 monodex search --text "query"
 ```
 
-**Default context storage:** Stored in `~/.config/monodex/context.json`:
+**Default context storage:** Stored in `~/.monodex/context.json`:
 ```json
 {
   "catalog": "rushstack",
@@ -633,7 +633,7 @@ monodex gc --catalog rushstack
 
 ### Config File
 
-`~/.config/monodex/config.json`:
+`~/.monodex/config.json`:
 
 ```json
 {
@@ -819,7 +819,7 @@ Valid strategy names (from `src/engine/config.rs`):
 Exactly one config is used. No merging. Precedence:
 
 1. **Repo-local config**: `<repo-root>/monodex-crawl.json`
-2. **User-global config**: `~/.config/monodex/crawl.json`
+2. **User-global config**: `~/.monodex/crawl.json`
 3. **Built-in default**: Embedded in binary (same JSON format)
 
 ### Validation

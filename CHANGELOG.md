@@ -25,6 +25,10 @@ PUBLISHING PROCEDURE:
 
 ## Unreleased
 
+### Changed
+
+- **Tool home moved to `~/.monodex/`**: All monodex state files now live under `~/.monodex/` instead of `~/.config/monodex/`. This provides a consistent location across all platforms (Linux, macOS, Windows) and follows the convention of developer tools like `cargo`, `rustup`, and `npm`. Set the `MONODEX_HOME` environment variable to override the default location. On first run, if old config files are found at the previous location, monodex prints a warning suggesting migration.
+
 ### Added
 
 - **Chunking warning persistence**: Files that require fallback line-based splitting (when AST chunking fails) are now tracked and persisted to `~/.config/monodex/warnings-<catalog>.json`. The crawl command reports these files with their relative paths and shows a warning count during progress.

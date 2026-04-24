@@ -142,11 +142,15 @@ pub fn warn_old_tool_home_if_present() {
     }
 
     if !old_files_found.is_empty() {
+        // Yellow color: \x1b[33m, Reset: \x1b[0m
+        eprintln!("\x1b[33mWarning: Old monodex config files found.\x1b[0m");
         eprintln!(
-            "Warning: Old monodex config files found. Please migrate to {} by moving your files:\n  {}",
-            new_home.display(),
-            old_files_found.join("\n  ")
+            "Please migrate to {} by moving your files:",
+            new_home.display()
         );
+        for file in &old_files_found {
+            eprintln!("  {}", file);
+        }
 
         // Provide a helpful migration command if all old files are in the same hardcoded directory
         if let Some(ref old_dir) = old_hardcoded_dir {
@@ -165,6 +169,7 @@ pub fn warn_old_tool_home_if_present() {
                 );
             }
         }
+        eprintln!(); // Blank line before CLI banner
     }
 }
 

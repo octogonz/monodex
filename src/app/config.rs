@@ -27,6 +27,16 @@ pub struct QdrantConfig {
     pub max_upload_bytes: Option<usize>,
 }
 
+/// Database configuration (LanceDB)
+#[derive(Debug, serde::Deserialize, Clone)]
+#[serde(deny_unknown_fields)]
+pub struct DatabaseConfig {
+    /// Optional path to the database directory.
+    /// If not specified, defaults to <tool_home>/default-db.
+    /// Supports tilde expansion (~) and relative paths.
+    pub path: Option<String>,
+}
+
 impl QdrantConfig {
     /// Default max upload size: 30MB (safely under Qdrant's 32MB limit)
     const DEFAULT_MAX_UPLOAD_BYTES: usize = 30 * 1024 * 1024;
@@ -189,6 +199,10 @@ pub struct Config {
     pub catalogs: HashMap<String, CatalogConfig>,
     #[serde(rename = "embeddingModel", default)]
     pub embedding_model: EmbeddingModelConfig,
+    /// Optional database configuration (LanceDB).
+    /// If absent, defaults to <tool_home>/default-db.
+    #[serde(default)]
+    pub database: Option<DatabaseConfig>,
 }
 
 /// Load config from a file path.
@@ -211,6 +225,35 @@ pub fn load_config(path: &PathBuf) -> anyhow::Result<Config> {
     }
 
     Ok(config)
+}
+
+/// Resolve the database path from config.
+///
+/// - If `database.path` is specified in config, performs tilde expansion and returns it.
+/// - Otherwise returns `<tool_home>/default-db`.
+///
+/// Note: This uses `crate::paths::tool_home()` which handles MONODEX_HOME.
+pub fn resolve_database_path(config: Option<&Config>) -> anyhow::Result<PathBuf> {
+    // Check if database.path is specified in config
+    if let Some(config) = config
+        && let Some(db_config) = &config.database
+        && let Some(path) = &db_config.path
+    {
+        // Perform tilde expansion
+        let expanded = shellexpand::tilde(path);
+        let path_buf = PathBuf::from(expanded.as_ref());
+
+        // If relative, convert to absolute using current working directory
+        if path_buf.is_relative() {
+            let cwd = std::env::current_dir()?;
+            return Ok(cwd.join(&path_buf));
+        }
+
+        return Ok(path_buf);
+    }
+
+    // Default: <tool_home>/default-db
+    Ok(crate::paths::tool_home()?.join("default-db"))
 }
 
 // ============================================================================
@@ -517,5 +560,132 @@ mod tests {
             config.qdrant.get_max_upload_bytes(),
             30 * 1024 * 1024 // 30MB default
         );
+    }
+
+    #[test]
+    fn test_load_config_accepts_database_path() {
+        let dir = tempdir().unwrap();
+        let config_path = dir.path().join("config.json");
+        let mut file = std::fs::File::create(&config_path).unwrap();
+
+        writeln!(
+            file,
+            r#"{{
+                "qdrant": {{ "collection": "test" }},
+                "catalogs": {{
+                    "sparo": {{
+                        "type": "monorepo",
+                        "path": "/tmp/sparo"
+                    }}
+                }},
+                "database": {{ "path": "/custom/db" }}
+            }}"#
+        )
+        .unwrap();
+
+        let config = load_config(&config_path).unwrap();
+        assert!(config.database.is_some());
+        let db_config = config.database.unwrap();
+        assert_eq!(db_config.path, Some("/custom/db".to_string()));
+    }
+
+    #[test]
+    fn test_load_config_database_section_optional() {
+        let dir = tempdir().unwrap();
+        let config_path = dir.path().join("config.json");
+        let mut file = std::fs::File::create(&config_path).unwrap();
+
+        writeln!(
+            file,
+            r#"{{
+                "qdrant": {{ "collection": "test" }},
+                "catalogs": {{
+                    "sparo": {{
+                        "type": "monorepo",
+                        "path": "/tmp/sparo"
+                    }}
+                }}
+            }}"#
+        )
+        .unwrap();
+
+        let config = load_config(&config_path).unwrap();
+        assert!(config.database.is_none());
+    }
+
+    #[test]
+    fn test_resolve_database_path_uses_config_path() {
+        let dir = tempdir().unwrap();
+        let config_path = dir.path().join("config.json");
+        let mut file = std::fs::File::create(&config_path).unwrap();
+
+        writeln!(
+            file,
+            r#"{{
+                "qdrant": {{ "collection": "test" }},
+                "catalogs": {{}},
+                "database": {{ "path": "/custom/db" }}
+            }}"#
+        )
+        .unwrap();
+
+        let config = load_config(&config_path).unwrap();
+        let path = resolve_database_path(Some(&config)).unwrap();
+        assert_eq!(path, PathBuf::from("/custom/db"));
+    }
+
+    #[test]
+    fn test_resolve_database_path_expands_tilde() {
+        let dir = tempdir().unwrap();
+        let config_path = dir.path().join("config.json");
+        let mut file = std::fs::File::create(&config_path).unwrap();
+
+        writeln!(
+            file,
+            r#"{{
+                "qdrant": {{ "collection": "test" }},
+                "catalogs": {{}},
+                "database": {{ "path": "~/my-db" }}
+            }}"#
+        )
+        .unwrap();
+
+        let config = load_config(&config_path).unwrap();
+        let path = resolve_database_path(Some(&config)).unwrap();
+
+        // Should be expanded to home directory
+        let home = dirs::home_dir().expect("home_dir should work in test");
+        assert_eq!(path, home.join("my-db"));
+    }
+
+    #[test]
+    fn test_resolve_database_path_defaults_to_tool_home() {
+        // When no config or no database.path, should use <tool_home>/default-db
+        let path = resolve_database_path(None).unwrap();
+
+        // Should end with default-db
+        assert!(path.ends_with("default-db"));
+    }
+
+    #[test]
+    fn test_resolve_database_path_config_without_database_section() {
+        let dir = tempdir().unwrap();
+        let config_path = dir.path().join("config.json");
+        let mut file = std::fs::File::create(&config_path).unwrap();
+
+        writeln!(
+            file,
+            r#"{{
+                "qdrant": {{ "collection": "test" }},
+                "catalogs": {{}}
+            }}"#
+        )
+        .unwrap();
+
+        let config = load_config(&config_path).unwrap();
+        let path = resolve_database_path(Some(&config)).unwrap();
+
+        // Should end with default-db
+        assert!(path.ends_with("default-db"));
     }
 }

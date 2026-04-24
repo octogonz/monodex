@@ -8,8 +8,9 @@
 use anyhow::{Result, anyhow, bail};
 use std::fs::{self, File};
 use std::io::BufWriter;
-use std::path::{Path, PathBuf};
+use std::path::Path;
 
+use crate::app::config::{load_config, resolve_database_path};
 use crate::engine::schema::{
     CHUNKS_TABLE, LABEL_METADATA_TABLE, chunks_schema, label_metadata_schema,
 };
@@ -39,6 +40,52 @@ pub const LOG_ALREADY_INITIALIZED: &str =
     "Database at {} is already initialized (monodex_schema_version {}); skipping.";
 
 // ============================================================================
+// Error message helpers
+// Use these instead of str::replace to avoid fragility.
+// ============================================================================
+
+/// Format the "config missing" error with the resolved config path.
+fn err_config_missing(path: &Path) -> String {
+    format!(
+        "No config found at {}. Create one before running init-db.",
+        path.display()
+    )
+}
+
+/// Format the "parent missing" error with the database path.
+fn err_parent_missing(db_path: &Path) -> String {
+    format!(
+        "Cannot create database at {}: parent directory does not exist.",
+        db_path.display()
+    )
+}
+
+/// Format the "not a monodex database" error with the database path.
+fn err_not_monodex_db(db_path: &Path) -> String {
+    format!(
+        "Path {} exists but is not a monodex database.",
+        db_path.display()
+    )
+}
+
+/// Format the "partial state" error with the database path.
+fn err_partial_state(db_path: &Path) -> String {
+    format!(
+        "Path {} appears to be a partially-initialized or corrupted monodex database. Manual cleanup required.",
+        db_path.display()
+    )
+}
+
+/// Format the "already initialized" log message with the database path and schema version.
+fn log_already_initialized(db_path: &Path, schema_version: u32) -> String {
+    format!(
+        "Database at {} is already initialized (monodex_schema_version {}); skipping.",
+        db_path.display(),
+        schema_version
+    )
+}
+
+// ============================================================================
 // Command entry point
 // ============================================================================
 
@@ -57,20 +104,18 @@ async fn init_db_inner() -> Result<()> {
     let config_path = paths::config_path()?;
 
     if !config_path.exists() {
-        bail!(ERR_CONFIG_MISSING.replace("{}", &config_path.display().to_string()));
+        bail!(err_config_missing(&config_path));
     }
 
-    // TODO: Load config and resolve database.path
-    // For now, use default path
-    let db_path = resolve_database_path(&config_path)?;
+    // Load config and resolve database path
+    let config = load_config(&config_path)?;
+    let db_path = resolve_database_path(Some(&config))?;
 
     // Check if already initialized
     if let Some(meta) = check_existing_database(&db_path)? {
         println!(
             "{}",
-            LOG_ALREADY_INITIALIZED
-                .replacen("{}", &db_path.display().to_string(), 1)
-                .replacen("{}", &meta.monodex_schema_version.to_string(), 1)
+            log_already_initialized(&db_path, meta.monodex_schema_version)
         );
         return Ok(());
     }
@@ -83,15 +128,6 @@ async fn init_db_inner() -> Result<()> {
 
     println!("Created monodex database at {}", db_path.display());
     Ok(())
-}
-
-/// Resolve the database path from config.
-/// Returns the default path if database.path is not specified.
-fn resolve_database_path(_config_path: &Path) -> Result<PathBuf> {
-    // TODO: Actually load config and read database.path field
-    // For now, return default path
-    let default_path = paths::tool_home()?.join("default-db");
-    Ok(default_path)
 }
 
 /// Check if a database already exists at the given path.
@@ -111,7 +147,7 @@ fn check_existing_database(db_path: &Path) -> Result<Option<MetaFile>> {
             Ok(meta) => Ok(Some(meta)),
             Err(_) => {
                 // Corrupted meta file
-                bail!(ERR_PARTIAL_STATE.replace("{}", &db_path.display().to_string()));
+                bail!(err_partial_state(db_path));
             }
         }
     } else {
@@ -126,7 +162,7 @@ fn check_existing_database(db_path: &Path) -> Result<Option<MetaFile>> {
             Ok(None)
         } else {
             // Non-empty without meta file
-            bail!(ERR_NOT_MONODEX_DB.replace("{}", &db_path.display().to_string()));
+            bail!(err_not_monodex_db(db_path));
         }
     }
 }
@@ -145,7 +181,7 @@ fn validate_parent_directory(db_path: &Path) -> Result<()> {
             // tool_home will be created by create_database
             return Ok(());
         }
-        bail!(ERR_PARENT_MISSING.replace("{}", &db_path.display().to_string()));
+        bail!(err_parent_missing(db_path));
     }
 
     Ok(())
@@ -220,6 +256,59 @@ async fn create_database(db_path: &Path) -> Result<()> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::paths::clear_tool_home_cache;
+    use serial_test::serial;
+    use std::io::Write;
+    use std::sync::Mutex;
+    use tempfile::TempDir;
+
+    /// Mutex to serialize tests that use MONODEX_HOME environment variable.
+    /// MONODEX_HOME is process-global, so tests that modify it cannot run in parallel.
+    static MONODEX_HOME_MUTEX: Mutex<()> = Mutex::new(());
+
+    /// Helper to create a minimal config file in the given directory.
+    fn write_minimal_config(config_path: &Path) {
+        let mut file = File::create(config_path).unwrap();
+        writeln!(
+            file,
+            r#"{{
+  "qdrant": {{ "collection": "test" }},
+  "catalogs": {{}}
+}}"#
+        )
+        .unwrap();
+    }
+
+    /// Helper to create a config file with a custom database path.
+    fn write_config_with_db_path(config_path: &Path, db_path: &str) {
+        let mut file = File::create(config_path).unwrap();
+        writeln!(
+            file,
+            r#"{{
+  "qdrant": {{ "collection": "test" }},
+  "catalogs": {{}},
+  "database": {{ "path": "{}" }}
+}}"#,
+            db_path
+        )
+        .unwrap();
+    }
+
+    /// Helper to safely set MONODEX_HOME (unsafe required in Rust 2024 edition).
+    fn set_monodex_home(path: &Path) {
+        // SAFETY: We hold MONODEX_HOME_MUTEX to ensure no concurrent access.
+        unsafe {
+            std::env::set_var("MONODEX_HOME", path);
+        }
+    }
+
+    /// Helper to safely remove MONODEX_HOME (unsafe required in Rust 2024 edition).
+    fn remove_monodex_home() {
+        // SAFETY: We hold MONODEX_HOME_MUTEX to ensure no concurrent access.
+        unsafe {
+            std::env::remove_var("MONODEX_HOME");
+        }
+    }
 
     #[test]
     fn test_error_messages_are_const() {
@@ -231,6 +320,171 @@ mod tests {
         assert!(!LOG_ALREADY_INITIALIZED.is_empty());
     }
 
-    // TODO: Add integration tests for each error case
-    // These will be added after config changes are complete
+    #[test]
+    #[serial(monodex_home)]
+    fn test_happy_path_creates_database() {
+        let _guard = MONODEX_HOME_MUTEX.lock().unwrap();
+        clear_tool_home_cache();
+        let temp_dir = TempDir::new().unwrap();
+
+        // Set MONODEX_HOME to temp directory
+        set_monodex_home(temp_dir.path());
+
+        // Create minimal config
+        let config_path = temp_dir.path().join("config.json");
+        write_minimal_config(&config_path);
+
+        // Run init-db
+        let result = run_init_db();
+
+        // Should succeed
+        assert!(result.is_ok(), "init-db should succeed: {:?}", result.err());
+
+        // Verify structure
+        let db_path = temp_dir.path().join("default-db");
+        assert!(db_path.exists(), "Database directory should exist");
+        assert!(
+            db_path.join(META_FILE).exists(),
+            "monodex-meta.json should exist"
+        );
+        assert!(db_path.join("tables").exists(), "tables/ should exist");
+
+        // Cleanup env
+        remove_monodex_home();
+    }
+
+    #[test]
+    #[serial(monodex_home)]
+    fn test_idempotent_second_run_succeeds() {
+        let _guard = MONODEX_HOME_MUTEX.lock().unwrap();
+        clear_tool_home_cache();
+        let temp_dir = TempDir::new().unwrap();
+
+        set_monodex_home(temp_dir.path());
+
+        let config_path = temp_dir.path().join("config.json");
+        write_minimal_config(&config_path);
+
+        // First run
+        let result1 = run_init_db();
+        assert!(result1.is_ok(), "First init-db should succeed");
+
+        // Second run
+        clear_tool_home_cache(); // Clear cache for second run
+        let result2 = run_init_db();
+        assert!(result2.is_ok(), "Second init-db should succeed");
+
+        // Verify database still valid
+        let db_path = temp_dir.path().join("default-db");
+        assert!(db_path.join(META_FILE).exists());
+
+        remove_monodex_home();
+    }
+
+    #[test]
+    #[serial(monodex_home)]
+    fn test_missing_config_file() {
+        let _guard = MONODEX_HOME_MUTEX.lock().unwrap();
+        clear_tool_home_cache();
+        let temp_dir = TempDir::new().unwrap();
+
+        set_monodex_home(temp_dir.path());
+
+        // Do NOT create config file
+        let config_path = temp_dir.path().join("config.json");
+
+        let result = run_init_db();
+        let err = result.unwrap_err();
+
+        // Exact match on error message
+        assert_eq!(err.to_string(), err_config_missing(&config_path));
+
+        remove_monodex_home();
+    }
+
+    #[test]
+    #[serial(monodex_home)]
+    fn test_parent_missing_non_default_db() {
+        let _guard = MONODEX_HOME_MUTEX.lock().unwrap();
+        clear_tool_home_cache();
+        let temp_dir = TempDir::new().unwrap();
+
+        set_monodex_home(temp_dir.path());
+
+        // Use an absolute path whose parent definitely doesn't exist
+        let db_path_str = "/nonexistent-xyz-12345/db";
+        let config_path = temp_dir.path().join("config.json");
+        write_config_with_db_path(&config_path, db_path_str);
+
+        let result = run_init_db();
+        let err = result.unwrap_err();
+
+        // Exact match on error message
+        let expected_db_path = std::path::PathBuf::from(db_path_str);
+        assert_eq!(err.to_string(), err_parent_missing(&expected_db_path));
+
+        remove_monodex_home();
+    }
+
+    #[test]
+    #[serial(monodex_home)]
+    fn test_path_exists_but_not_monodex_database() {
+        let _guard = MONODEX_HOME_MUTEX.lock().unwrap();
+        clear_tool_home_cache();
+        let temp_dir = TempDir::new().unwrap();
+
+        set_monodex_home(temp_dir.path());
+
+        // Create a directory with a stray file (not a monodex database)
+        let db_path = temp_dir.path().join("my-db");
+        fs::create_dir_all(&db_path).unwrap();
+        File::create(db_path.join("stray-file.txt"))
+            .unwrap()
+            .write_all(b"not a monodex database")
+            .unwrap();
+
+        let config_path = temp_dir.path().join("config.json");
+        write_config_with_db_path(&config_path, db_path.to_str().unwrap());
+
+        let result = run_init_db();
+        let err = result.unwrap_err();
+
+        // Exact match on error message
+        assert_eq!(err.to_string(), err_not_monodex_db(&db_path));
+
+        remove_monodex_home();
+    }
+
+    #[test]
+    #[serial(monodex_home)]
+    fn test_corrupt_meta_file() {
+        let _guard = MONODEX_HOME_MUTEX.lock().unwrap();
+        clear_tool_home_cache();
+        let temp_dir = TempDir::new().unwrap();
+
+        set_monodex_home(temp_dir.path());
+
+        // First, create a valid database
+        let config_path = temp_dir.path().join("config.json");
+        write_minimal_config(&config_path);
+
+        let result = run_init_db();
+        assert!(result.is_ok(), "Initial init-db should succeed");
+
+        // Corrupt the meta file
+        let db_path = temp_dir.path().join("default-db");
+        let meta_path = db_path.join(META_FILE);
+        let mut file = File::create(&meta_path).unwrap();
+        file.write_all(b"this is not valid json").unwrap();
+
+        // Try to run init-db again
+        clear_tool_home_cache(); // Clear cache for second run
+        let result = run_init_db();
+        let err = result.unwrap_err();
+
+        // Exact match on error message
+        assert_eq!(err.to_string(), err_partial_state(&db_path));
+
+        remove_monodex_home();
+    }
 }

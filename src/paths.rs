@@ -1,4 +1,4 @@
-//! Resolve filesystem paths for monodex tool state (config, context, crawl config).
+//! Purpose: Resolve filesystem paths for monodex tool state (config, context, crawl config).
 //!
 //! Edit here when: Changing where tool state lives on disk, adding MONODEX_HOME-style overrides,
 //!   or adding accessors for new files under the tool home.

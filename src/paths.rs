@@ -39,16 +39,15 @@ fn resolve_tool_home_inner() -> Result<PathBuf> {
         if !trimmed.is_empty() {
             let path = PathBuf::from(trimmed);
 
-            // If relative, canonicalize it
+            // If relative, convert to absolute using current working directory
             if path.is_relative() {
-                let canonicalized = path.canonicalize().map_err(|e| {
-                    anyhow!("Failed to canonicalize MONODEX_HOME '{}': {}", trimmed, e)
-                })?;
+                let cwd = std::env::current_dir()?;
+                let absolute = cwd.join(&path);
                 eprintln!(
                     "MONODEX_HOME is a relative path; resolved to {}",
-                    canonicalized.display()
+                    absolute.display()
                 );
-                return Ok(canonicalized);
+                return Ok(absolute);
             }
 
             return Ok(path);
@@ -57,7 +56,7 @@ fn resolve_tool_home_inner() -> Result<PathBuf> {
 
     // Fall back to home directory
     let home = dirs::home_dir().ok_or_else(|| {
-        anyhow!("Cannot determine home directory. Please set MONODEX_HOME environment variable.")
+        anyhow!("Cannot determine monodex tool home: MONODEX_HOME is not set and your home directory could not be determined.")
     })?;
 
     Ok(home.join(".monodex"))
@@ -159,9 +158,11 @@ pub fn warn_old_tool_home_if_present() {
                 .map(|p| p.parent().map(|p| p == old_dir).unwrap_or(false))
                 .unwrap_or(true);
 
-            if all_in_hardcoded && old_dir.join("config.json").exists()
-                || old_dir.join("context.json").exists()
-            {
+            let has_old_config = old_dir.join("config.json").exists();
+            let has_old_context = old_dir.join("context.json").exists();
+            let has_old_hardcoded_files = has_old_config || has_old_context;
+
+            if all_in_hardcoded && has_old_hardcoded_files {
                 eprintln!(
                     "  Suggestion: mv {} {}",
                     old_dir.display(),
@@ -226,6 +227,45 @@ mod tests {
         // Test the inner resolution directly (bypasses cache)
         let result = resolve_tool_home_inner().unwrap();
         assert_eq!(result, PathBuf::from("/tmp/test-monodex-home"));
+
+        // Clean up
+        // SAFETY: Removing env var in test is safe
+        unsafe {
+            env::remove_var("MONODEX_HOME");
+        }
+    }
+
+    #[test]
+    #[serial(monodex_home)]
+    fn test_monodex_home_relative_path() {
+        let _guard = EnvGuard::new("MONODEX_HOME");
+
+        // SAFETY: Setting env var in test is safe
+        unsafe {
+            env::set_var("MONODEX_HOME", "./tmp-home");
+        }
+
+        // Test the inner resolution directly (bypasses cache)
+        let result = resolve_tool_home_inner().unwrap();
+
+        // Result should be absolute
+        assert!(
+            result.is_absolute(),
+            "Result should be absolute: {:?}",
+            result
+        );
+
+        // Result should end with tmp-home
+        assert!(
+            result.ends_with("tmp-home"),
+            "Result should end with tmp-home: {:?}",
+            result
+        );
+
+        // Compute expected path dynamically based on current directory
+        let cwd = std::env::current_dir().expect("current_dir should work");
+        let expected = cwd.join("tmp-home");
+        assert_eq!(result, expected);
 
         // Clean up
         // SAFETY: Removing env var in test is safe

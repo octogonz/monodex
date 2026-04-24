@@ -79,11 +79,8 @@ pub fn load_warning_state(catalog_name: &str) -> HashSet<String> {
 }
 
 /// Save chunking warning files for a catalog.
-/// Persists the HashSet of relative paths to ~/.config/monodex/warnings-<catalog>.json
-pub fn save_warning_state(
-    catalog_name: &str,
-    warning_files: &HashSet<String>,
-) -> anyhow::Result<()> {
+/// Persists the sorted list of relative paths to ~/.config/monodex/warnings-<catalog>.json
+pub fn save_warning_state(catalog_name: &str, warning_files: &[String]) -> anyhow::Result<()> {
     let path = get_warning_state_path(catalog_name);
 
     // Ensure parent directory exists

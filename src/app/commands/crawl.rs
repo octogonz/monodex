@@ -130,12 +130,23 @@ pub fn run_crawl_label(
     let mut existing_count = 0;
 
     for file_entry in &files_to_process {
+        // When incremental_warnings is false and file had prior warning, force reprocessing
+        let force_reprocess =
+            !incremental_warnings && prior_warning_files.contains(&file_entry.relative_path);
+
         let file_id = compute_file_id(
             EMBEDDER_ID,
             CHUNKER_ID,
             &file_entry.blob_id,
             &file_entry.relative_path,
         );
+
+        if force_reprocess {
+            // Treat as new file to re-chunk and re-index
+            new_files.push((file_entry.relative_path.clone(), file_entry.blob_id.clone()));
+            new_count += 1;
+            continue;
+        }
 
         // Check if sentinel exists
         match uploader.get_file_sentinel(&file_id) {
@@ -400,26 +411,27 @@ pub fn run_crawl_label(
         // In this mode, unchanged warning files may remain skipped; preserve prior state.
         next_warning_files.extend(prior_warning_files.iter().cloned());
     }
-    save_warning_state(catalog_name, &next_warning_files)?;
+    // Convert to sorted Vec for deterministic output
+    let mut sorted_warning_files: Vec<String> = next_warning_files.iter().cloned().collect();
+    sorted_warning_files.sort();
+    save_warning_state(catalog_name, &sorted_warning_files)?;
 
-    // Warning summary
+    // Warning summary (sorted for deterministic output)
     if !crawl_warning_files.is_empty() {
-        let plural = if crawl_warning_files.len() == 1 {
+        let mut sorted_summary: Vec<&String> = crawl_warning_files.iter().collect();
+        sorted_summary.sort();
+        let plural = if sorted_summary.len() == 1 {
             "file"
         } else {
             "files"
         };
         println!();
-        println!(
-            "Chunking warnings in {} {}:",
-            crawl_warning_files.len(),
-            plural
-        );
-        for file in crawl_warning_files.iter().take(20) {
+        println!("Chunking warnings in {} {}:", sorted_summary.len(), plural);
+        for file in sorted_summary.iter().take(20) {
             println!("  - {}", file);
         }
-        if crawl_warning_files.len() > 20 {
-            println!("  ... and {} more", crawl_warning_files.len() - 20);
+        if sorted_summary.len() > 20 {
+            println!("  ... and {} more", sorted_summary.len() - 20);
         }
     }
 
@@ -535,12 +547,23 @@ pub fn run_crawl_working_dir(
     let mut existing_count = 0;
 
     for file_entry in &files_to_process {
+        // When incremental_warnings is false and file had prior warning, force reprocessing
+        let force_reprocess =
+            !incremental_warnings && prior_warning_files.contains(&file_entry.relative_path);
+
         let file_id = compute_file_id(
             EMBEDDER_ID,
             CHUNKER_ID,
             &file_entry.blob_id,
             &file_entry.relative_path,
         );
+
+        if force_reprocess {
+            // Treat as new file to re-chunk and re-index
+            new_files.push((file_entry.relative_path.clone(), file_entry.blob_id.clone()));
+            new_count += 1;
+            continue;
+        }
 
         match uploader.get_file_sentinel(&file_id) {
             Ok(Some(sync_info)) => {
@@ -796,26 +819,27 @@ pub fn run_crawl_working_dir(
         // In this mode, unchanged warning files may remain skipped; preserve prior state.
         next_warning_files.extend(prior_warning_files.iter().cloned());
     }
-    save_warning_state(catalog_name, &next_warning_files)?;
+    // Convert to sorted Vec for deterministic output
+    let mut sorted_warning_files: Vec<String> = next_warning_files.iter().cloned().collect();
+    sorted_warning_files.sort();
+    save_warning_state(catalog_name, &sorted_warning_files)?;
 
-    // Warning summary
+    // Warning summary (sorted for deterministic output)
     if !crawl_warning_files.is_empty() {
-        let plural = if crawl_warning_files.len() == 1 {
+        let mut sorted_summary: Vec<&String> = crawl_warning_files.iter().collect();
+        sorted_summary.sort();
+        let plural = if sorted_summary.len() == 1 {
             "file"
         } else {
             "files"
         };
         println!();
-        println!(
-            "Chunking warnings in {} {}:",
-            crawl_warning_files.len(),
-            plural
-        );
-        for file in crawl_warning_files.iter().take(20) {
+        println!("Chunking warnings in {} {}:", sorted_summary.len(), plural);
+        for file in sorted_summary.iter().take(20) {
             println!("  - {}", file);
         }
-        if crawl_warning_files.len() > 20 {
-            println!("  ... and {} more", crawl_warning_files.len() - 20);
+        if sorted_summary.len() > 20 {
+            println!("  ... and {} more", sorted_summary.len() - 20);
         }
     }
 

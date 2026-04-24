@@ -7,11 +7,15 @@
 //!   or modifying the database open/validate logic.
 //! Do not edit here for: Chunking logic (see engine/partitioner/), CLI handlers (see app/commands/).
 
+mod chunks;
 mod database;
+mod labels;
 mod rows;
 
 #[cfg(test)]
 mod api_smoke;
 
+pub use chunks::ChunkStorage;
 pub use database::{Database, META_FILE, MetaFile};
+pub use labels::LabelStorage;
 pub use rows::{ChunkRow, LabelMetadataRow, ScoredChunkRow};

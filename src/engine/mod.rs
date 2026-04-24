@@ -15,6 +15,7 @@ pub mod markdown_partitioner;
 pub mod package_lookup;
 pub mod parallel_embedder;
 pub mod partitioner;
+pub mod storage;
 pub mod system_info;
 pub mod uploader;
 pub mod util;

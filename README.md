@@ -72,9 +72,18 @@ This tool is designed for AI assistants. The indexed database provides a complet
 ## Prerequisites
 
 - **Rust**: 1.91+ (for edition 2024)
-- **Qdrant**: Vector database running on localhost:6333 (only needed for crawling/searching)
 
-  Installation instructions can be found in the [Qdrant Quickstart](https://qdrant.tech/documentation/quickstart/) documentation.
+- **Protocol Buffers compiler (`protoc`)**: Required at build time by LanceDB's transitive dependencies. Install via your platform package manager:
+
+  | Platform      | Command                                  |
+  | ------------- | ---------------------------------------- |
+  | Windows       | `winget install protobuf`                |
+  | macOS         | `brew install protobuf`                  |
+  | Debian/Ubuntu | `sudo apt-get install protobuf-compiler` |
+  | Fedora/RHEL   | `sudo dnf install protobuf-compiler`     |
+  | Arch          | `sudo pacman -S protobuf`                |
+
+  Verify with `protoc --version` (any recent 3.x or 4.x/20+ release works). If `protoc` is installed in a non-standard location, set the `PROTOC` environment variable to its full path before building.
 
 - **Model**: jina-embeddings-v2-base-code (auto-downloaded from HuggingFace to `models/` on first use)
 

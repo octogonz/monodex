@@ -6,7 +6,9 @@
 use anyhow::Result;
 use std::collections::HashSet;
 
-use crate::app::{Config, format_duration, run_embed_upload_pipeline};
+use crate::app::{
+    Config, format_duration, load_warning_state, run_embed_upload_pipeline, save_warning_state,
+};
 use crate::engine::{
     chunker::{ChunkContext, chunk_content},
     crawl_config::load_compiled_crawl_config,
@@ -25,7 +27,7 @@ pub fn run_crawl_label(
     catalog_name: &str,
     label: &str,
     commit: &str,
-    _incremental_warnings: bool,
+    incremental_warnings: bool,
     debug: bool,
 ) -> Result<()> {
     use crate::engine::util::{CHUNKER_ID, EMBEDDER_ID, compute_file_id};
@@ -56,6 +58,16 @@ pub fn run_crawl_label(
     // B.1: Load repo-specific crawl configuration
     let crawl_config = load_compiled_crawl_config(Some(repo_path))?;
     println!("Loaded crawl configuration for repository");
+
+    // Load persisted chunking warning files (sticky by default)
+    let prior_warning_files = load_warning_state(catalog_name);
+    if !prior_warning_files.is_empty() {
+        println!(
+            "Found {} files with prior chunking warnings",
+            prior_warning_files.len()
+        );
+    }
+    println!();
 
     // Initialize uploader
     let uploader = QdrantUploader::new(
@@ -118,12 +130,23 @@ pub fn run_crawl_label(
     let mut existing_count = 0;
 
     for file_entry in &files_to_process {
+        // When incremental_warnings is false and file had prior warning, force reprocessing
+        let force_reprocess =
+            !incremental_warnings && prior_warning_files.contains(&file_entry.relative_path);
+
         let file_id = compute_file_id(
             EMBEDDER_ID,
             CHUNKER_ID,
             &file_entry.blob_id,
             &file_entry.relative_path,
         );
+
+        if force_reprocess {
+            // Treat as new file to re-chunk and re-index
+            new_files.push((file_entry.relative_path.clone(), file_entry.blob_id.clone()));
+            new_count += 1;
+            continue;
+        }
 
         // Check if sentinel exists
         match uploader.get_file_sentinel(&file_id) {
@@ -194,16 +217,19 @@ pub fn run_crawl_label(
     // Step 6: Index new files
     let mut all_chunks: Vec<crate::engine::Chunk> = Vec::new();
     let mut touched_file_ids: HashSet<String> = HashSet::new();
+    let mut crawl_warning_files: HashSet<String> = HashSet::new();
+    let mut warning_count: usize = 0;
 
     if !new_files.is_empty() {
         println!("📦 Phase 2: Chunking {} new files...", new_count);
 
         for (idx, (relative_path, blob_id)) in new_files.iter().enumerate() {
             print!(
-                "\r  Processing file {}/{} ({:.0}%)   ",
+                "\r  Processing file {}/{} ({:.0}%) | warnings: {}   ",
                 idx + 1,
                 new_count,
-                ((idx + 1) as f64 / new_count as f64) * 100.0
+                ((idx + 1) as f64 / new_count as f64) * 100.0,
+                warning_count
             );
             std::io::Write::flush(&mut std::io::stdout())?;
 
@@ -242,6 +268,15 @@ pub fn run_crawl_label(
             let strategy = crawl_config.get_strategy(relative_path);
             match chunk_content(&content_str, &ctx, 6000, strategy) {
                 Ok(chunks) => {
+                    // Detect fallback warning: chunk_kind == "fallback-split"
+                    let had_warning = chunks.iter().any(|c| c.chunk_kind == "fallback-split");
+                    if had_warning {
+                        warning_count += 1;
+                        crawl_warning_files.insert(relative_path.clone());
+                        println!();
+                        println!("Warning: Couldn't find a splitpoint for {}", relative_path);
+                    }
+
                     if !chunks.is_empty() {
                         touched_file_ids.insert(chunks[0].file_id.clone());
                     }
@@ -368,6 +403,38 @@ pub fn run_crawl_label(
         );
     }
 
+    // Save warning state: keep files that had warnings this crawl
+    // plus any previous warning files that were skipped due to incremental mode.
+    let mut next_warning_files: HashSet<String> = HashSet::new();
+    next_warning_files.extend(crawl_warning_files.iter().cloned());
+    if incremental_warnings {
+        // In this mode, unchanged warning files may remain skipped; preserve prior state.
+        next_warning_files.extend(prior_warning_files.iter().cloned());
+    }
+    // Convert to sorted Vec for deterministic output
+    let mut sorted_warning_files: Vec<String> = next_warning_files.iter().cloned().collect();
+    sorted_warning_files.sort();
+    save_warning_state(catalog_name, &sorted_warning_files)?;
+
+    // Warning summary (sorted for deterministic output)
+    if !crawl_warning_files.is_empty() {
+        let mut sorted_summary: Vec<&String> = crawl_warning_files.iter().collect();
+        sorted_summary.sort();
+        let plural = if sorted_summary.len() == 1 {
+            "file"
+        } else {
+            "files"
+        };
+        println!();
+        println!("Chunking warnings in {} {}:", sorted_summary.len(), plural);
+        for file in sorted_summary.iter().take(20) {
+            println!("  - {}", file);
+        }
+        if sorted_summary.len() > 20 {
+            println!("  ... and {} more", sorted_summary.len() - 20);
+        }
+    }
+
     Ok(())
 }
 
@@ -376,7 +443,7 @@ pub fn run_crawl_working_dir(
     config: &Config,
     catalog_name: &str,
     label: &str,
-    _incremental_warnings: bool,
+    incremental_warnings: bool,
     debug: bool,
 ) -> Result<()> {
     use crate::engine::util::{CHUNKER_ID, EMBEDDER_ID, compute_file_id};
@@ -407,6 +474,16 @@ pub fn run_crawl_working_dir(
     // B.1: Load repo-specific crawl configuration
     let crawl_config = load_compiled_crawl_config(Some(repo_path))?;
     println!("Loaded crawl configuration for repository");
+
+    // Load persisted chunking warning files (sticky by default)
+    let prior_warning_files = load_warning_state(catalog_name);
+    if !prior_warning_files.is_empty() {
+        println!(
+            "Found {} files with prior chunking warnings",
+            prior_warning_files.len()
+        );
+    }
+    println!();
 
     // Initialize uploader
     let uploader = QdrantUploader::new(
@@ -470,12 +547,23 @@ pub fn run_crawl_working_dir(
     let mut existing_count = 0;
 
     for file_entry in &files_to_process {
+        // When incremental_warnings is false and file had prior warning, force reprocessing
+        let force_reprocess =
+            !incremental_warnings && prior_warning_files.contains(&file_entry.relative_path);
+
         let file_id = compute_file_id(
             EMBEDDER_ID,
             CHUNKER_ID,
             &file_entry.blob_id,
             &file_entry.relative_path,
         );
+
+        if force_reprocess {
+            // Treat as new file to re-chunk and re-index
+            new_files.push((file_entry.relative_path.clone(), file_entry.blob_id.clone()));
+            new_count += 1;
+            continue;
+        }
 
         match uploader.get_file_sentinel(&file_id) {
             Ok(Some(sync_info)) => {
@@ -545,16 +633,19 @@ pub fn run_crawl_working_dir(
     // Step 6: Index new files
     let mut all_chunks: Vec<crate::engine::Chunk> = Vec::new();
     let mut touched_file_ids: HashSet<String> = HashSet::new();
+    let mut crawl_warning_files: HashSet<String> = HashSet::new();
+    let mut warning_count: usize = 0;
 
     if !new_files.is_empty() {
         println!("📦 Phase 2: Chunking {} new files...", new_count);
 
         for (idx, (relative_path, blob_id)) in new_files.iter().enumerate() {
             print!(
-                "\r  Processing file {}/{} ({:.0}%)   ",
+                "\r  Processing file {}/{} ({:.0}%) | warnings: {}   ",
                 idx + 1,
                 new_count,
-                ((idx + 1) as f64 / new_count as f64) * 100.0
+                ((idx + 1) as f64 / new_count as f64) * 100.0,
+                warning_count
             );
             std::io::Write::flush(&mut std::io::stdout())?;
 
@@ -588,6 +679,15 @@ pub fn run_crawl_working_dir(
             let strategy = crawl_config.get_strategy(relative_path);
             match chunk_content(&content_str, &ctx, 6000, strategy) {
                 Ok(chunks) => {
+                    // Detect fallback warning: chunk_kind == "fallback-split"
+                    let had_warning = chunks.iter().any(|c| c.chunk_kind == "fallback-split");
+                    if had_warning {
+                        warning_count += 1;
+                        crawl_warning_files.insert(relative_path.clone());
+                        println!();
+                        println!("Warning: Couldn't find a splitpoint for {}", relative_path);
+                    }
+
                     if !chunks.is_empty() {
                         touched_file_ids.insert(chunks[0].file_id.clone());
                     }
@@ -709,6 +809,38 @@ pub fn run_crawl_working_dir(
             "  Existing files updated successfully: {}",
             existing_files.len()
         );
+    }
+
+    // Save warning state: keep files that had warnings this crawl
+    // plus any previous warning files that were skipped due to incremental mode.
+    let mut next_warning_files: HashSet<String> = HashSet::new();
+    next_warning_files.extend(crawl_warning_files.iter().cloned());
+    if incremental_warnings {
+        // In this mode, unchanged warning files may remain skipped; preserve prior state.
+        next_warning_files.extend(prior_warning_files.iter().cloned());
+    }
+    // Convert to sorted Vec for deterministic output
+    let mut sorted_warning_files: Vec<String> = next_warning_files.iter().cloned().collect();
+    sorted_warning_files.sort();
+    save_warning_state(catalog_name, &sorted_warning_files)?;
+
+    // Warning summary (sorted for deterministic output)
+    if !crawl_warning_files.is_empty() {
+        let mut sorted_summary: Vec<&String> = crawl_warning_files.iter().collect();
+        sorted_summary.sort();
+        let plural = if sorted_summary.len() == 1 {
+            "file"
+        } else {
+            "files"
+        };
+        println!();
+        println!("Chunking warnings in {} {}:", sorted_summary.len(), plural);
+        for file in sorted_summary.iter().take(20) {
+            println!("  - {}", file);
+        }
+        if sorted_summary.len() > 20 {
+            println!("  ... and {} more", sorted_summary.len() - 20);
+        }
     }
 
     Ok(())

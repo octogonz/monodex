@@ -23,6 +23,12 @@ PUBLISHING PROCEDURE:
 4. After publishing, the next PR author will add a new "## Unreleased" section
 -->
 
+## Unreleased
+
+### Added
+
+- **Chunking warning persistence**: Files that require fallback line-based splitting (when AST chunking fails) are now tracked and persisted to `~/.config/monodex/warnings-<catalog>.json`. The crawl command reports these files with their relative paths and shows a warning count during progress.
+
 ## 0.4.0 (2025-01-17)
 
 ### Changed

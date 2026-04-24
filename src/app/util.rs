@@ -4,6 +4,9 @@
 //! or terminal output functions.
 //! Do not edit here for: Engine-wide utilities (see `engine/util.rs`).
 
+use std::collections::HashSet;
+use std::path::PathBuf;
+
 /// Get current timestamp for logging (HH:MM:SS format)
 pub fn chrono_timestamp() -> String {
     let now = std::time::SystemTime::now()
@@ -51,4 +54,41 @@ pub fn sanitize_for_terminal(s: &str) -> String {
             !c.is_control() || *c == '\t' || *c == '\n' || *c == '\r'
         })
         .collect()
+}
+
+// ============================================================================
+// Chunking Warning State Persistence
+// ============================================================================
+
+/// Get the path to the warning state file for a catalog.
+/// Path: ~/.config/monodex/warnings-<catalog>.json
+pub fn get_warning_state_path(catalog_name: &str) -> PathBuf {
+    PathBuf::from(
+        shellexpand::tilde(&format!("~/.config/monodex/warnings-{}.json", catalog_name)).as_ref(),
+    )
+}
+
+/// Load persisted chunking warning files for a catalog.
+/// Returns a HashSet of relative paths that had chunking warnings.
+pub fn load_warning_state(catalog_name: &str) -> HashSet<String> {
+    let path = get_warning_state_path(catalog_name);
+    match std::fs::read_to_string(&path) {
+        Ok(content) => serde_json::from_str(&content).unwrap_or_default(),
+        Err(_) => HashSet::new(),
+    }
+}
+
+/// Save chunking warning files for a catalog.
+/// Persists the sorted list of relative paths to ~/.config/monodex/warnings-<catalog>.json
+pub fn save_warning_state(catalog_name: &str, warning_files: &[String]) -> anyhow::Result<()> {
+    let path = get_warning_state_path(catalog_name);
+
+    // Ensure parent directory exists
+    if let Some(parent) = path.parent() {
+        std::fs::create_dir_all(parent)?;
+    }
+
+    let json = serde_json::to_string_pretty(warning_files)?;
+    std::fs::write(&path, json)?;
+    Ok(())
 }

@@ -1,8 +1,10 @@
 {
-  "qdrant": {
-    "url": "http://localhost:6333",
-    "collection": "my_monorepo"
-  },
+  // Database configuration (optional, defaults shown)
+  // "database": {
+  //   "path": "~/.monodex/default-db"
+  // },
+
+  // Catalog definitions (required)
   "catalogs": {
     "my_monorepo": {
       "type": "monorepo",
@@ -12,5 +14,11 @@
       "type": "monorepo",
       "path": "~/projects/another-monorepo"
     }
-  }
+  },
+
+  // Embedding model configuration (optional, defaults shown)
+  // "embeddingModel": {
+  //   "modelInstances": "auto",
+  //   "threadsPerInstance": "auto"
+  // }
 }

@@ -172,6 +172,7 @@ impl<'de> serde::Deserialize<'de> for EmbeddingSizeValue {
 
 /// Main configuration file
 #[derive(Debug, serde::Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct Config {
     pub catalogs: HashMap<String, CatalogConfig>,
     #[serde(rename = "embeddingModel", default)]
@@ -604,5 +605,34 @@ mod tests {
 
         // Should end with default-db
         assert!(path.ends_with("default-db"));
+    }
+
+    #[test]
+    fn test_config_rejects_unknown_fields() {
+        let dir = tempdir().unwrap();
+        let config_path = dir.path().join("config.json");
+        let mut file = std::fs::File::create(&config_path).unwrap();
+
+        // Config with an unknown field "qdrant" (old Qdrant-era config)
+        writeln!(
+            file,
+            r#"{{
+                "catalogs": {{}},
+                "qdrant": {{
+                    "url": "http://localhost:6333",
+                    "collection": "monodex"
+                }}
+            }}"#
+        )
+        .unwrap();
+
+        let result = load_config(&config_path);
+        assert!(result.is_err());
+        let err = result.unwrap_err().to_string();
+        assert!(
+            err.contains("unknown field"),
+            "Expected error about unknown field, got: {}",
+            err
+        );
     }
 }

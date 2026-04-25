@@ -77,7 +77,11 @@ pub fn load_warning_state(db_root: &std::path::Path, catalog_name: &str) -> Hash
 
 /// Save chunking warning files for a catalog.
 /// Persists the sorted list of relative paths to <db_root>/warnings-<catalog>.json
-pub fn save_warning_state(db_root: &std::path::Path, catalog_name: &str, warning_files: &[String]) -> anyhow::Result<()> {
+pub fn save_warning_state(
+    db_root: &std::path::Path,
+    catalog_name: &str,
+    warning_files: &[String],
+) -> anyhow::Result<()> {
     let path = get_warning_state_path(db_root, catalog_name);
 
     // Ensure parent directory exists

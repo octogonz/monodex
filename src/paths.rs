@@ -119,14 +119,6 @@ pub fn crawl_config_path() -> Result<PathBuf> {
     Ok(tool_home()?.join("crawl.json"))
 }
 
-/// Convenience accessor for the chunking warning state file for a catalog.
-///
-/// Returns `<tool_home>/warnings-<catalog>.json`.
-/// This is a pure path constructor — it does NOT create parent directories.
-pub fn warning_state_path(catalog_name: &str) -> Result<PathBuf> {
-    Ok(tool_home()?.join(format!("warnings-{}.json", catalog_name)))
-}
-
 /// Called once from main() early in startup. Prints a one-line warning to stderr
 /// if any files exist at the old pre-PR locations and no files exist at the
 /// effective new tool home. Not suppressible.

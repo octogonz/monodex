@@ -60,15 +60,15 @@ pub fn sanitize_for_terminal(s: &str) -> String {
 // ============================================================================
 
 /// Get the path to the warning state file for a catalog.
-/// Path: <tool_home>/warnings-<catalog>.json
-pub fn get_warning_state_path(catalog_name: &str) -> std::path::PathBuf {
-    crate::paths::warning_state_path(catalog_name).expect("tool home should be resolvable")
+/// Path: <db_root>/warnings-<catalog>.json
+pub fn get_warning_state_path(db_root: &std::path::Path, catalog_name: &str) -> std::path::PathBuf {
+    db_root.join(format!("warnings-{}.json", catalog_name))
 }
 
 /// Load persisted chunking warning files for a catalog.
 /// Returns a HashSet of relative paths that had chunking warnings.
-pub fn load_warning_state(catalog_name: &str) -> HashSet<String> {
-    let path = get_warning_state_path(catalog_name);
+pub fn load_warning_state(db_root: &std::path::Path, catalog_name: &str) -> HashSet<String> {
+    let path = get_warning_state_path(db_root, catalog_name);
     match std::fs::read_to_string(&path) {
         Ok(content) => serde_json::from_str(&content).unwrap_or_default(),
         Err(_) => HashSet::new(),
@@ -76,9 +76,9 @@ pub fn load_warning_state(catalog_name: &str) -> HashSet<String> {
 }
 
 /// Save chunking warning files for a catalog.
-/// Persists the sorted list of relative paths to <tool_home>/warnings-<catalog>.json
-pub fn save_warning_state(catalog_name: &str, warning_files: &[String]) -> anyhow::Result<()> {
-    let path = get_warning_state_path(catalog_name);
+/// Persists the sorted list of relative paths to <db_root>/warnings-<catalog>.json
+pub fn save_warning_state(db_root: &std::path::Path, catalog_name: &str, warning_files: &[String]) -> anyhow::Result<()> {
+    let path = get_warning_state_path(db_root, catalog_name);
 
     // Ensure parent directory exists
     if let Some(parent) = path.parent() {

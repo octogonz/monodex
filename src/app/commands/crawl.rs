@@ -60,8 +60,12 @@ pub fn run_crawl_label(
     let crawl_config = load_compiled_crawl_config(Some(repo_path))?;
     println!("Loaded crawl configuration for repository");
 
+    // Resolve database path (needed for warning state file location)
+    let db_path = resolve_database_path(Some(config))?;
+    println!("Database: {}", db_path.display());
+
     // Load persisted chunking warning files (sticky by default)
-    let prior_warning_files = load_warning_state(catalog_name);
+    let prior_warning_files = load_warning_state(&db_path, catalog_name);
     if !prior_warning_files.is_empty() {
         println!(
             "Found {} files with prior chunking warnings",
@@ -69,10 +73,6 @@ pub fn run_crawl_label(
         );
     }
     println!();
-
-    // Open database
-    let db_path = resolve_database_path(Some(config))?;
-    println!("Database: {}", db_path.display());
 
     let rt = tokio::runtime::Runtime::new()?;
     rt.block_on(run_crawl_label_async(
@@ -468,7 +468,7 @@ async fn run_crawl_label_async(
     }
     let mut sorted_warning_files: Vec<String> = next_warning_files.iter().cloned().collect();
     sorted_warning_files.sort();
-    save_warning_state(catalog_name, &sorted_warning_files)?;
+    save_warning_state(db_path, catalog_name, &sorted_warning_files)?;
 
     // Warning summary
     if !crawl_warning_files.is_empty() {
@@ -569,8 +569,12 @@ pub fn run_crawl_working_dir(
     let crawl_config = load_compiled_crawl_config(Some(repo_path))?;
     println!("Loaded crawl configuration for repository");
 
+    // Resolve database path (needed for warning state file location)
+    let db_path = resolve_database_path(Some(config))?;
+    println!("Database: {}", db_path.display());
+
     // Load persisted chunking warning files (sticky by default)
-    let prior_warning_files = load_warning_state(catalog_name);
+    let prior_warning_files = load_warning_state(&db_path, catalog_name);
     if !prior_warning_files.is_empty() {
         println!(
             "Found {} files with prior chunking warnings",
@@ -578,10 +582,6 @@ pub fn run_crawl_working_dir(
         );
     }
     println!();
-
-    // Open database
-    let db_path = resolve_database_path(Some(config))?;
-    println!("Database: {}", db_path.display());
 
     let rt = tokio::runtime::Runtime::new()?;
     rt.block_on(run_crawl_working_dir_async(
@@ -963,7 +963,7 @@ async fn run_crawl_working_dir_async(
     }
     let mut sorted_warning_files: Vec<String> = next_warning_files.iter().cloned().collect();
     sorted_warning_files.sort();
-    save_warning_state(catalog_name, &sorted_warning_files)?;
+    save_warning_state(db_path, catalog_name, &sorted_warning_files)?;
 
     // Warning summary
     if !crawl_warning_files.is_empty() {

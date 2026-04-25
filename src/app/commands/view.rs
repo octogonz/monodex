@@ -1,12 +1,12 @@
 //! Handler for the `view` command.
 //!
 //! Edit here when: Modifying view output or chunk selector parsing.
-//! Do not edit here for: Chunk retrieval (see `engine/uploader/search.rs`).
+//! Do not edit here for: Chunk retrieval (see `engine/storage/chunks.rs`).
 
 use std::collections::HashSet;
 
-use crate::app::{Config, resolve_label_context, sanitize_for_terminal};
-use crate::engine::uploader::{PointResult, QdrantUploader};
+use crate::app::{Config, resolve_database_path, resolve_label_context, sanitize_for_terminal};
+use crate::engine::storage::{ChunkRow, Database};
 
 /// Parsed selector for file-based chunk queries
 #[derive(Debug, Clone)]
@@ -120,7 +120,7 @@ pub fn run_view(
     catalog: Option<&str>,
     show_full_paths: bool,
     chunks_only: bool,
-    debug: bool,
+    _debug: bool,
 ) -> anyhow::Result<()> {
     if id_specs.is_empty() {
         return Err(anyhow::anyhow!(
@@ -138,13 +138,40 @@ pub fn run_view(
         requests.push((file_id, selector));
     }
 
-    // Query Qdrant
-    let uploader = QdrantUploader::new(
-        &config.qdrant.collection,
-        config.qdrant.url.as_deref(),
-        debug,
-        config.qdrant.get_max_upload_bytes(),
-    )?;
+    // Open database (handshake validates monodex-meta.json)
+    let db_path = resolve_database_path(Some(config))?;
+    let rt = tokio::runtime::Runtime::new()?;
+    let all_results: Vec<(String, ChunkSelector, Vec<ChunkRow>)> = rt.block_on(async {
+        let db = Database::open(&db_path).await?;
+        let chunk_storage = db.chunks_storage().await?;
+
+        let mut results: Vec<(String, ChunkSelector, Vec<ChunkRow>)> = Vec::new();
+
+        for (file_id, selector) in requests {
+            let chunks = chunk_storage.get_chunks_by_file_id_with_label(&file_id, label_id.as_str()).await?;
+
+            // Filter by selector
+            let filtered: Vec<ChunkRow> = match &selector {
+                ChunkSelector::All => chunks,
+                ChunkSelector::Single(n) => chunks
+                    .into_iter()
+                    .filter(|c| c.chunk_ordinal as usize == *n)
+                    .collect(),
+                ChunkSelector::Range(start, end) => chunks
+                    .into_iter()
+                    .filter(|c| c.chunk_ordinal as usize >= *start && c.chunk_ordinal as usize <= *end)
+                    .collect(),
+                ChunkSelector::ToEnd(start) => chunks
+                    .into_iter()
+                    .filter(|c| c.chunk_ordinal as usize >= *start)
+                    .collect(),
+            };
+
+            results.push((file_id, selector, filtered));
+        }
+
+        anyhow::Ok(results)
+    })?;
 
     if !chunks_only {
         println!("Catalog: {}", catalog_name);
@@ -152,37 +179,11 @@ pub fn run_view(
         println!();
     }
 
-    // Collect all results with their original selectors for display
-    let mut all_results: Vec<(String, ChunkSelector, Vec<PointResult>)> = Vec::new();
-
-    for (file_id, selector) in requests {
-        let chunks = uploader.get_chunks_by_file_id_with_label(&file_id, label_id.as_str())?;
-
-        // Filter by selector
-        let filtered: Vec<PointResult> = match &selector {
-            ChunkSelector::All => chunks,
-            ChunkSelector::Single(n) => chunks
-                .into_iter()
-                .filter(|c| c.payload.chunk_ordinal == *n)
-                .collect(),
-            ChunkSelector::Range(start, end) => chunks
-                .into_iter()
-                .filter(|c| c.payload.chunk_ordinal >= *start && c.payload.chunk_ordinal <= *end)
-                .collect(),
-            ChunkSelector::ToEnd(start) => chunks
-                .into_iter()
-                .filter(|c| c.payload.chunk_ordinal >= *start)
-                .collect(),
-        };
-
-        all_results.push((file_id, selector, filtered));
-    }
-
     // Collect unique catalogs for preamble
     if !chunks_only {
         let catalogs: HashSet<&str> = all_results
             .iter()
-            .flat_map(|(_, _, results)| results.iter().map(|r| r.payload.catalog.as_str()))
+            .flat_map(|(_, _, results)| results.iter().map(|r| r.catalog.as_str()))
             .collect();
 
         if !catalogs.is_empty() {
@@ -218,20 +219,20 @@ pub fn run_view(
         for result in results {
             // E.1: Sanitize output fields to prevent terminal injection
             let breadcrumb =
-                sanitize_for_terminal(result.payload.breadcrumb.as_deref().unwrap_or("unknown"));
-            let chunk_count = result.payload.chunk_count;
-            let chunk_ordinal = result.payload.chunk_ordinal;
+                sanitize_for_terminal(result.breadcrumb.as_deref().unwrap_or("unknown"));
+            let chunk_count = result.chunk_count;
+            let chunk_ordinal = result.chunk_ordinal;
 
             // Build the report form with chunk_kind and split metadata
             let mut report = breadcrumb.clone();
             if let (Some(ordinal), Some(count)) = (
-                result.payload.split_part_ordinal,
-                result.payload.split_part_count,
+                result.split_part_ordinal,
+                result.split_part_count,
             ) {
                 report = format!("{} (part {}/{})", report, ordinal, count);
             }
-            if result.payload.chunk_kind != "content" {
-                report = format!("{} [{}]", report, result.payload.chunk_kind);
+            if result.chunk_kind != "content" {
+                report = format!("{} [{}]", report, result.chunk_kind);
             }
 
             // Header line: <file_id>:<chunk_ordinal> (<n>/<total>) <breadcrumb> [kind] (part N/M)
@@ -243,31 +244,31 @@ pub fn run_view(
             // Source line (non-grammar format per spec §8.6)
             println!(
                 "Source: ({}) {}",
-                sanitize_for_terminal(&result.payload.catalog),
-                sanitize_for_terminal(&result.payload.relative_path)
+                sanitize_for_terminal(&result.catalog),
+                sanitize_for_terminal(&result.relative_path)
             );
 
             // Full path (optional)
             if show_full_paths {
                 println!(
                     "Full path: {}",
-                    sanitize_for_terminal(&result.payload.source_uri)
+                    sanitize_for_terminal(&result.source_uri)
                 );
             }
 
             // Lines and type
             println!(
                 "Lines: {}-{}",
-                result.payload.start_line, result.payload.end_line
+                result.start_line, result.end_line
             );
             println!(
                 "Type: {}",
-                sanitize_for_terminal(&result.payload.chunk_type)
+                sanitize_for_terminal(&result.chunk_type)
             );
 
             // Content
             println!();
-            for line in result.payload.text.lines() {
+            for line in result.text.lines() {
                 println!("> {}", line);
             }
 

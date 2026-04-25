@@ -1,65 +1,51 @@
 //! Handler for the `purge` command.
 //!
-//! Edit here when: Modifying purge behavior (delete catalog or collection).
-//! Do not edit here for: Qdrant delete operations (see `engine/uploader/file_ops.rs`).
+//! Edit here when: Modifying purge behavior (delete catalog or entire collection).
+//! Do not edit here for: Storage delete operations (see `engine/storage/chunks.rs`, `engine/storage/labels.rs`).
 
-use crate::app::Config;
-use crate::engine::uploader::QdrantUploader;
+use crate::app::{Config, resolve_database_path};
+use crate::engine::storage::Database;
 
 /// Run purge command (delete all chunks from a catalog or entire collection)
 pub fn run_purge(
     config: &Config,
     catalog: Option<&str>,
     all: bool,
-    debug: bool,
+    _debug: bool,
 ) -> anyhow::Result<()> {
-    let uploader = QdrantUploader::new(
-        &config.qdrant.collection,
-        config.qdrant.url.as_deref(),
-        debug,
-        config.qdrant.get_max_upload_bytes(),
-    )?;
+    // Open database (handshake validates monodex-meta.json)
+    let db_path = resolve_database_path(Some(config))?;
+    let rt = tokio::runtime::Runtime::new()?;
+    rt.block_on(run_purge_async(&db_path, catalog, all))
+}
+
+async fn run_purge_async(
+    db_path: &std::path::Path,
+    catalog: Option<&str>,
+    all: bool,
+) -> anyhow::Result<()> {
+    let db = Database::open(db_path).await?;
+    let chunk_storage = db.chunks_storage().await?;
+    let label_storage = db.label_storage().await?;
 
     if all {
-        println!(
-            "🗑️  Purging entire collection: {}",
-            config.qdrant.collection
-        );
-        println!("This will delete ALL data from the collection!");
+        println!("🗑️  Purging entire database");
 
-        // Delete all points with empty filter
-        let endpoint = format!(
-            "{}/collections/{}/points/delete",
-            config
-                .qdrant
-                .url
-                .as_deref()
-                .unwrap_or("http://localhost:6333"),
-            config.qdrant.collection
-        );
+        // Truncate both tables (keeps monodex-meta.json and dataset structure)
+        chunk_storage.truncate().await?;
+        label_storage.truncate().await?;
 
-        let empty_filter = serde_json::json!({"filter": {}});
-
-        let response = reqwest::blocking::Client::new()
-            .post(&endpoint)
-            .json(&empty_filter)
-            .send()?;
-
-        if !response.status().is_success() {
-            return Err(anyhow::anyhow!(
-                "Failed to purge collection: HTTP {}",
-                response.status()
-            ));
-        }
-
-        println!("✅ Collection purged successfully");
+        println!("✅ Database purged successfully");
     } else if let Some(catalog_name) = catalog {
         println!("🗑️  Purging catalog: {}", catalog_name);
 
-        let operation_id = uploader.delete_catalog(catalog_name)?;
+        // Delete chunks and label metadata for this catalog
+        let chunks_deleted = chunk_storage.delete_by_catalog(catalog_name).await?;
+        let labels_deleted = label_storage.delete_by_catalog(catalog_name).await?;
+
         println!(
-            "✅ Catalog purged successfully (operation ID: {})",
-            operation_id
+            "✅ Catalog purged successfully ({} chunks, {} labels deleted)",
+            chunks_deleted, labels_deleted
         );
     } else {
         return Err(anyhow::anyhow!(

@@ -27,6 +27,9 @@ PUBLISHING PROCEDURE:
 
 ### Changed
 
+- **Config files now support JSONC (JSON with comments)**: Config files can now include `//` line comments, per Rush Stack convention. This makes the example config in the README directly usable.
+- **Example config catalog names fixed**: The example `config.json` now uses valid kebab-case catalog names (`my-monorepo`, `another-monorepo`) instead of invalid underscored names.
+
 - **Tool home moved to `~/.monodex/`**: All monodex state files now live under `~/.monodex/` instead of `~/.config/monodex/`. This provides a consistent location across all platforms (Linux, macOS, Windows) and follows the convention of developer tools like `cargo`, `rustup`, and `npm`. Set the `MONODEX_HOME` environment variable to override the default location. On first run, if old config files are found at the previous location, monodex prints a warning suggesting migration.
 
 ### Added

@@ -6,11 +6,11 @@
 
   // Catalog definitions (required)
   "catalogs": {
-    "my_monorepo": {
+    "my-monorepo": {
       "type": "monorepo",
       "path": "~/projects/my-monorepo"
     },
-    "another_monorepo": {
+    "another-monorepo": {
       "type": "monorepo",
       "path": "~/projects/another-monorepo"
     }

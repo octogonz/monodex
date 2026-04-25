@@ -202,8 +202,9 @@ pub fn load_config(path: &PathBuf) -> anyhow::Result<Config> {
         }
     })?;
 
-    // Parse JSON (for now - will add JSONC support later)
-    let config: Config = serde_json::from_str(&content)
+    // Parse JSONC (JSON with comments, per Rush Stack convention)
+    let stripped = json_comments::StripComments::new(content.as_bytes());
+    let config: Config = serde_json::from_reader(stripped)
         .map_err(|e| anyhow!("Failed to parse config file: {}", e))?;
 
     // Validate catalog names and types
@@ -675,5 +676,32 @@ mod tests {
             "Expected error to contain the path, got: {}",
             err
         );
+    }
+
+    #[test]
+    fn test_load_config_parses_jsonc_with_line_comments() {
+        let dir = tempdir().unwrap();
+        let config_path = dir.path().join("config.json");
+        let mut file = std::fs::File::create(&config_path).unwrap();
+
+        // Config with // line comments (JSONC)
+        writeln!(
+            file,
+            r#"{{
+                // This is a line comment
+                "catalogs": {{
+                    // Another comment
+                    "sparo": {{
+                        "type": "monorepo", // inline comment
+                        "path": "/tmp/sparo"
+                    }}
+                }}
+                // Final comment
+            }}"#
+        )
+        .unwrap();
+
+        let config = load_config(&config_path).unwrap();
+        assert_eq!(config.catalogs.get("sparo").unwrap().r#type, "monorepo");
     }
 }

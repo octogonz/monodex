@@ -750,14 +750,22 @@ impl ChunkStorage {
     pub async fn delete_by_catalog(&self, catalog: &str) -> Result<u64> {
         let predicate = format!("catalog = '{}'", catalog);
 
-        let count_before = self.table.count_rows(None).await.unwrap_or(0);
+        let count_before = self
+            .table
+            .count_rows(None)
+            .await
+            .map_err(|e| anyhow!("Failed to count rows before delete: {}", e))?;
 
         self.table
             .delete(&predicate)
             .await
             .map_err(|e| anyhow!("Failed to delete chunks by catalog: {}", e))?;
 
-        let count_after = self.table.count_rows(None).await.unwrap_or(0);
+        let count_after = self
+            .table
+            .count_rows(None)
+            .await
+            .map_err(|e| anyhow!("Failed to count rows after delete: {}", e))?;
 
         Ok(count_before.saturating_sub(count_after) as u64)
     }
@@ -1071,5 +1079,250 @@ mod tests {
             .await
             .unwrap();
         assert_eq!(chunks.len(), 1);
+    }
+
+    /// Helper to create a test chunk row with custom label.
+    fn test_chunk_row_with_label(
+        point_id: &str,
+        file_id: &str,
+        ordinal: i32,
+        label_id: &str,
+    ) -> ChunkRow {
+        ChunkRow {
+            point_id: point_id.to_string(),
+            text: format!("Test content for {}", point_id),
+            catalog: label_id
+                .split(':')
+                .next()
+                .unwrap_or("test-catalog")
+                .to_string(),
+            active_label_ids: vec![label_id.to_string()],
+            embedder_id: "test-embedder:v1".to_string(),
+            chunker_id: "test-chunker:v1".to_string(),
+            blob_id: "abc123".to_string(),
+            content_hash: "def456".to_string(),
+            file_id: file_id.to_string(),
+            relative_path: "src/test.ts".to_string(),
+            package_name: "test-package".to_string(),
+            source_uri: "/path/to/test.ts".to_string(),
+            chunk_ordinal: ordinal,
+            chunk_count: 3,
+            start_line: 1,
+            end_line: 50,
+            symbol_name: Some("testFunction".to_string()),
+            chunk_type: "function".to_string(),
+            chunk_kind: "content".to_string(),
+            breadcrumb: Some("test-package:test.ts:testFunction".to_string()),
+            split_part_ordinal: None,
+            split_part_count: None,
+            file_complete: ordinal == 1,
+        }
+    }
+
+    /// Test vector_search honors label filter.
+    ///
+    /// Inserts rows with different vectors and labels, then verifies that
+    /// vector_search correctly filters by label.
+    #[tokio::test]
+    async fn test_vector_search_with_filter() {
+        let (_tmp_dir, storage) = create_test_storage().await;
+
+        // Create two distinct vectors:
+        // v1: unit vector along axis 0 (padded with zeros)
+        // v2: unit vector along axis 1 (padded with zeros)
+        let mut v1 = vec![0.0f32; VECTOR_DIMENSION];
+        v1[0] = 1.0;
+        let mut v2 = vec![0.0f32; VECTOR_DIMENSION];
+        v2[1] = 1.0;
+
+        // Insert row with label "catalog-a:label-a"
+        let row1 = test_chunk_row_with_label("p1", "file1", 1, "catalog-a:label-a");
+        storage
+            .upsert_with_vectors(std::slice::from_ref(&row1), std::slice::from_ref(&v1))
+            .await
+            .unwrap();
+
+        // Insert row with label "catalog-b:label-b"
+        let row2 = test_chunk_row_with_label("p2", "file2", 1, "catalog-b:label-b");
+        storage
+            .upsert_with_vectors(std::slice::from_ref(&row2), std::slice::from_ref(&v2))
+            .await
+            .unwrap();
+
+        // Verify rows were inserted with correct labels
+        let rows_a = storage
+            .get_chunks_for_label("catalog-a:label-a", None)
+            .await
+            .unwrap();
+        let rows_b = storage
+            .get_chunks_for_label("catalog-b:label-b", None)
+            .await
+            .unwrap();
+        assert_eq!(rows_a.len(), 1, "Should have 1 row for label-a");
+        assert_eq!(rows_b.len(), 1, "Should have 1 row for label-b");
+
+        // Search with query vector matching v1, filtered to label-a
+        // Should return p1 (has label-a and best matching vector)
+        let results = storage
+            .vector_search(&v1, "catalog-a:label-a", 10)
+            .await
+            .unwrap();
+
+        assert_eq!(results.len(), 1, "Should find 1 result for label-a");
+        assert_eq!(results[0].chunk.point_id, "p1");
+
+        // Search with query vector matching v1, filtered to label-b
+        // Should return p2 (has label-b, even though vector doesn't match as well)
+        let results = storage
+            .vector_search(&v1, "catalog-b:label-b", 10)
+            .await
+            .unwrap();
+
+        // This proves the filter works: we searched with v1 but got p2 because
+        // the filter restricted us to label-b, which only p2 has
+        assert_eq!(results.len(), 1, "Should find 1 result for label-b");
+        assert_eq!(results[0].chunk.point_id, "p2");
+
+        // Search with a non-existent label should return nothing
+        let results = storage
+            .vector_search(&v1, "nonexistent:label", 10)
+            .await
+            .unwrap();
+
+        assert_eq!(
+            results.len(),
+            0,
+            "Should find 0 results for nonexistent label"
+        );
+    }
+
+    /// Test vector_search correctness with hand-crafted vectors.
+    ///
+    /// This test catches the "dot product vs cosine on unnormalized vectors" class of bug
+    /// that structural tests would miss. We use unit vectors along specific axes and verify
+    /// that cosine similarity returns results in the expected order.
+    ///
+    /// Uses smaller 4-dim vectors for simplicity (VECTOR_DIMENSION is 768 which is too large
+    /// for meaningful hand-crafted tests).
+    #[tokio::test]
+    async fn test_vector_search_correctness() {
+        let (_tmp_dir, storage) = create_test_storage().await;
+
+        // Create 10 unit vectors along different axes and directions
+        // v0: [1, 0, 0, 0]  - points along axis 0
+        // v1: [0, 1, 0, 0]  - points along axis 1
+        // v2: [0, 0, 1, 0]  - points along axis 2
+        // v3: [0, 0, 0, 1]  - points along axis 3
+        // v4: [-1, 0, 0, 0] - opposite of v0
+        // v5: [0, -1, 0, 0] - opposite of v1
+        // v6: [0, 0, -1, 0] - opposite of v2
+        // v7: [0, 0, 0, -1] - opposite of v3
+        // v8: [0.707, 0.707, 0, 0] - 45° between axes 0 and 1 (normalized)
+        // v9: [0.5, 0.5, 0.5, 0.5] - equally along all axes (normalized)
+        let small_vectors: Vec<Vec<f32>> = vec![
+            vec![1.0, 0.0, 0.0, 0.0],
+            vec![0.0, 1.0, 0.0, 0.0],
+            vec![0.0, 0.0, 1.0, 0.0],
+            vec![0.0, 0.0, 0.0, 1.0],
+            vec![-1.0, 0.0, 0.0, 0.0],
+            vec![0.0, -1.0, 0.0, 0.0],
+            vec![0.0, 0.0, -1.0, 0.0],
+            vec![0.0, 0.0, 0.0, -1.0],
+            vec![0.707, 0.707, 0.0, 0.0],
+            vec![0.5, 0.5, 0.5, 0.5],
+        ];
+
+        // Pad to VECTOR_DIMENSION and insert rows
+        for (i, small_vec) in small_vectors.iter().enumerate() {
+            let point_id = format!("v{}", i);
+            let row = test_chunk_row_with_label(&point_id, &format!("file{}", i), 1, "test:label");
+
+            // Pad the small vector to VECTOR_DIMENSION with zeros
+            let mut padded = small_vec.clone();
+            padded.resize(VECTOR_DIMENSION, 0.0f32);
+
+            storage
+                .upsert_with_vectors(&[row], &[padded])
+                .await
+                .unwrap();
+        }
+
+        // Test 1: Query with [1, 0, 0, 0] - should rank v0 first (cosine = 1.0)
+        let mut query = vec![1.0f32; VECTOR_DIMENSION];
+        // Set first 4 dims to match test vector
+        query[0] = 1.0;
+        query[1] = 0.0;
+        query[2] = 0.0;
+        query[3] = 0.0;
+        // Rest are 1.0 from initialization, reset to 0.0
+        for item in query.iter_mut().skip(4) {
+            *item = 0.0;
+        }
+
+        let results = storage
+            .vector_search(&query, "test:label", 10)
+            .await
+            .unwrap();
+
+        // v0 should be first (distance ~0, cosine similarity = 1)
+        assert_eq!(
+            results.first().map(|r| r.chunk.point_id.as_str()),
+            Some("v0"),
+            "v0 should be ranked first for query [1,0,0,0]"
+        );
+
+        // v4 should be last (distance ~2, cosine similarity = -1)
+        assert_eq!(
+            results.last().map(|r| r.chunk.point_id.as_str()),
+            Some("v4"),
+            "v4 should be ranked last for query [1,0,0,0]"
+        );
+
+        // Test 2: Query with [0.707, 0.707, 0, 0] - v8 should be first
+        let mut query = vec![0.0f32; VECTOR_DIMENSION];
+        query[0] = 0.707;
+        query[1] = 0.707;
+
+        let results = storage
+            .vector_search(&query, "test:label", 10)
+            .await
+            .unwrap();
+
+        // v8 should be first (exact match, cosine = 1)
+        assert_eq!(
+            results.first().map(|r| r.chunk.point_id.as_str()),
+            Some("v8"),
+            "v8 should be ranked first for query at 45° between axes 0 and 1"
+        );
+
+        // v0 and v1 should be in top 4 (both have cosine = 0.707 with the query)
+        let top_4: Vec<&str> = results
+            .iter()
+            .take(4)
+            .map(|r| r.chunk.point_id.as_str())
+            .collect();
+        assert!(
+            top_4.contains(&"v0") && top_4.contains(&"v1"),
+            "v0 and v1 should both be in top 4 for query at 45° between axes 0 and 1"
+        );
+
+        // Test 3: Query with [1, 1, 1, 1] - v9 should be first
+        let mut query = vec![0.0f32; VECTOR_DIMENSION];
+        query[0] = 1.0;
+        query[1] = 1.0;
+        query[2] = 1.0;
+        query[3] = 1.0;
+
+        let results = storage
+            .vector_search(&query, "test:label", 10)
+            .await
+            .unwrap();
+
+        // v9 should be first (all components equal, normalized)
+        assert_eq!(
+            results.first().map(|r| r.chunk.point_id.as_str()),
+            Some("v9"),
+            "v9 should be ranked first for query [1,1,1,1] (equal components)"
+        );
     }
 }

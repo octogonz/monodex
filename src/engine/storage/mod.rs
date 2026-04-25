@@ -12,9 +12,6 @@ mod database;
 mod labels;
 mod rows;
 
-#[cfg(test)]
-mod api_smoke;
-
 pub use chunks::ChunkStorage;
 pub use database::{Database, META_FILE, MetaFile, err_schema_mismatch};
 pub use labels::LabelStorage;

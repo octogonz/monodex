@@ -60,7 +60,6 @@ fn test_chunk(
         relative_path: path.to_string(),
         package_name: "test-package".to_string(),
         source_uri: format!("/path/to/{}", path),
-        source_type: "code".to_string(),
         chunk_ordinal: ordinal,
         chunk_count: count,
         start_line: 1,

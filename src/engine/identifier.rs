@@ -300,7 +300,7 @@ impl LabelId {
     }
 
     /// Creates a LabelId without validation (for reading from storage).
-    #[allow(dead_code)]
+    #[cfg(test)]
     pub fn new_unchecked(catalog: &str, label: &str) -> Self {
         Self {
             catalog: catalog.to_string(),
@@ -325,13 +325,13 @@ impl LabelId {
     }
 
     /// Returns the catalog component.
-    #[allow(dead_code)]
+    #[cfg(test)]
     pub fn catalog(&self) -> &str {
         &self.catalog
     }
 
     /// Returns the label component.
-    #[allow(dead_code)]
+    #[cfg(test)]
     pub fn label(&self) -> &str {
         &self.label
     }
@@ -375,7 +375,7 @@ impl serde::Serialize for LabelId {
 // ============================================================================
 
 /// Computes the label_id string from catalog and label names.
-#[allow(dead_code)]
+#[cfg(test)]
 pub fn compute_label_id(catalog: &str, label: &str) -> Result<String, IdentifierError> {
     validate_catalog(catalog)?;
     validate_label(label)?;

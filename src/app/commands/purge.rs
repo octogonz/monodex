@@ -59,148 +59,15 @@ async fn run_purge_async(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::engine::schema::{VECTOR_DIMENSION, chunks_schema, label_metadata_schema};
-    use crate::engine::storage::{
-        ChunkRow, Database as StorageDatabase, LabelMetadataRow, META_FILE, MetaFile,
-    };
+    use crate::engine::storage::{Database as StorageDatabase, META_FILE};
     use crate::paths::clear_tool_home_cache;
-    use lancedb::connect;
     use serial_test::serial;
-    use std::fs::{self, File};
-    use std::io::Write;
-    use std::sync::Mutex;
     use tempfile::TempDir;
 
-    /// Mutex to serialize tests that use MONODEX_HOME environment variable.
-    static MONODEX_HOME_MUTEX: Mutex<()> = Mutex::new(());
-
-    /// Helper to safely set MONODEX_HOME.
-    fn set_monodex_home(path: &std::path::Path) {
-        // SAFETY: We hold MONODEX_HOME_MUTEX to ensure no concurrent access.
-        unsafe {
-            std::env::set_var("MONODEX_HOME", path);
-        }
-    }
-
-    /// Helper to safely remove MONODEX_HOME.
-    fn remove_monodex_home() {
-        // SAFETY: We hold MONODEX_HOME_MUTEX to ensure no concurrent access.
-        unsafe {
-            std::env::remove_var("MONODEX_HOME");
-        }
-    }
-
-    /// Helper to create a minimal config file.
-    fn write_minimal_config(config_path: &std::path::Path) {
-        let mut file = File::create(config_path).unwrap();
-        writeln!(
-            file,
-            r#"{{
-  "catalogs": {{}}
-}}"#
-        )
-        .unwrap();
-    }
-
-    /// Create a test database with chunks and label metadata.
-    async fn create_test_db_with_chunks(
-        db_path: &std::path::Path,
-        chunks: Vec<ChunkRow>,
-        labels: Vec<LabelMetadataRow>,
-    ) {
-        // Create database directory
-        fs::create_dir_all(db_path).unwrap();
-
-        // Create LanceDB tables
-        let conn = connect(db_path.to_str().unwrap())
-            .execute()
-            .await
-            .expect("Failed to create database");
-
-        conn.create_empty_table("chunks", chunks_schema())
-            .execute()
-            .await
-            .expect("Failed to create chunks table");
-
-        conn.create_empty_table("label_metadata", label_metadata_schema())
-            .execute()
-            .await
-            .expect("Failed to create label_metadata table");
-
-        // Write meta file
-        let meta = MetaFile::new();
-        let meta_file = File::create(db_path.join(META_FILE)).unwrap();
-        serde_json::to_writer_pretty(meta_file, &meta).unwrap();
-
-        // Insert chunks if any
-        if !chunks.is_empty() {
-            let db = StorageDatabase::open(db_path).await.unwrap();
-            let chunk_storage = db.chunks_storage().await.unwrap();
-            let zero_vectors: Vec<Vec<f32>> = chunks
-                .iter()
-                .map(|_| vec![0.0f32; VECTOR_DIMENSION])
-                .collect();
-            chunk_storage
-                .upsert_with_vectors(&chunks, &zero_vectors)
-                .await
-                .unwrap();
-        }
-
-        // Insert labels if any
-        if !labels.is_empty() {
-            let db = StorageDatabase::open(db_path).await.unwrap();
-            let label_storage = db.label_storage().await.unwrap();
-            for label in labels {
-                label_storage.upsert(&label).await.unwrap();
-            }
-        }
-    }
-
-    fn test_chunk_row(
-        point_id: &str,
-        file_id: &str,
-        ordinal: i32,
-        catalog: &str,
-        label_id: &str,
-    ) -> ChunkRow {
-        ChunkRow {
-            point_id: point_id.to_string(),
-            text: format!("Test content for chunk {}", ordinal),
-            catalog: catalog.to_string(),
-            active_label_ids: vec![label_id.to_string()],
-            embedder_id: "test-embedder:v1".to_string(),
-            chunker_id: "test-chunker:v1".to_string(),
-            blob_id: "abc123".to_string(),
-            content_hash: "def456".to_string(),
-            file_id: file_id.to_string(),
-            relative_path: "src/test.ts".to_string(),
-            package_name: "test-package".to_string(),
-            source_uri: "/path/to/test.ts".to_string(),
-            chunk_ordinal: ordinal,
-            chunk_count: 3,
-            start_line: 1,
-            end_line: 50,
-            symbol_name: Some("testFunction".to_string()),
-            chunk_type: "function".to_string(),
-            chunk_kind: "content".to_string(),
-            breadcrumb: Some("test-package:test.ts:testFunction".to_string()),
-            split_part_ordinal: None,
-            split_part_count: None,
-            file_complete: ordinal == 1,
-        }
-    }
-
-    fn test_label_metadata_row(catalog: &str, label: &str) -> LabelMetadataRow {
-        LabelMetadataRow {
-            label_id: format!("{}:{}", catalog, label),
-            catalog: catalog.to_string(),
-            label: label.to_string(),
-            commit_oid: "abc123def456".to_string(),
-            source_kind: "git-commit".to_string(),
-            crawl_complete: true,
-            updated_at_unix_secs: 1700000000,
-        }
-    }
+    use crate::app::commands::test_helpers::{
+        MONODEX_HOME_MUTEX, create_test_db_with_chunks, remove_monodex_home, set_monodex_home,
+        test_chunk_row_with_catalog, test_label_metadata_row_with_parts, write_minimal_config,
+    };
 
     #[test]
     #[serial(monodex_home)]
@@ -286,12 +153,12 @@ mod tests {
             create_test_db_with_chunks(
                 &db_path,
                 vec![
-                    test_chunk_row("file1:1", "file1", 1, "catalog1", "catalog1:main"),
-                    test_chunk_row("file2:1", "file2", 1, "catalog2", "catalog2:main"),
+                    test_chunk_row_with_catalog("file1:1", "file1", 1, "catalog1", "catalog1:main"),
+                    test_chunk_row_with_catalog("file2:1", "file2", 1, "catalog2", "catalog2:main"),
                 ],
                 vec![
-                    test_label_metadata_row("catalog1", "main"),
-                    test_label_metadata_row("catalog2", "main"),
+                    test_label_metadata_row_with_parts("catalog1", "main"),
+                    test_label_metadata_row_with_parts("catalog2", "main"),
                 ],
             )
             .await;
@@ -348,13 +215,13 @@ mod tests {
             create_test_db_with_chunks(
                 &db_path,
                 vec![
-                    test_chunk_row("file1:1", "file1", 1, "catalog1", "catalog1:main"),
-                    test_chunk_row("file2:1", "file2", 1, "catalog1", "catalog1:main"),
-                    test_chunk_row("file3:1", "file3", 1, "catalog2", "catalog2:main"),
+                    test_chunk_row_with_catalog("file1:1", "file1", 1, "catalog1", "catalog1:main"),
+                    test_chunk_row_with_catalog("file2:1", "file2", 1, "catalog1", "catalog1:main"),
+                    test_chunk_row_with_catalog("file3:1", "file3", 1, "catalog2", "catalog2:main"),
                 ],
                 vec![
-                    test_label_metadata_row("catalog1", "main"),
-                    test_label_metadata_row("catalog2", "main"),
+                    test_label_metadata_row_with_parts("catalog1", "main"),
+                    test_label_metadata_row_with_parts("catalog2", "main"),
                 ],
             )
             .await;
@@ -404,14 +271,14 @@ mod tests {
         rt.block_on(async {
             create_test_db_with_chunks(
                 &db_path,
-                vec![test_chunk_row(
+                vec![test_chunk_row_with_catalog(
                     "file1:1",
                     "file1",
                     1,
                     "catalog1",
                     "catalog1:main",
                 )],
-                vec![test_label_metadata_row("catalog1", "main")],
+                vec![test_label_metadata_row_with_parts("catalog1", "main")],
             )
             .await;
         });

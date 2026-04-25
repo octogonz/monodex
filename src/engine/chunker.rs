@@ -19,9 +19,6 @@ pub struct Chunk {
     /// Source URI (full file path, issue reference, etc.)
     pub source_uri: String,
 
-    /// Source type (e.g., "code", "issue", "discussion", "document")
-    pub source_type: String,
-
     /// Catalog name (for multi-source partitioning)
     pub catalog: String,
 
@@ -226,7 +223,6 @@ impl Chunk {
         Chunk {
             text: p.text,
             source_uri: ctx.source_uri.clone(),
-            source_type: "code".to_string(),
             catalog: ctx.catalog.clone(),
             content_hash: p.content_hash,
             start_line: p.start_line,
@@ -259,7 +255,6 @@ impl From<PartitionedChunk> for Chunk {
         Chunk {
             text: p.text,
             source_uri: p.source_uri,
-            source_type: "code".to_string(),
             catalog: p.catalog,
             content_hash: p.content_hash,
             start_line: p.start_line,
@@ -330,7 +325,6 @@ fn chunk_by_lines(
             chunks.push(Chunk {
                 text: chunk_text,
                 source_uri: ctx.source_uri.clone(),
-                source_type: "code".to_string(),
                 catalog: ctx.catalog.clone(),
                 content_hash: content_hash.clone(),
                 start_line: start + 1,

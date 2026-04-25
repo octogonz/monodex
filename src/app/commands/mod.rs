@@ -12,6 +12,9 @@ pub mod search;
 pub mod use_cmd;
 pub mod view;
 
+#[cfg(test)]
+mod test_helpers;
+
 // Re-export command entry points
 pub use audit_chunks::run_audit_chunks;
 pub use crawl::{run_crawl_label, run_crawl_working_dir};

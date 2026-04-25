@@ -65,21 +65,6 @@ pub fn compute_point_id(file_id: &str, chunk_ordinal: usize) -> String {
     format!("{}:{}", file_id, chunk_ordinal)
 }
 
-/// Legacy function: Compute file ID from relative path only.
-/// Used for backward compatibility during migration.
-#[allow(dead_code)]
-pub fn compute_file_id_legacy(relative_path: &str) -> u64 {
-    let mut hasher = XxHash64::with_seed(0);
-    relative_path.hash(&mut hasher);
-    hasher.finish()
-}
-
-/// Convert u64 file ID to display format (16-char lowercase hex)
-#[allow(dead_code)]
-pub fn display_file_id(file_id: u64) -> String {
-    format!("{:016x}", file_id)
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;

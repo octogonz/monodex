@@ -694,6 +694,39 @@ impl ChunkStorage {
         Ok(rows)
     }
 
+    /// Return all chunks for a given file_id, sorted by chunk_ordinal.
+    ///
+    /// Does not filter by label; used for label-add operations.
+    /// Validates each row.
+    pub async fn get_chunks_by_file_id(&self, file_id: &str) -> Result<Vec<ChunkRow>> {
+        let predicate = format!("file_id = '{}'", file_id);
+
+        let results = self
+            .table
+            .query()
+            .only_if(&predicate)
+            .execute()
+            .await
+            .map_err(|e| anyhow!("Failed to query chunks by file_id: {}", e))?;
+
+        let batches = results
+            .try_collect::<Vec<_>>()
+            .await
+            .map_err(|e| anyhow!("Failed to collect query results: {}", e))?;
+
+        let mut rows: Vec<ChunkRow> = Vec::new();
+        for batch in &batches {
+            for i in 0..batch.num_rows() {
+                rows.push(parse_chunk_row(batch, i)?);
+            }
+        }
+
+        // Sort by chunk_ordinal
+        rows.sort_by_key(|r| r.chunk_ordinal);
+
+        Ok(rows)
+    }
+
     /// Vector search: given a query vector, a label filter, and a limit,
     /// return the top-N chunks by cosine similarity that belong to the label.
     ///
@@ -777,7 +810,7 @@ impl ChunkStorage {
 
     /// Update the active_label_ids array of a single chunk.
     ///
-    /// Uses the pattern established in Phase 0 spike: read-modify-upsert via SQL.
+    /// Uses LanceDB's update() with SQL expression for in-place modification.
     pub async fn update_active_labels(&self, point_id: &str, new_labels: &[String]) -> Result<()> {
         // Build SQL array literal like "['label1', 'label2']"
         let labels_sql = if new_labels.is_empty() {
@@ -796,6 +829,24 @@ impl ChunkStorage {
             .execute()
             .await
             .map_err(|e| anyhow!("Failed to update active_label_ids: {}", e))?;
+
+        Ok(())
+    }
+
+    /// Update the file_complete boolean of a single chunk (sentinel marker).
+    ///
+    /// Uses LanceDB's update() with SQL boolean literal (true/false).
+    pub async fn update_file_complete(&self, point_id: &str, complete: bool) -> Result<()> {
+        let predicate = format!("point_id = '{}'", point_id);
+        let value = if complete { "true" } else { "false" };
+
+        self.table
+            .update()
+            .only_if(&predicate)
+            .column("file_complete", value)
+            .execute()
+            .await
+            .map_err(|e| anyhow!("Failed to update file_complete: {}", e))?;
 
         Ok(())
     }

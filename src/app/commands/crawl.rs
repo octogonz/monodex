@@ -190,10 +190,17 @@ async fn run_crawl_label_async(
             continue;
         }
 
-        // Check if sentinel exists
+        // Check if sentinel exists and is complete
         let sentinel_point_id = format!("{}:1", file_id);
         match chunk_storage.get_by_point_id(&sentinel_point_id).await {
             Ok(Some(chunk)) => {
+                // Check if file crawl was completed (file_complete == true)
+                if !chunk.file_complete {
+                    // Incomplete file - treat as new file to re-crawl
+                    new_files.push((file_entry.relative_path.clone(), file_entry.blob_id.clone()));
+                    new_count += 1;
+                    continue;
+                }
                 // File already indexed - check if it already has this label
                 if chunk.active_label_ids.contains(&label_id.to_string()) {
                     existing_files_already_labeled.insert(file_id);
@@ -237,10 +244,7 @@ async fn run_crawl_label_async(
         );
         for file_id in &existing_files_needing_label {
             // Get all chunks for this file and add the label
-            match chunk_storage
-                .get_chunks_by_file_id_with_label(file_id, label_id.as_str())
-                .await
-            {
+            match chunk_storage.get_chunks_by_file_id(file_id).await {
                 Ok(chunks) => {
                     for chunk in &chunks {
                         let mut new_labels = chunk.active_label_ids.clone();
@@ -698,6 +702,13 @@ async fn run_crawl_working_dir_async(
         let sentinel_point_id = format!("{}:1", file_id);
         match chunk_storage.get_by_point_id(&sentinel_point_id).await {
             Ok(Some(chunk)) => {
+                // Check if file crawl was completed (file_complete == true)
+                if !chunk.file_complete {
+                    // Incomplete file - treat as new file to re-crawl
+                    new_files.push((file_entry.relative_path.clone(), file_entry.blob_id.clone()));
+                    new_count += 1;
+                    continue;
+                }
                 // File already indexed - check if it already has this label
                 if chunk.active_label_ids.contains(&label_id.to_string()) {
                     existing_files_already_labeled.insert(file_id);
@@ -740,10 +751,7 @@ async fn run_crawl_working_dir_async(
             existing_files_needing_label.len()
         );
         for file_id in &existing_files_needing_label {
-            match chunk_storage
-                .get_chunks_by_file_id_with_label(file_id, label_id.as_str())
-                .await
-            {
+            match chunk_storage.get_chunks_by_file_id(file_id).await {
                 Ok(chunks) => {
                     for chunk in &chunks {
                         let mut new_labels = chunk.active_label_ids.clone();

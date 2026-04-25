@@ -182,13 +182,14 @@ async fn run_embed_upload_pipeline_async(
                 }
 
                 // Track uploaded counts and mark files complete
+                // Count chunks per file in this batch
                 let mut files_in_batch: std::collections::HashMap<String, usize> =
                     std::collections::HashMap::new();
                 for (chunk, _) in &accumulated {
                     *files_in_batch.entry(chunk.file_id.clone()).or_insert(0) += 1;
                 }
-                for file_id in files_in_batch.keys() {
-                    *uploaded_count.entry(file_id.clone()).or_insert(0) += 1;
+                for (file_id, count) in &files_in_batch {
+                    *uploaded_count.entry(file_id.clone()).or_insert(0) += count;
                 }
 
                 // Mark completed files
@@ -197,15 +198,10 @@ async fn run_embed_upload_pipeline_async(
                     let expected = expected_count.get(file_id).copied().unwrap_or(0);
                     if uploaded == expected && expected > 0 {
                         // Find the sentinel chunk (ordinal 1) and mark it complete
-                        if let Some((sentinel_row, _)) = accumulated
-                            .iter()
-                            .find(|(c, _)| c.file_id == *file_id && c.chunk_ordinal == 1)
-                        {
-                            let point_id = format!("{}:{}", file_id, 1);
-                            chunk_storage_clone
-                                .update_active_labels(&point_id, &sentinel_row.active_label_ids)
-                                .await?;
-                        }
+                        let point_id = format!("{}:{}", file_id, 1);
+                        chunk_storage_clone
+                            .update_file_complete(&point_id, true)
+                            .await?;
                     }
                 }
 
@@ -239,19 +235,24 @@ async fn run_embed_upload_pipeline_async(
                     }
 
                     // Mark all files complete
+                    // Count chunks per file in this batch
                     let mut files_in_batch: std::collections::HashMap<String, usize> =
                         std::collections::HashMap::new();
                     for (chunk, _) in &accumulated {
                         *files_in_batch.entry(chunk.file_id.clone()).or_insert(0) += 1;
                     }
+                    for (file_id, count) in &files_in_batch {
+                        *uploaded_count.entry(file_id.clone()).or_insert(0) += count;
+                    }
+
+                    // Mark completed files
                     for file_id in files_in_batch.keys() {
-                        if let Some((sentinel_row, _)) = accumulated
-                            .iter()
-                            .find(|(c, _)| c.file_id == *file_id && c.chunk_ordinal == 1)
-                        {
+                        let uploaded = uploaded_count.get(file_id).copied().unwrap_or(0);
+                        let expected = expected_count.get(file_id).copied().unwrap_or(0);
+                        if uploaded == expected && expected > 0 {
                             let point_id = format!("{}:{}", file_id, 1);
                             chunk_storage_clone
-                                .update_active_labels(&point_id, &sentinel_row.active_label_ids)
+                                .update_file_complete(&point_id, true)
                                 .await?;
                         }
                     }
@@ -360,7 +361,7 @@ fn chunk_to_row(chunk: &Chunk) -> ChunkRow {
         },
         split_part_ordinal: chunk.split_part_ordinal.map(|n| n as i32),
         split_part_count: chunk.split_part_count.map(|n| n as i32),
-        file_complete: chunk.chunk_ordinal == 1,
+        file_complete: false, // Initially false; set to true when all chunks uploaded
     }
 }
 

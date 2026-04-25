@@ -18,10 +18,6 @@ use crate::app::{
 use crate::engine::storage::{ChunkRow, ChunkStorage};
 use crate::engine::{Chunk, ParallelEmbedder};
 
-/// Batch size for upserting chunks to LanceDB.
-/// Internal implementation detail; callers pass all rows and we batch internally.
-const UPSERT_BATCH_SIZE: usize = 1000;
-
 /// Run the embedding and storage pipeline with progress reporting.
 ///
 /// Returns (touched_file_ids, failures) for the crawl.
@@ -166,20 +162,17 @@ async fn run_embed_upload_pipeline_async(
                 );
 
                 // Convert chunks to ChunkRows and upsert
-                let rows: Vec<(ChunkRow, Vec<f32>)> = accumulated
+                let rows: Vec<ChunkRow> = accumulated
                     .iter()
-                    .map(|(chunk, vector)| (chunk_to_row(chunk), vector.clone()))
+                    .map(|(chunk, _)| chunk_to_row(chunk))
+                    .collect();
+                let vectors: Vec<Vec<f32>> = accumulated
+                    .iter()
+                    .map(|(_, vector)| vector.clone())
                     .collect();
 
-                // Batch upsert
-                for batch in rows.chunks(UPSERT_BATCH_SIZE) {
-                    let (rows_batch, vectors_batch): (Vec<_>, Vec<_>) =
-                        batch.iter().cloned().unzip();
-
-                    // Upsert chunks with vectors
-                    upsert_chunks_with_vectors(&chunk_storage_clone, &rows_batch, &vectors_batch)
-                        .await?;
-                }
+                // Upsert chunks with vectors (storage handles batching internally)
+                upsert_chunks_with_vectors(&chunk_storage_clone, &rows, &vectors).await?;
 
                 // Track uploaded counts and mark files complete
                 // Count chunks per file in this batch
@@ -218,21 +211,17 @@ async fn run_embed_upload_pipeline_async(
                         count
                     );
 
-                    let rows: Vec<(ChunkRow, Vec<f32>)> = accumulated
+                    let rows: Vec<ChunkRow> = accumulated
                         .iter()
-                        .map(|(chunk, vector)| (chunk_to_row(chunk), vector.clone()))
+                        .map(|(chunk, _)| chunk_to_row(chunk))
+                        .collect();
+                    let vectors: Vec<Vec<f32>> = accumulated
+                        .iter()
+                        .map(|(_, vector)| vector.clone())
                         .collect();
 
-                    for batch in rows.chunks(UPSERT_BATCH_SIZE) {
-                        let (rows_batch, vectors_batch): (Vec<_>, Vec<_>) =
-                            batch.iter().cloned().unzip();
-                        upsert_chunks_with_vectors(
-                            &chunk_storage_clone,
-                            &rows_batch,
-                            &vectors_batch,
-                        )
-                        .await?;
-                    }
+                    // Upsert chunks with vectors (storage handles batching internally)
+                    upsert_chunks_with_vectors(&chunk_storage_clone, &rows, &vectors).await?;
 
                     // Mark all files complete
                     // Count chunks per file in this batch

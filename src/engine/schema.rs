@@ -65,10 +65,10 @@ pub fn chunks_schema() -> SchemaRef {
         Field::new(
             "vector",
             DataType::FixedSizeList(
-                Arc::new(Field::new("item", DataType::Float32, true)),
+                Arc::new(Field::new("item", DataType::Float32, false)),
                 VECTOR_DIMENSION as i32,
             ),
-            true, // nullable because label_metadata has no vector
+            false, // vectors are mandatory: every chunk has an embedding
         ),
         // Label membership
         Field::new("catalog", DataType::Utf8, false),

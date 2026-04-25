@@ -276,7 +276,7 @@ pub fn run_view(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::engine::schema::{chunks_schema, label_metadata_schema};
+    use crate::engine::schema::{VECTOR_DIMENSION, chunks_schema, label_metadata_schema};
     use crate::engine::storage::{
         ChunkRow, Database as StorageDatabase, LabelMetadataRow, META_FILE, MetaFile,
     };
@@ -353,7 +353,14 @@ mod tests {
         if !chunks.is_empty() {
             let db = StorageDatabase::open(db_path).await.unwrap();
             let chunk_storage = db.chunks_storage().await.unwrap();
-            chunk_storage.upsert(&chunks).await.unwrap();
+            let zero_vectors: Vec<Vec<f32>> = chunks
+                .iter()
+                .map(|_| vec![0.0f32; VECTOR_DIMENSION])
+                .collect();
+            chunk_storage
+                .upsert_with_vectors(&chunks, &zero_vectors)
+                .await
+                .unwrap();
         }
 
         // Insert labels if any

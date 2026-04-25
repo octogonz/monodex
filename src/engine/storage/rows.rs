@@ -138,8 +138,8 @@ impl LabelMetadataRow {
 #[derive(Debug, Clone)]
 pub struct ScoredChunkRow {
     pub chunk: ChunkRow,
-    /// Cosine distance (smaller = more similar)
-    pub score: f32,
+    /// Cosine distance from query vector. Smaller = more similar.
+    pub distance: f32,
 }
 
 #[cfg(test)]

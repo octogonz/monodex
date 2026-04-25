@@ -22,101 +22,8 @@ use std::sync::Arc;
 use crate::engine::schema::VECTOR_DIMENSION;
 use crate::engine::storage::{ChunkRow, ScoredChunkRow};
 
-/// Convert an iterator of ChunkRows to a RecordBatch.
-///
-/// Handles nullable fields and list columns correctly.
-fn chunk_rows_to_record_batch<'a>(
-    rows: impl IntoIterator<Item = &'a ChunkRow>,
-    schema: SchemaRef,
-) -> Result<RecordBatch> {
-    let rows: Vec<&ChunkRow> = rows.into_iter().collect();
-    let n = rows.len();
-
-    let point_id: StringArray = rows.iter().map(|r| Some(r.point_id.as_str())).collect();
-    let text: StringArray = rows.iter().map(|r| Some(r.text.as_str())).collect();
-
-    // Vector column (FixedSizeList<Float32, 768>)
-    // Note: We don't store vectors in ChunkRow, they're computed during embedding
-    // For now, we'll use a placeholder. The actual vector is passed separately.
-    // This function is for reading, vectors come from LanceDB directly.
-    let vector_field = Field::new("item", DataType::Float32, true);
-    let vector_values: Float32Array = std::iter::repeat_n(0.0f32, VECTOR_DIMENSION * n).collect();
-    let vector: ArrayRef = Arc::new(FixedSizeListArray::new(
-        Arc::new(vector_field),
-        VECTOR_DIMENSION as i32,
-        Arc::new(vector_values),
-        None,
-    ));
-
-    let catalog: StringArray = rows.iter().map(|r| Some(r.catalog.as_str())).collect();
-
-    // active_label_ids: List<Utf8>
-    let active_label_ids = build_string_list_array(
-        &rows
-            .iter()
-            .map(|r| r.active_label_ids.as_slice())
-            .collect::<Vec<_>>(),
-    );
-
-    let embedder_id: StringArray = rows.iter().map(|r| Some(r.embedder_id.as_str())).collect();
-    let chunker_id: StringArray = rows.iter().map(|r| Some(r.chunker_id.as_str())).collect();
-    let blob_id: StringArray = rows.iter().map(|r| Some(r.blob_id.as_str())).collect();
-    let content_hash: StringArray = rows.iter().map(|r| Some(r.content_hash.as_str())).collect();
-    let file_id: StringArray = rows.iter().map(|r| Some(r.file_id.as_str())).collect();
-    let relative_path: StringArray = rows
-        .iter()
-        .map(|r| Some(r.relative_path.as_str()))
-        .collect();
-    let package_name: StringArray = rows.iter().map(|r| Some(r.package_name.as_str())).collect();
-    let source_uri: StringArray = rows.iter().map(|r| Some(r.source_uri.as_str())).collect();
-
-    let chunk_ordinal: Int32Array = rows.iter().map(|r| Some(r.chunk_ordinal)).collect();
-    let chunk_count: Int32Array = rows.iter().map(|r| Some(r.chunk_count)).collect();
-    let start_line: Int32Array = rows.iter().map(|r| Some(r.start_line)).collect();
-    let end_line: Int32Array = rows.iter().map(|r| Some(r.end_line)).collect();
-
-    // Nullable string fields
-    let symbol_name: StringArray = rows.iter().map(|r| r.symbol_name.as_deref()).collect();
-    let chunk_type: StringArray = rows.iter().map(|r| Some(r.chunk_type.as_str())).collect();
-    let chunk_kind: StringArray = rows.iter().map(|r| Some(r.chunk_kind.as_str())).collect();
-    let breadcrumb: StringArray = rows.iter().map(|r| r.breadcrumb.as_deref()).collect();
-
-    // Nullable int fields
-    let split_part_ordinal: Int32Array = rows.iter().map(|r| r.split_part_ordinal).collect();
-    let split_part_count: Int32Array = rows.iter().map(|r| r.split_part_count).collect();
-
-    let file_complete: BooleanArray = rows.iter().map(|r| Some(r.file_complete)).collect();
-
-    let columns: Vec<ArrayRef> = vec![
-        Arc::new(point_id),
-        Arc::new(text),
-        vector,
-        Arc::new(catalog),
-        active_label_ids,
-        Arc::new(embedder_id),
-        Arc::new(chunker_id),
-        Arc::new(blob_id),
-        Arc::new(content_hash),
-        Arc::new(file_id),
-        Arc::new(relative_path),
-        Arc::new(package_name),
-        Arc::new(source_uri),
-        Arc::new(chunk_ordinal),
-        Arc::new(chunk_count),
-        Arc::new(start_line),
-        Arc::new(end_line),
-        Arc::new(symbol_name),
-        Arc::new(chunk_type),
-        Arc::new(chunk_kind),
-        Arc::new(breadcrumb),
-        Arc::new(split_part_ordinal),
-        Arc::new(split_part_count),
-        Arc::new(file_complete),
-    ];
-
-    RecordBatch::try_new(schema, columns)
-        .map_err(|e| anyhow!("Failed to create RecordBatch: {}", e))
-}
+/// Batch size for upsert operations. Storage-layer internal detail.
+const UPSERT_BATCH_SIZE: usize = 1000;
 
 /// Convert an iterator of ChunkRows with their vectors to a RecordBatch.
 ///
@@ -544,31 +451,6 @@ impl ChunkStorage {
     pub fn new(table: Arc<lancedb::table::Table>) -> Self {
         Self { table }
     }
-
-    /// Upsert a batch of chunk rows by point_id.
-    ///
-    /// Matched rows are updated in place (same point_id implies same content
-    /// by construction, since file_id already incorporates blob_id + path +
-    /// embedder + chunker).
-    pub async fn upsert(&self, rows: &[ChunkRow]) -> Result<()> {
-        if rows.is_empty() {
-            return Ok(());
-        }
-
-        let schema = self.table.schema().await?;
-        let batch = chunk_rows_to_record_batch(rows.iter(), schema.clone())?;
-
-        // Use merge_insert for proper upsert semantics
-        let reader = RecordBatchIterator::new(std::iter::once(Ok(batch)), schema);
-        let mut builder = self.table.merge_insert(&["point_id"]);
-        builder
-            .when_matched_update_all(None)
-            .when_not_matched_insert_all();
-        builder.execute(Box::new(reader)).await?;
-
-        Ok(())
-    }
-
     /// Upsert a batch of chunk rows with their embedding vectors by point_id.
     ///
     /// This is the primary method for writing chunks during crawl, where we have
@@ -577,6 +459,8 @@ impl ChunkStorage {
     /// Matched rows are updated in place (same point_id implies same content
     /// by construction, since file_id already incorporates blob_id + path +
     /// embedder + chunker).
+    ///
+    /// Batching is handled internally; callers may pass any number of rows.
     pub async fn upsert_with_vectors(&self, rows: &[ChunkRow], vectors: &[Vec<f32>]) -> Result<()> {
         if rows.is_empty() {
             return Ok(());
@@ -591,20 +475,29 @@ impl ChunkStorage {
         }
 
         let schema = self.table.schema().await?;
-        let rows_with_vectors: Vec<(&ChunkRow, &[f32])> = rows
-            .iter()
-            .zip(vectors.iter().map(|v| v.as_slice()))
-            .collect();
-        let batch =
-            chunk_rows_to_record_batch_with_vectors(rows_with_vectors.into_iter(), schema.clone())?;
 
-        // Use merge_insert for proper upsert semantics
-        let reader = RecordBatchIterator::new(std::iter::once(Ok(batch)), schema);
-        let mut builder = self.table.merge_insert(&["point_id"]);
-        builder
-            .when_matched_update_all(None)
-            .when_not_matched_insert_all();
-        builder.execute(Box::new(reader)).await?;
+        // Process in batches internally
+        for (batch_rows, batch_vectors) in rows
+            .chunks(UPSERT_BATCH_SIZE)
+            .zip(vectors.chunks(UPSERT_BATCH_SIZE))
+        {
+            let rows_with_vectors: Vec<(&ChunkRow, &[f32])> = batch_rows
+                .iter()
+                .zip(batch_vectors.iter().map(|v| v.as_slice()))
+                .collect();
+            let batch = chunk_rows_to_record_batch_with_vectors(
+                rows_with_vectors.into_iter(),
+                schema.clone(),
+            )?;
+
+            // Use merge_insert for proper upsert semantics
+            let reader = RecordBatchIterator::new(std::iter::once(Ok(batch)), schema.clone());
+            let mut builder = self.table.merge_insert(&["point_id"]);
+            builder
+                .when_matched_update_all(None)
+                .when_not_matched_insert_all();
+            builder.execute(Box::new(reader)).await?;
+        }
 
         Ok(())
     }
@@ -744,8 +637,8 @@ impl ChunkStorage {
         for batch in &batches {
             for i in 0..batch.num_rows() {
                 let chunk = parse_chunk_row(batch, i)?;
-                let score = extract_distance(batch, i)?;
-                scored_rows.push(ScoredChunkRow { chunk, score });
+                let distance = extract_distance(batch, i)?;
+                scored_rows.push(ScoredChunkRow { chunk, distance });
             }
         }
 
@@ -939,12 +832,20 @@ mod tests {
         }
     }
 
+    /// Helper to create a zero vector for tests that don't exercise vector_search
+    fn zero_vector() -> Vec<f32> {
+        vec![0.0f32; VECTOR_DIMENSION]
+    }
+
     #[tokio::test]
     async fn test_upsert_and_get() {
         let (_tmp_dir, storage) = create_test_storage().await;
 
         let row = test_chunk_row("file1:1", "file1", 1);
-        storage.upsert(std::slice::from_ref(&row)).await.unwrap();
+        storage
+            .upsert_with_vectors(std::slice::from_ref(&row), &[zero_vector()])
+            .await
+            .unwrap();
 
         let retrieved = storage.get_by_point_id("file1:1").await.unwrap();
         assert!(retrieved.is_some());
@@ -967,21 +868,21 @@ mod tests {
 
         // Insert chunks for file1
         storage
-            .upsert(&[test_chunk_row("file1:1", "file1", 1)])
+            .upsert_with_vectors(&[test_chunk_row("file1:1", "file1", 1)], &[zero_vector()])
             .await
             .unwrap();
         storage
-            .upsert(&[test_chunk_row("file1:2", "file1", 2)])
+            .upsert_with_vectors(&[test_chunk_row("file1:2", "file1", 2)], &[zero_vector()])
             .await
             .unwrap();
         storage
-            .upsert(&[test_chunk_row("file1:3", "file1", 3)])
+            .upsert_with_vectors(&[test_chunk_row("file1:3", "file1", 3)], &[zero_vector()])
             .await
             .unwrap();
 
         // Insert chunk for different file
         storage
-            .upsert(&[test_chunk_row("file2:1", "file2", 1)])
+            .upsert_with_vectors(&[test_chunk_row("file2:1", "file2", 1)], &[zero_vector()])
             .await
             .unwrap();
 
@@ -1002,11 +903,11 @@ mod tests {
         let (_tmp_dir, storage) = create_test_storage().await;
 
         storage
-            .upsert(&[test_chunk_row("file1:1", "file1", 1)])
+            .upsert_with_vectors(&[test_chunk_row("file1:1", "file1", 1)], &[zero_vector()])
             .await
             .unwrap();
         storage
-            .upsert(&[test_chunk_row("file1:2", "file1", 2)])
+            .upsert_with_vectors(&[test_chunk_row("file1:2", "file1", 2)], &[zero_vector()])
             .await
             .unwrap();
 
@@ -1023,11 +924,11 @@ mod tests {
         let (_tmp_dir, storage) = create_test_storage().await;
 
         storage
-            .upsert(&[test_chunk_row("file1:1", "file1", 1)])
+            .upsert_with_vectors(&[test_chunk_row("file1:1", "file1", 1)], &[zero_vector()])
             .await
             .unwrap();
         storage
-            .upsert(&[test_chunk_row("file1:2", "file1", 2)])
+            .upsert_with_vectors(&[test_chunk_row("file1:2", "file1", 2)], &[zero_vector()])
             .await
             .unwrap();
 
@@ -1045,7 +946,7 @@ mod tests {
         let (_tmp_dir, storage) = create_test_storage().await;
 
         storage
-            .upsert(&[test_chunk_row("file1:1", "file1", 1)])
+            .upsert_with_vectors(&[test_chunk_row("file1:1", "file1", 1)], &[zero_vector()])
             .await
             .unwrap();
 
@@ -1080,11 +981,11 @@ mod tests {
         let (_tmp_dir, storage) = create_test_storage().await;
 
         storage
-            .upsert(&[test_chunk_row("file1:1", "file1", 1)])
+            .upsert_with_vectors(&[test_chunk_row("file1:1", "file1", 1)], &[zero_vector()])
             .await
             .unwrap();
         storage
-            .upsert(&[test_chunk_row("file1:2", "file1", 2)])
+            .upsert_with_vectors(&[test_chunk_row("file1:2", "file1", 2)], &[zero_vector()])
             .await
             .unwrap();
 
@@ -1105,11 +1006,11 @@ mod tests {
         let (_tmp_dir, storage) = create_test_storage().await;
 
         storage
-            .upsert(&[test_chunk_row("file1:1", "file1", 1)])
+            .upsert_with_vectors(&[test_chunk_row("file1:1", "file1", 1)], &[zero_vector()])
             .await
             .unwrap();
         storage
-            .upsert(&[test_chunk_row("file2:1", "file2", 1)])
+            .upsert_with_vectors(&[test_chunk_row("file2:1", "file2", 1)], &[zero_vector()])
             .await
             .unwrap();
 
@@ -1128,11 +1029,11 @@ mod tests {
         let (_tmp_dir, storage) = create_test_storage().await;
 
         storage
-            .upsert(&[test_chunk_row("file1:1", "file1", 1)])
+            .upsert_with_vectors(&[test_chunk_row("file1:1", "file1", 1)], &[zero_vector()])
             .await
             .unwrap();
         storage
-            .upsert(&[test_chunk_row("file2:1", "file2", 1)])
+            .upsert_with_vectors(&[test_chunk_row("file2:1", "file2", 1)], &[zero_vector()])
             .await
             .unwrap();
 
@@ -1149,11 +1050,17 @@ mod tests {
         // Insert initial row
         let mut row = test_chunk_row("file1:1", "file1", 1);
         row.text = "Original text".to_string();
-        storage.upsert(std::slice::from_ref(&row)).await.unwrap();
+        storage
+            .upsert_with_vectors(&[row.clone()], &[zero_vector()])
+            .await
+            .unwrap();
 
         // Upsert with updated text
         row.text = "Updated text".to_string();
-        storage.upsert(std::slice::from_ref(&row)).await.unwrap();
+        storage
+            .upsert_with_vectors(&[row.clone()], &[zero_vector()])
+            .await
+            .unwrap();
 
         let retrieved = storage.get_by_point_id("file1:1").await.unwrap().unwrap();
         assert_eq!(retrieved.text, "Updated text");

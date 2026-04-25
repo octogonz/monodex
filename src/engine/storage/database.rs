@@ -9,13 +9,13 @@ use anyhow::{Result, anyhow, bail};
 use lancedb::connection::Connection;
 use serde::{Deserialize, Serialize};
 use std::fs::File;
-use std::io::{BufReader, BufWriter};
+use std::io::{BufReader, BufWriter, Write};
 use std::path::{Path, PathBuf};
 
 use crate::engine::schema::{CHUNKS_TABLE, LABEL_METADATA_TABLE, MONODEX_SCHEMA_VERSION};
 use std::sync::Arc;
 
-use super::{ChunkStorage, LabelStorage};
+use super::{ChunkStorage, LANCEDB_CRATE_VERSION, LabelStorage};
 
 /// Metadata file name in the database root.
 pub const META_FILE: &str = "monodex-meta.json";
@@ -54,9 +54,9 @@ impl MetaFile {
     pub fn new() -> Self {
         Self {
             monodex_schema_version: MONODEX_SCHEMA_VERSION,
-            created_at: chrono::Local::now().to_rfc3339(),
+            created_at: chrono::Utc::now().to_rfc3339(),
             created_by_binary_version: env!("CARGO_PKG_VERSION").to_string(),
-            lance_format_version: "0.27".to_string(), // lancedb crate version; update when upgrading lancedb
+            lance_format_version: LANCEDB_CRATE_VERSION.to_string(),
         }
     }
 }
@@ -65,6 +65,16 @@ impl Default for MetaFile {
     fn default() -> Self {
         Self::new()
     }
+}
+
+/// Format the schema mismatch error message.
+/// Used by both Database::open and init-db to ensure consistent wording.
+pub fn err_schema_mismatch(db_version: u32, expected_version: u32) -> String {
+    format!(
+        "Schema mismatch: database has version {} but monodex expects version {}. \
+         Run 'monodex upgrade-db' to migrate, or delete the database and run 'monodex init-db' to recreate it.",
+        db_version, expected_version
+    )
 }
 
 impl Database {
@@ -78,10 +88,20 @@ impl Database {
     /// Returns an error if the database does not exist or is incompatible.
     /// Use `init_db()` to create a new database.
     pub async fn open(path: &Path) -> Result<Self> {
-        let path = path.canonicalize().map_err(|_| {
-            anyhow!(
+        // Check existence before canonicalize to avoid re-routing canonicalize errors to "no database"
+        if !path.exists() {
+            bail!(
                 "No monodex database at '{}'. Run 'monodex init-db' to create it.",
                 path.display()
+            );
+        }
+
+        // Canonicalize after existence check
+        let path = path.canonicalize().map_err(|e| {
+            anyhow!(
+                "Failed to resolve database path '{}': {}",
+                path.display(),
+                e
             )
         })?;
 
@@ -99,10 +119,8 @@ impl Database {
 
         if meta.monodex_schema_version != MONODEX_SCHEMA_VERSION {
             bail!(
-                "Schema mismatch: database has version {} but monodex expects version {}. \
-                 Run 'monodex upgrade-db' to migrate, or delete the database and run 'monodex init-db' to recreate it.",
-                meta.monodex_schema_version,
-                MONODEX_SCHEMA_VERSION
+                "{}",
+                err_schema_mismatch(meta.monodex_schema_version, MONODEX_SCHEMA_VERSION)
             );
         }
 
@@ -124,12 +142,27 @@ impl Database {
         Ok(meta)
     }
 
-    /// Write the meta file.
+    /// Write the meta file with fsync for durability.
     pub fn write_meta(path: &Path, meta: &MetaFile) -> Result<()> {
         let file = File::create(path)?;
-        let writer = BufWriter::new(file);
-        serde_json::to_writer_pretty(writer, meta)
+        let mut writer = BufWriter::new(file);
+        serde_json::to_writer_pretty(&mut writer, meta)
             .map_err(|e| anyhow!("Failed to write {}: {}", path.display(), e))?;
+        writer.flush()?;
+        writer
+            .into_inner()
+            .map_err(|e| anyhow!("Failed to flush {}: {}", path.display(), e))?
+            .sync_all()?;
+
+        // Sync the parent directory to ensure the file entry is durable
+        #[cfg(unix)]
+        {
+            if let Some(parent) = path.parent() {
+                let dir_file = File::open(parent)?;
+                dir_file.sync_all()?;
+            }
+        }
+
         Ok(())
     }
 

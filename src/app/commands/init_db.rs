@@ -7,38 +7,18 @@
 
 use anyhow::{Result, anyhow, bail};
 use std::fs::{self, File};
-use std::io::BufWriter;
 use std::path::Path;
 
 use crate::app::config::{Config, resolve_database_path};
 use crate::engine::schema::{
     CHUNKS_TABLE, LABEL_METADATA_TABLE, chunks_schema, label_metadata_schema,
 };
-use crate::engine::storage::{Database, META_FILE, MetaFile};
+use crate::engine::storage::{Database, META_FILE, MetaFile, err_schema_mismatch};
 use crate::paths;
 
 // ============================================================================
-// Error message constants
-// These are load-bearing user-facing strings. Tests assert exact matches.
-// ============================================================================
-
-/// Error when database parent directory does not exist (non-default-db case).
-pub const ERR_PARENT_MISSING: &str =
-    "Cannot create database at {}: parent directory does not exist.";
-
-/// Error when path exists but is not a monodex database.
-pub const ERR_NOT_MONODEX_DB: &str = "Path {} exists but is not a monodex database.";
-
-/// Error when path is partially initialized or corrupted.
-pub const ERR_PARTIAL_STATE: &str = "Path {} appears to be a partially-initialized or corrupted monodex database. Manual cleanup required.";
-
-/// Log message when database is already initialized.
-pub const LOG_ALREADY_INITIALIZED: &str =
-    "Database at {} is already initialized (monodex_schema_version {}); skipping.";
-
-// ============================================================================
 // Error message helpers
-// Use these instead of str::replace to avoid fragility.
+// These produce load-bearing user-facing strings. Tests assert exact matches.
 // ============================================================================
 
 /// Format the "parent missing" error with the database path.
@@ -92,10 +72,41 @@ pub fn run_init_db(config: &Config) -> Result<()> {
 }
 
 async fn init_db_inner(config: &Config) -> Result<()> {
-    // Resolve database path from config
+    // Step 1: Resolve database path from config
     let db_path = resolve_database_path(Some(config))?;
 
-    // Check if already initialized
+    // Step 2: Validate parent directory exists (with exception for default-db)
+    // This must happen BEFORE any directory creation.
+    validate_parent_directory(&db_path)?;
+
+    // Step 3: Create the database root directory
+    // At this point the parent is known to exist, so this only creates db_path itself.
+    fs::create_dir_all(&db_path)?;
+
+    // Step 4: Acquire exclusive lock
+    let lock_path = db_path.join(".monodex.lock");
+    let lock_file = File::create(&lock_path)?;
+    fs4::fs_std::FileExt::lock_exclusive(&lock_file)?;
+
+    // Use a scopeguard-like pattern to ensure cleanup on all exit paths
+    struct LockGuard {
+        file: File,
+        path: std::path::PathBuf,
+    }
+
+    impl Drop for LockGuard {
+        fn drop(&mut self) {
+            let _ = fs4::fs_std::FileExt::unlock(&self.file);
+            let _ = fs::remove_file(&self.path);
+        }
+    }
+
+    let _guard = LockGuard {
+        file: lock_file,
+        path: lock_path,
+    };
+
+    // Step 5: Check if already initialized (under the lock)
     if let Some(meta) = check_existing_database(&db_path)? {
         println!(
             "{}",
@@ -104,10 +115,7 @@ async fn init_db_inner(config: &Config) -> Result<()> {
         return Ok(());
     }
 
-    // Validate parent directory exists (with exception for default-db)
-    validate_parent_directory(&db_path)?;
-
-    // Create the database
+    // Step 6: Create the database
     create_database(&db_path).await?;
 
     println!("Created monodex database at {}", db_path.display());
@@ -124,28 +132,56 @@ fn check_existing_database(db_path: &Path) -> Result<Option<MetaFile>> {
 
     // Check if it's a valid monodex database
     let meta_path = db_path.join(META_FILE);
+    let chunks_path = db_path.join(format!("{}.lance", CHUNKS_TABLE));
+    let labels_path = db_path.join(format!("{}.lance", LABEL_METADATA_TABLE));
 
     if meta_path.exists() {
         // Try to load meta file
-        match Database::load_meta(&meta_path) {
-            Ok(meta) => Ok(Some(meta)),
+        let meta = match Database::load_meta(&meta_path) {
+            Ok(m) => m,
             Err(_) => {
                 // Corrupted meta file
                 bail!(err_partial_state(db_path));
             }
+        };
+
+        // Check schema version
+        if meta.monodex_schema_version != crate::engine::schema::MONODEX_SCHEMA_VERSION {
+            bail!(err_schema_mismatch(
+                meta.monodex_schema_version,
+                crate::engine::schema::MONODEX_SCHEMA_VERSION
+            ));
         }
+
+        // Check that table directories exist
+        if !chunks_path.exists() || !labels_path.exists() {
+            bail!(err_partial_state(db_path));
+        }
+
+        Ok(Some(meta))
     } else {
-        // Check if directory is empty
+        // Check for partial state (tables exist but no meta)
+        if chunks_path.exists() || labels_path.exists() {
+            bail!(err_partial_state(db_path));
+        }
+
+        // Check if directory is empty (ignoring lockfile)
         let is_empty = db_path
             .read_dir()
-            .map(|mut entries| entries.next().is_none())
+            .map(|mut entries| {
+                entries.all(|e| {
+                    e.ok()
+                        .map(|e| e.file_name() == ".monodex.lock")
+                        .unwrap_or(false)
+                })
+            })
             .unwrap_or(false);
 
         if is_empty {
-            // Empty directory, treat as non-existent
+            // Empty directory (or only lockfile), treat as non-existent
             Ok(None)
         } else {
-            // Non-empty without meta file
+            // Non-empty without meta file or tables
             bail!(err_not_monodex_db(db_path));
         }
     }
@@ -153,18 +189,19 @@ fn check_existing_database(db_path: &Path) -> Result<Option<MetaFile>> {
 
 /// Validate that the parent directory exists, with exception for default-db.
 fn validate_parent_directory(db_path: &Path) -> Result<()> {
-    // Special case: if the path is under tool_home, we can create tool_home itself
+    // Special case: if the path is exactly the default-db path under tool_home,
+    // we can create tool_home itself.
     let tool_home = paths::tool_home()?;
-    let is_under_tool_home = db_path.starts_with(&tool_home);
+    let default_db_path = tool_home.join("default-db");
+
+    if db_path == default_db_path {
+        // default-db: tool_home will be created by create_database
+        return Ok(());
+    }
 
     if let Some(parent) = db_path.parent()
         && !parent.exists()
     {
-        // If parent is tool_home itself, we can create it
-        if is_under_tool_home && parent == tool_home {
-            // tool_home will be created by create_database
-            return Ok(());
-        }
         bail!(err_parent_missing(db_path));
     }
 
@@ -173,25 +210,6 @@ fn validate_parent_directory(db_path: &Path) -> Result<()> {
 
 /// Create the database directory and initialize LanceDB tables.
 async fn create_database(db_path: &Path) -> Result<()> {
-    // Create the database root directory
-    fs::create_dir_all(db_path)?;
-
-    // Acquire exclusive lock
-    let lock_path = db_path.join(".monodex.lock");
-    let lock_file = File::create(&lock_path)?;
-
-    // Use fs4 for exclusive lock
-    fs4::fs_std::FileExt::lock_exclusive(&lock_file)?;
-
-    // Double-check after acquiring lock (another process may have created it)
-    let meta_path = db_path.join(META_FILE);
-    if meta_path.exists() {
-        // Another process created it, we're done
-        fs4::fs_std::FileExt::unlock(&lock_file)?;
-        let _ = fs::remove_file(&lock_path);
-        return Ok(());
-    }
-
     // Open LanceDB connection
     let conn = lancedb::connect(db_path.to_str().unwrap())
         .execute()
@@ -210,25 +228,10 @@ async fn create_database(db_path: &Path) -> Result<()> {
         .await
         .map_err(|e| anyhow!("Failed to create label_metadata table: {}", e))?;
 
-    // Write meta file
+    // Write meta file using shared implementation (with fsync)
     let meta = MetaFile::new();
-    let meta_file = File::create(&meta_path)?;
-    let writer = BufWriter::new(meta_file);
-    serde_json::to_writer_pretty(writer, &meta)
-        .map_err(|e| anyhow!("Failed to write {}: {}", meta_path.display(), e))?;
-
-    // Sync the directory to ensure durability
-    #[cfg(unix)]
-    {
-        let dir_file = File::open(db_path)?;
-        dir_file.sync_all()?;
-    }
-
-    // Release lock
-    fs4::fs_std::FileExt::unlock(&lock_file)?;
-
-    // Clean up lock file
-    let _ = fs::remove_file(&lock_path);
+    let meta_path = db_path.join(META_FILE);
+    Database::write_meta(&meta_path, &meta)?;
 
     Ok(())
 }
@@ -287,15 +290,6 @@ mod tests {
         unsafe {
             std::env::remove_var("MONODEX_HOME");
         }
-    }
-
-    #[test]
-    fn test_error_messages_are_const() {
-        // This test exists to document that these strings are load-bearing
-        assert!(!ERR_PARENT_MISSING.is_empty());
-        assert!(!ERR_NOT_MONODEX_DB.is_empty());
-        assert!(!ERR_PARTIAL_STATE.is_empty());
-        assert!(!LOG_ALREADY_INITIALIZED.is_empty());
     }
 
     #[test]
@@ -454,6 +448,99 @@ mod tests {
         let err = result.unwrap_err();
 
         // Exact match on error message
+        assert_eq!(err.to_string(), err_partial_state(&db_path));
+
+        remove_monodex_home();
+    }
+
+    #[test]
+    #[serial(monodex_home)]
+    fn test_schema_version_mismatch() {
+        let _guard = MONODEX_HOME_MUTEX.lock().unwrap();
+        clear_tool_home_cache();
+        let temp_dir = TempDir::new().unwrap();
+
+        set_monodex_home(temp_dir.path());
+
+        // First, create a valid database
+        let config_path = temp_dir.path().join("config.json");
+        write_minimal_config(&config_path);
+
+        let config = load_config(&config_path).expect("Config should load");
+        let result = run_init_db(&config);
+        assert!(result.is_ok(), "Initial init-db should succeed");
+
+        // Modify the meta file to have a different schema version
+        let db_path = temp_dir.path().join("default-db");
+        let meta_path = db_path.join(META_FILE);
+        let mut meta = Database::load_meta(&meta_path).unwrap();
+        meta.monodex_schema_version = 99;
+        Database::write_meta(&meta_path, &meta).unwrap();
+
+        // Try to run init-db again
+        clear_tool_home_cache();
+        let result = run_init_db(&config);
+        let err = result.unwrap_err();
+
+        // Should get schema mismatch error
+        assert!(err.to_string().contains("Schema mismatch"));
+        assert!(err.to_string().contains("version 99"));
+
+        remove_monodex_home();
+    }
+
+    #[test]
+    #[serial(monodex_home)]
+    fn test_meta_exists_tables_missing() {
+        let _guard = MONODEX_HOME_MUTEX.lock().unwrap();
+        clear_tool_home_cache();
+        let temp_dir = TempDir::new().unwrap();
+
+        set_monodex_home(temp_dir.path());
+
+        // Create database directory with meta file but no tables
+        let db_path = temp_dir.path().join("default-db");
+        fs::create_dir_all(&db_path).unwrap();
+        let meta = MetaFile::new();
+        let meta_path = db_path.join(META_FILE);
+        Database::write_meta(&meta_path, &meta).unwrap();
+
+        let config_path = temp_dir.path().join("config.json");
+        write_minimal_config(&config_path);
+
+        let config = load_config(&config_path).expect("Config should load");
+        let result = run_init_db(&config);
+        let err = result.unwrap_err();
+
+        // Should get partial state error
+        assert_eq!(err.to_string(), err_partial_state(&db_path));
+
+        remove_monodex_home();
+    }
+
+    #[test]
+    #[serial(monodex_home)]
+    fn test_tables_exist_meta_missing() {
+        let _guard = MONODEX_HOME_MUTEX.lock().unwrap();
+        clear_tool_home_cache();
+        let temp_dir = TempDir::new().unwrap();
+
+        set_monodex_home(temp_dir.path());
+
+        // Create database directory with tables but no meta
+        let db_path = temp_dir.path().join("default-db");
+        fs::create_dir_all(&db_path).unwrap();
+        fs::create_dir_all(db_path.join("chunks.lance")).unwrap();
+        fs::create_dir_all(db_path.join("label_metadata.lance")).unwrap();
+
+        let config_path = temp_dir.path().join("config.json");
+        write_minimal_config(&config_path);
+
+        let config = load_config(&config_path).expect("Config should load");
+        let result = run_init_db(&config);
+        let err = result.unwrap_err();
+
+        // Should get partial state error
         assert_eq!(err.to_string(), err_partial_state(&db_path));
 
         remove_monodex_home();

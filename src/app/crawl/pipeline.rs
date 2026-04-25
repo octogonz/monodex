@@ -337,7 +337,6 @@ fn chunk_to_row(chunk: &Chunk) -> ChunkRow {
         point_id: chunk.point_id(),
         text: chunk.text.clone(),
         catalog: chunk.catalog.clone(),
-        label_id: chunk.label_id.clone(),
         active_label_ids: chunk.active_label_ids.clone(),
         embedder_id: chunk.embedder_id.clone(),
         chunker_id: chunk.chunker_id.clone(),

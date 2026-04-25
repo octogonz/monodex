@@ -170,7 +170,6 @@ mod tests {
             point_id: point_id.to_string(),
             text: format!("Test content for chunk {} in file {}", ordinal, file_id),
             catalog: "test-catalog".to_string(),
-            label_id: label_id.to_string(),
             active_label_ids: vec![label_id.to_string()],
             embedder_id: "test-embedder:v1".to_string(),
             chunker_id: "test-chunker:v1".to_string(),

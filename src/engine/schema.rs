@@ -42,7 +42,7 @@ pub const LABEL_METADATA_TABLE: &str = "label_metadata";
 /// - `source_type` column removed (no longer needed - separate tables)
 /// - `point_id` added as string primary key: `"{file_id}:{chunk_ordinal}"`
 /// - `vector` added as `FixedSizeList<Float32, 768>`
-/// - `active_label_ids` is `List<Utf8>` (nullable, default empty)
+/// - `active_label_ids` is `List<Utf8>` (non-nullable; a chunk must belong to at least one label)
 ///
 /// Column ordering follows the logical grouping from PointPayload:
 /// 1. Primary key
@@ -72,11 +72,10 @@ pub fn chunks_schema() -> SchemaRef {
         ),
         // Label membership
         Field::new("catalog", DataType::Utf8, false),
-        Field::new("label_id", DataType::Utf8, false),
         Field::new(
             "active_label_ids",
-            DataType::List(Arc::new(Field::new("item", DataType::Utf8, true))),
-            true, // nullable, default empty
+            DataType::List(Arc::new(Field::new("item", DataType::Utf8, false))),
+            false, // non-nullable; a chunk must belong to at least one label
         ),
         // Implementation identity
         Field::new("embedder_id", DataType::Utf8, false),
@@ -141,8 +140,8 @@ mod tests {
         // Verify expected column count
         assert_eq!(
             schema.fields().len(),
-            25,
-            "chunks table should have 25 columns"
+            24,
+            "chunks table should have 24 columns"
         );
 
         // Verify primary key column exists and is non-nullable

@@ -26,7 +26,6 @@ pub struct ChunkRow {
 
     // Label membership
     pub catalog: String,
-    pub label_id: String,
     pub active_label_ids: Vec<String>,
 
     // Implementation identity
@@ -81,12 +80,10 @@ impl ChunkRow {
                 .map_err(|e| anyhow!("Invalid label_id in stored row active_label_ids: {}", e))?;
         }
 
-        // Validate that label_id is present in active_label_ids
-        if !self.active_label_ids.contains(&self.label_id) {
+        // Validate that active_label_ids is non-empty (a chunk with no labels is garbage)
+        if self.active_label_ids.is_empty() {
             return Err(anyhow!(
-                "ChunkRow label_id '{}' is not present in active_label_ids {:?}",
-                self.label_id,
-                self.active_label_ids
+                "ChunkRow has empty active_label_ids - a chunk must belong to at least one label"
             ));
         }
 
@@ -154,7 +151,6 @@ mod tests {
             point_id: "abc123:1".to_string(),
             text: "some code".to_string(),
             catalog: "my-catalog".to_string(),
-            label_id: "my-catalog:main".to_string(),
             active_label_ids: vec!["my-catalog:main".to_string()],
             embedder_id: "jina-embeddings-v2-base-code:v1".to_string(),
             chunker_id: "typescript-partitioner:v1".to_string(),
@@ -192,9 +188,9 @@ mod tests {
     }
 
     #[test]
-    fn test_chunk_row_validate_label_id_not_in_active() {
+    fn test_chunk_row_validate_empty_active_label_ids() {
         let mut row = valid_chunk_row();
-        row.label_id = "my-catalog:other".to_string();
+        row.active_label_ids.clear();
         assert!(row.validate().is_err());
     }
 

@@ -49,7 +49,6 @@ fn chunk_rows_to_record_batch<'a>(
     ));
 
     let catalog: StringArray = rows.iter().map(|r| Some(r.catalog.as_str())).collect();
-    let label_id: StringArray = rows.iter().map(|r| Some(r.label_id.as_str())).collect();
 
     // active_label_ids: List<Utf8>
     let active_label_ids = build_string_list_array(
@@ -93,7 +92,6 @@ fn chunk_rows_to_record_batch<'a>(
         Arc::new(text),
         vector,
         Arc::new(catalog),
-        Arc::new(label_id),
         active_label_ids,
         Arc::new(embedder_id),
         Arc::new(chunker_id),
@@ -159,10 +157,6 @@ fn chunk_rows_to_record_batch_with_vectors<'a>(
     ));
 
     let catalog: StringArray = rows.iter().map(|(r, _)| Some(r.catalog.as_str())).collect();
-    let label_id: StringArray = rows
-        .iter()
-        .map(|(r, _)| Some(r.label_id.as_str()))
-        .collect();
 
     // active_label_ids: List<Utf8>
     let active_label_ids = build_string_list_array(
@@ -227,7 +221,6 @@ fn chunk_rows_to_record_batch_with_vectors<'a>(
         Arc::new(text),
         vector,
         Arc::new(catalog),
-        Arc::new(label_id),
         active_label_ids,
         Arc::new(embedder_id),
         Arc::new(chunker_id),
@@ -272,7 +265,7 @@ fn build_string_list_array(values: &[&[String]]) -> ArrayRef {
 
     Arc::new(
         ListArray::try_new(
-            Arc::new(Field::new("item", DataType::Utf8, true)),
+            Arc::new(Field::new("item", DataType::Utf8, false)), // non-null items
             offset_buffer,
             Arc::new(inner),
             None,
@@ -311,17 +304,9 @@ fn parse_chunk_row(batch: &RecordBatch, row_idx: usize) -> Result<ChunkRow> {
         .value(row_idx)
         .to_string();
 
-    let label_id = batch
-        .column(4)
-        .as_any()
-        .downcast_ref::<StringArray>()
-        .ok_or_else(|| anyhow!("label_id column is not a StringArray"))?
-        .value(row_idx)
-        .to_string();
-
     let active_label_ids = {
         let list_array = batch
-            .column(5)
+            .column(4)
             .as_any()
             .downcast_ref::<ListArray>()
             .ok_or_else(|| anyhow!("active_label_ids column is not a ListArray"))?;
@@ -336,7 +321,7 @@ fn parse_chunk_row(batch: &RecordBatch, row_idx: usize) -> Result<ChunkRow> {
     };
 
     let embedder_id = batch
-        .column(6)
+        .column(5)
         .as_any()
         .downcast_ref::<StringArray>()
         .ok_or_else(|| anyhow!("embedder_id column is not a StringArray"))?
@@ -344,7 +329,7 @@ fn parse_chunk_row(batch: &RecordBatch, row_idx: usize) -> Result<ChunkRow> {
         .to_string();
 
     let chunker_id = batch
-        .column(7)
+        .column(6)
         .as_any()
         .downcast_ref::<StringArray>()
         .ok_or_else(|| anyhow!("chunker_id column is not a StringArray"))?
@@ -352,7 +337,7 @@ fn parse_chunk_row(batch: &RecordBatch, row_idx: usize) -> Result<ChunkRow> {
         .to_string();
 
     let blob_id = batch
-        .column(8)
+        .column(7)
         .as_any()
         .downcast_ref::<StringArray>()
         .ok_or_else(|| anyhow!("blob_id column is not a StringArray"))?
@@ -360,7 +345,7 @@ fn parse_chunk_row(batch: &RecordBatch, row_idx: usize) -> Result<ChunkRow> {
         .to_string();
 
     let content_hash = batch
-        .column(9)
+        .column(8)
         .as_any()
         .downcast_ref::<StringArray>()
         .ok_or_else(|| anyhow!("content_hash column is not a StringArray"))?
@@ -368,7 +353,7 @@ fn parse_chunk_row(batch: &RecordBatch, row_idx: usize) -> Result<ChunkRow> {
         .to_string();
 
     let file_id = batch
-        .column(10)
+        .column(9)
         .as_any()
         .downcast_ref::<StringArray>()
         .ok_or_else(|| anyhow!("file_id column is not a StringArray"))?
@@ -376,7 +361,7 @@ fn parse_chunk_row(batch: &RecordBatch, row_idx: usize) -> Result<ChunkRow> {
         .to_string();
 
     let relative_path = batch
-        .column(11)
+        .column(10)
         .as_any()
         .downcast_ref::<StringArray>()
         .ok_or_else(|| anyhow!("relative_path column is not a StringArray"))?
@@ -384,7 +369,7 @@ fn parse_chunk_row(batch: &RecordBatch, row_idx: usize) -> Result<ChunkRow> {
         .to_string();
 
     let package_name = batch
-        .column(12)
+        .column(11)
         .as_any()
         .downcast_ref::<StringArray>()
         .ok_or_else(|| anyhow!("package_name column is not a StringArray"))?
@@ -392,7 +377,7 @@ fn parse_chunk_row(batch: &RecordBatch, row_idx: usize) -> Result<ChunkRow> {
         .to_string();
 
     let source_uri = batch
-        .column(13)
+        .column(12)
         .as_any()
         .downcast_ref::<StringArray>()
         .ok_or_else(|| anyhow!("source_uri column is not a StringArray"))?
@@ -400,28 +385,28 @@ fn parse_chunk_row(batch: &RecordBatch, row_idx: usize) -> Result<ChunkRow> {
         .to_string();
 
     let chunk_ordinal = batch
-        .column(14)
+        .column(13)
         .as_any()
         .downcast_ref::<Int32Array>()
         .ok_or_else(|| anyhow!("chunk_ordinal column is not an Int32Array"))?
         .value(row_idx);
 
     let chunk_count = batch
-        .column(15)
+        .column(14)
         .as_any()
         .downcast_ref::<Int32Array>()
         .ok_or_else(|| anyhow!("chunk_count column is not an Int32Array"))?
         .value(row_idx);
 
     let start_line = batch
-        .column(16)
+        .column(15)
         .as_any()
         .downcast_ref::<Int32Array>()
         .ok_or_else(|| anyhow!("start_line column is not an Int32Array"))?
         .value(row_idx);
 
     let end_line = batch
-        .column(17)
+        .column(16)
         .as_any()
         .downcast_ref::<Int32Array>()
         .ok_or_else(|| anyhow!("end_line column is not an Int32Array"))?
@@ -430,7 +415,7 @@ fn parse_chunk_row(batch: &RecordBatch, row_idx: usize) -> Result<ChunkRow> {
     // Nullable string fields
     let symbol_name = {
         let arr = batch
-            .column(18)
+            .column(17)
             .as_any()
             .downcast_ref::<StringArray>()
             .ok_or_else(|| anyhow!("symbol_name column is not a StringArray"))?;
@@ -442,7 +427,7 @@ fn parse_chunk_row(batch: &RecordBatch, row_idx: usize) -> Result<ChunkRow> {
     };
 
     let chunk_type = batch
-        .column(19)
+        .column(18)
         .as_any()
         .downcast_ref::<StringArray>()
         .ok_or_else(|| anyhow!("chunk_type column is not a StringArray"))?
@@ -450,7 +435,7 @@ fn parse_chunk_row(batch: &RecordBatch, row_idx: usize) -> Result<ChunkRow> {
         .to_string();
 
     let chunk_kind = batch
-        .column(20)
+        .column(19)
         .as_any()
         .downcast_ref::<StringArray>()
         .ok_or_else(|| anyhow!("chunk_kind column is not a StringArray"))?
@@ -459,7 +444,7 @@ fn parse_chunk_row(batch: &RecordBatch, row_idx: usize) -> Result<ChunkRow> {
 
     let breadcrumb = {
         let arr = batch
-            .column(21)
+            .column(20)
             .as_any()
             .downcast_ref::<StringArray>()
             .ok_or_else(|| anyhow!("breadcrumb column is not a StringArray"))?;
@@ -473,7 +458,7 @@ fn parse_chunk_row(batch: &RecordBatch, row_idx: usize) -> Result<ChunkRow> {
     // Nullable int fields
     let split_part_ordinal = {
         let arr = batch
-            .column(22)
+            .column(21)
             .as_any()
             .downcast_ref::<Int32Array>()
             .ok_or_else(|| anyhow!("split_part_ordinal column is not an Int32Array"))?;
@@ -486,7 +471,7 @@ fn parse_chunk_row(batch: &RecordBatch, row_idx: usize) -> Result<ChunkRow> {
 
     let split_part_count = {
         let arr = batch
-            .column(23)
+            .column(22)
             .as_any()
             .downcast_ref::<Int32Array>()
             .ok_or_else(|| anyhow!("split_part_count column is not an Int32Array"))?;
@@ -498,7 +483,7 @@ fn parse_chunk_row(batch: &RecordBatch, row_idx: usize) -> Result<ChunkRow> {
     };
 
     let file_complete = batch
-        .column(24)
+        .column(23)
         .as_any()
         .downcast_ref::<BooleanArray>()
         .ok_or_else(|| anyhow!("file_complete column is not a BooleanArray"))?
@@ -508,7 +493,6 @@ fn parse_chunk_row(batch: &RecordBatch, row_idx: usize) -> Result<ChunkRow> {
         point_id,
         text,
         catalog,
-        label_id,
         active_label_ids,
         embedder_id,
         chunker_id,
@@ -932,7 +916,6 @@ mod tests {
             point_id: point_id.to_string(),
             text: format!("Test content for {}", point_id),
             catalog: "test-catalog".to_string(),
-            label_id: "test-catalog:main".to_string(),
             active_label_ids: vec!["test-catalog:main".to_string()],
             embedder_id: "test-embedder:v1".to_string(),
             chunker_id: "test-chunker:v1".to_string(),

@@ -47,7 +47,8 @@ pub struct Chunk {
     pub breadcrumb: String,
 
     // --- Phase 2: Label-aware indexing fields ---
-    /// The initiating label for this chunk (transitional)
+    /// The initiating label for this chunk.
+    /// Note: This field is only used to seed `active_label_ids`, not stored as a column.
     pub label_id: String,
 
     /// All labels this chunk belongs to (authoritative)

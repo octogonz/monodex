@@ -71,7 +71,7 @@ This tool is designed for AI assistants. The indexed database provides a complet
 
 ## Prerequisites
 
-- **Rust**: 1.91+ (for edition 2024)
+- **Rust**: 1.93+ (for edition 2024)
 
 - **Protocol Buffers compiler (`protoc`)**: Required at build time by LanceDB's transitive dependencies. Install via your platform package manager:
 
@@ -105,50 +105,7 @@ cargo build --release
 # Binary will be at ./target/release/monodex
 ```
 
-## First-Time Setup
-
-Before using monodex, initialize the database:
-
-```bash
-monodex init-db
-```
-
-This creates a local LanceDB database at `~/.monodex/default-db/`. No external services are required.
-
-## Usage
-
-### Global Options
-
-```bash
-# Use a custom config file location
-monodex --config /path/to/config.json search --text "query"
-
-# Enable verbose debug logging for network requests
-monodex --debug crawl --catalog myrepo --label main --commit HEAD
-
-# Show help for any command
-monodex --help
-monodex crawl --help
-
-# Show version
-monodex --version
-```
-
-### Debug Mode
-
-The `--debug` flag enables verbose logging for troubleshooting:
-
-- Logs storage-layer operations
-- Shows batch sizes during uploads
-- Useful for diagnosing database issues
-
-Example:
-
-```bash
-monodex --debug crawl --catalog sparo --label main --commit HEAD
-```
-
-### Configuration
+## Configuration
 
 Create `~/.monodex/config.json`:
 
@@ -201,6 +158,50 @@ The `embeddingModel` section controls memory and CPU usage for embedding generat
 **Catalog types:**
 
 - **`monorepo`**: Walks upward to find the nearest `package.json` for package name resolution. Breadcrumbs show `@scope/package-name:File.ts:Symbol`.
+
+
+## First-Time Setup
+
+Before using monodex, initialize the database:
+
+```bash
+monodex init-db
+```
+
+This creates a local LanceDB database at `~/.monodex/default-db/`. No external services are required.
+
+## Usage
+
+### Global Options
+
+```bash
+# Use a custom config file location
+monodex --config /path/to/config.json search --text "query"
+
+# Enable verbose debug logging for storage operations
+monodex --debug crawl --catalog myrepo --label main --commit HEAD
+
+# Show help for any command
+monodex --help
+monodex crawl --help
+
+# Show version
+monodex --version
+```
+
+### Debug Mode
+
+The `--debug` flag enables verbose logging for troubleshooting:
+
+- Logs storage-layer operations
+- Shows batch sizes during uploads
+- Useful for diagnosing database issues
+
+Example:
+
+```bash
+monodex --debug crawl --catalog sparo --label main --commit HEAD
+```
 
 ### Label-Based Indexing
 

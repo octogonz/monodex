@@ -16,7 +16,7 @@ pub struct Cli {
     #[arg(long)]
     pub config: Option<PathBuf>,
 
-    /// Enable verbose debug logging for network requests and other operations
+    /// Enable verbose debug logging for storage operations
     #[arg(long, global = true)]
     pub debug: bool,
 

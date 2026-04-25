@@ -374,7 +374,6 @@ For each file:
 
 1. Track all file IDs touched during crawl (in a HashSet)
 2. Scan all chunks where `active_label_ids` contains the label
-   - Filter: `source_type = "code"` (exclude metadata points)
 3. For each chunk:
    - Extract the `file_id` field from the payload
    - If file_id NOT in touched set:
@@ -586,6 +585,10 @@ Divide a file into chunks that fit the embedding budget (6000 chars), splitting 
 
 ## Backlog Issues
 
+### Error-handling discipline
+
+Config-load failures and database-open failures both go through central paths. User-facing failure messages are uniform across commands. Future `monodex init` and `monodex init-db` resolve the failures these messages point at, rather than tailoring per-command error wording.
+
 ### Early Exit on Embedding Error Skips Flush
 
 The `try_for_each(...)?` pattern exits early without flushing remaining chunks. Need cleanup wrapper to ensure:
@@ -734,11 +737,11 @@ Commit-based labels are **immutable** (for a given commit):
 monodex crawl --catalog rushstack --label working --working-dir
 
 # Search working directory content
-monodex search --text "uncommitted feature" --label rushstack:working
+monodex search --text "uncommitted feature" --catalog rushstack --label working
 
 # Compare with committed code
-monodex search --text "same query" --label rushstack:main
-monodex search --text "same query" --label rushstack:working
+monodex search --text "same query" --catalog rushstack --label main
+monodex search --text "same query" --catalog rushstack --label working
 ```
 
 ---

@@ -29,11 +29,11 @@ cargo install monodex
 Breadcrumb: monodex:API.md:configuration
 Type: section
 Lines: 15-29
-Size: 241 chars
+Size: 234 chars
 Preview:
 ## Configuration
 
-Create a configuration file at `~/.config/monodex/config.json`:
+Create a configuration file at `~/.monodex/config.json`:
 
 ```json
 {
@@ -76,10 +76,10 @@ monodex search "JsonFile"
 Breadcrumb: monodex:API.md:troubleshooting
 Type: section
 Lines: 54-62
-Size: 237 chars
+Size: 230 chars
 Preview:
 ## Troubleshooting
 
 **Q: I get "No config found" error**
 
-A: Make sure you have created the config file at `~/.config/monodex/config.json`.
+A: Make sure you have created the config file at `~/.monodex/config.json`.

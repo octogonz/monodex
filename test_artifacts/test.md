@@ -14,7 +14,7 @@ Make sure you have Rust 1.70 or later installed.
 
 ## Configuration
 
-Create a configuration file at `~/.config/monodex/config.json`:
+Create a configuration file at `~/.monodex/config.json`:
 
 ```json
 {
@@ -55,7 +55,7 @@ monodex search "JsonFile"
 
 **Q: I get "No config found" error**
 
-A: Make sure you have created the config file at `~/.config/monodex/config.json`.
+A: Make sure you have created the config file at `~/.monodex/config.json`.
 
 **Q: I get "No monodex database" error**
 

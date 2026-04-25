@@ -16,17 +16,6 @@ use crate::engine::system_info::{
     get_physical_core_count,
 };
 
-/// Qdrant configuration
-#[derive(Debug, serde::Deserialize)]
-pub struct QdrantConfig {
-    pub url: Option<String>,
-    pub collection: String,
-    /// Maximum upload payload size in bytes (default: 30MB)
-    /// Qdrant has a 32MB limit; we default to 30MB for safety margin
-    #[serde(rename = "maxUploadBytes")]
-    pub max_upload_bytes: Option<usize>,
-}
-
 /// Database configuration (LanceDB)
 #[derive(Debug, serde::Deserialize, Clone)]
 #[serde(deny_unknown_fields)]
@@ -35,17 +24,6 @@ pub struct DatabaseConfig {
     /// If not specified, defaults to <tool_home>/default-db.
     /// Supports tilde expansion (~) and relative paths.
     pub path: Option<String>,
-}
-
-impl QdrantConfig {
-    /// Default max upload size: 30MB (safely under Qdrant's 32MB limit)
-    const DEFAULT_MAX_UPLOAD_BYTES: usize = 30 * 1024 * 1024;
-
-    /// Get the configured max upload bytes, or the default
-    pub fn get_max_upload_bytes(&self) -> usize {
-        self.max_upload_bytes
-            .unwrap_or(Self::DEFAULT_MAX_UPLOAD_BYTES)
-    }
 }
 
 /// Catalog configuration
@@ -195,7 +173,6 @@ impl<'de> serde::Deserialize<'de> for EmbeddingSizeValue {
 /// Main configuration file
 #[derive(Debug, serde::Deserialize)]
 pub struct Config {
-    pub qdrant: QdrantConfig,
     pub catalogs: HashMap<String, CatalogConfig>,
     #[serde(rename = "embeddingModel", default)]
     pub embedding_model: EmbeddingModelConfig,
@@ -465,7 +442,6 @@ mod tests {
         writeln!(
             file,
             r#"{{
-                "qdrant": {{ "collection": "test" }},
                 "catalogs": {{
                     "test": {{
                         "type": "invalid",
@@ -494,7 +470,6 @@ mod tests {
         writeln!(
             file,
             r#"{{
-                "qdrant": {{ "collection": "test" }},
                 "catalogs": {{
                     "sparo": {{
                         "type": "monorepo",
@@ -510,59 +485,6 @@ mod tests {
     }
 
     #[test]
-    fn test_load_config_accepts_max_upload_bytes() {
-        let dir = tempdir().unwrap();
-        let config_path = dir.path().join("config.json");
-        let mut file = std::fs::File::create(&config_path).unwrap();
-
-        writeln!(
-            file,
-            r#"{{
-                "qdrant": {{ "collection": "test", "maxUploadBytes": 20971520 }},
-                "catalogs": {{
-                    "sparo": {{
-                        "type": "monorepo",
-                        "path": "/tmp/sparo"
-                    }}
-                }}
-            }}"#
-        )
-        .unwrap();
-
-        let config = load_config(&config_path).unwrap();
-        assert_eq!(config.qdrant.max_upload_bytes, Some(20971520));
-        assert_eq!(config.qdrant.get_max_upload_bytes(), 20971520);
-    }
-
-    #[test]
-    fn test_load_config_max_upload_bytes_defaults() {
-        let dir = tempdir().unwrap();
-        let config_path = dir.path().join("config.json");
-        let mut file = std::fs::File::create(&config_path).unwrap();
-
-        writeln!(
-            file,
-            r#"{{
-                "qdrant": {{ "collection": "test" }},
-                "catalogs": {{
-                    "sparo": {{
-                        "type": "monorepo",
-                        "path": "/tmp/sparo"
-                    }}
-                }}
-            }}"#
-        )
-        .unwrap();
-
-        let config = load_config(&config_path).unwrap();
-        assert_eq!(config.qdrant.max_upload_bytes, None);
-        assert_eq!(
-            config.qdrant.get_max_upload_bytes(),
-            30 * 1024 * 1024 // 30MB default
-        );
-    }
-
-    #[test]
     fn test_load_config_accepts_database_path() {
         let dir = tempdir().unwrap();
         let config_path = dir.path().join("config.json");
@@ -571,7 +493,6 @@ mod tests {
         writeln!(
             file,
             r#"{{
-                "qdrant": {{ "collection": "test" }},
                 "catalogs": {{
                     "sparo": {{
                         "type": "monorepo",
@@ -598,7 +519,6 @@ mod tests {
         writeln!(
             file,
             r#"{{
-                "qdrant": {{ "collection": "test" }},
                 "catalogs": {{
                     "sparo": {{
                         "type": "monorepo",
@@ -622,7 +542,6 @@ mod tests {
         writeln!(
             file,
             r#"{{
-                "qdrant": {{ "collection": "test" }},
                 "catalogs": {{}},
                 "database": {{ "path": "/custom/db" }}
             }}"#
@@ -643,7 +562,6 @@ mod tests {
         writeln!(
             file,
             r#"{{
-                "qdrant": {{ "collection": "test" }},
                 "catalogs": {{}},
                 "database": {{ "path": "~/my-db" }}
             }}"#
@@ -676,7 +594,6 @@ mod tests {
         writeln!(
             file,
             r#"{{
-                "qdrant": {{ "collection": "test" }},
                 "catalogs": {{}}
             }}"#
         )

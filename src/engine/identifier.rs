@@ -277,7 +277,7 @@ fn validate_label_payload(payload: &str) -> Result<(), IdentifierError> {
 /// A validated label identifier in storage form (catalog:label).
 ///
 /// This type guarantees that the label_id has been validated and contains
-/// only allowed characters. It is used internally for Qdrant storage and
+/// only allowed characters. It is used internally for storage and
 /// is never shown directly to users.
 #[derive(Debug, Clone, PartialEq, Eq, Hash, PartialOrd, Ord)]
 pub struct LabelId {
@@ -299,7 +299,7 @@ impl LabelId {
         })
     }
 
-    /// Creates a LabelId without validation (for reading from Qdrant).
+    /// Creates a LabelId without validation (for reading from storage).
     #[allow(dead_code)]
     pub fn new_unchecked(catalog: &str, label: &str) -> Self {
         Self {

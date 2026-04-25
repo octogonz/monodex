@@ -48,9 +48,6 @@ arrow-buffer = "57"
 tokio = { version = "1", features = ["rt-multi-thread", "macros"] }
 futures = "0.3"
 
-# HTTP (retained for now, will be removed in Phase 6)
-reqwest = { version = "0.13", features = ["json", "blocking"] }
-
 # Utilities
 anyhow = "1.0.93"
 thiserror = "2.0"

@@ -1,6 +1,6 @@
 //! monodex: Semantic search indexer for Rush monorepos
 //!
-//! Uses Qdrant vector database with jina-embeddings-v2-base-code embeddings
+//! Semantic search indexer for Rush monorepos using LanceDB vector database
 //! Intelligently chunks code and documentation for high-quality semantic search
 
 use clap::Parser;

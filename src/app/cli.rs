@@ -7,7 +7,7 @@
 use clap::{Args, Parser, Subcommand};
 use std::path::PathBuf;
 
-/// Rush semantic search crawler for Qdrant
+/// Rush semantic search crawler using LanceDB
 /// https://www.rushstack.io
 #[derive(Parser)]
 #[command(name = "monodex", version, about)]
@@ -43,7 +43,7 @@ pub enum Commands {
     /// Idempotent: safe to run on an existing database.
     InitDb,
 
-    /// Crawl source and index into Qdrant (incremental sync).
+    /// Crawl source and index into LanceDB (incremental sync).
     /// Reports warnings when AST chunking fails and fallback is used.
     /// These warnings indicate partitioner defects to investigate.
     Crawl {

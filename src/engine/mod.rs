@@ -18,7 +18,6 @@ pub mod partitioner;
 pub mod schema;
 pub mod storage;
 pub mod system_info;
-pub mod uploader;
 pub mod util;
 
 // Re-export commonly used types for convenience

@@ -96,7 +96,6 @@ mod tests {
         writeln!(
             file,
             r#"{{
-  "qdrant": {{ "collection": "test" }},
   "catalogs": {{}}
 }}"#
         )

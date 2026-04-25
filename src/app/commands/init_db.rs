@@ -3,14 +3,14 @@
 //! Purpose: Create a new monodex database directory with LanceDB tables.
 //! Edit here when: Changing init-db behavior, error messages, or initialization logic.
 //! Do not edit here for: Database open logic (see engine/storage/database.rs),
-//!   schema definitions (see engine/schema.rs), config loading (see app/config.rs).
+//!   schema definitions (see engine/schema.rs), config loading (app/config.rs).
 
 use anyhow::{Result, anyhow, bail};
 use std::fs::{self, File};
 use std::io::BufWriter;
 use std::path::Path;
 
-use crate::app::config::{load_config, resolve_database_path};
+use crate::app::config::{Config, resolve_database_path};
 use crate::engine::schema::{
     CHUNKS_TABLE, LABEL_METADATA_TABLE, chunks_schema, label_metadata_schema,
 };
@@ -21,9 +21,6 @@ use crate::paths;
 // Error message constants
 // These are load-bearing user-facing strings. Tests assert exact matches.
 // ============================================================================
-
-/// Error when config file is missing.
-pub const ERR_CONFIG_MISSING: &str = "No config found at {}. Create one before running init-db.";
 
 /// Error when database parent directory does not exist (non-default-db case).
 pub const ERR_PARENT_MISSING: &str =
@@ -43,14 +40,6 @@ pub const LOG_ALREADY_INITIALIZED: &str =
 // Error message helpers
 // Use these instead of str::replace to avoid fragility.
 // ============================================================================
-
-/// Format the "config missing" error with the resolved config path.
-fn err_config_missing(path: &Path) -> String {
-    format!(
-        "No config found at {}. Create one before running init-db.",
-        path.display()
-    )
-}
 
 /// Format the "parent missing" error with the database path.
 fn err_parent_missing(db_path: &Path) -> String {
@@ -93,23 +82,18 @@ fn log_already_initialized(db_path: &Path, schema_version: u32) -> String {
 ///
 /// Creates a new monodex database at the configured path, or verifies an existing
 /// database is valid. The database contains LanceDB tables for chunks and label metadata.
-pub fn run_init_db() -> Result<()> {
+///
+/// Note: Config must be loaded by the caller (main.rs) and passed in.
+/// This ensures the --config flag is respected uniformly across all commands.
+pub fn run_init_db(config: &Config) -> Result<()> {
     let rt = tokio::runtime::Runtime::new()
         .map_err(|e| anyhow!("Failed to create tokio runtime: {}", e))?;
-    rt.block_on(init_db_inner())
+    rt.block_on(init_db_inner(config))
 }
 
-async fn init_db_inner() -> Result<()> {
-    // Load config to get database path
-    let config_path = paths::config_path()?;
-
-    if !config_path.exists() {
-        bail!(err_config_missing(&config_path));
-    }
-
-    // Load config and resolve database path
-    let config = load_config(&config_path)?;
-    let db_path = resolve_database_path(Some(&config))?;
+async fn init_db_inner(config: &Config) -> Result<()> {
+    // Resolve database path from config
+    let db_path = resolve_database_path(Some(config))?;
 
     // Check if already initialized
     if let Some(meta) = check_existing_database(&db_path)? {
@@ -252,6 +236,7 @@ async fn create_database(db_path: &Path) -> Result<()> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::app::config::load_config;
     use crate::paths::clear_tool_home_cache;
     use serial_test::serial;
     use std::io::Write;
@@ -307,7 +292,6 @@ mod tests {
     #[test]
     fn test_error_messages_are_const() {
         // This test exists to document that these strings are load-bearing
-        assert!(!ERR_CONFIG_MISSING.is_empty());
         assert!(!ERR_PARENT_MISSING.is_empty());
         assert!(!ERR_NOT_MONODEX_DB.is_empty());
         assert!(!ERR_PARTIAL_STATE.is_empty());
@@ -328,8 +312,11 @@ mod tests {
         let config_path = temp_dir.path().join("config.json");
         write_minimal_config(&config_path);
 
+        // Load config (simulating main.rs behavior)
+        let config = load_config(&config_path).expect("Config should load");
+
         // Run init-db
-        let result = run_init_db();
+        let result = run_init_db(&config);
 
         // Should succeed
         assert!(result.is_ok(), "init-db should succeed: {:?}", result.err());
@@ -358,39 +345,21 @@ mod tests {
         let config_path = temp_dir.path().join("config.json");
         write_minimal_config(&config_path);
 
+        // Load config (simulating main.rs behavior)
+        let config = load_config(&config_path).expect("Config should load");
+
         // First run
-        let result1 = run_init_db();
+        let result1 = run_init_db(&config);
         assert!(result1.is_ok(), "First init-db should succeed");
 
         // Second run
         clear_tool_home_cache(); // Clear cache for second run
-        let result2 = run_init_db();
+        let result2 = run_init_db(&config);
         assert!(result2.is_ok(), "Second init-db should succeed");
 
         // Verify database still valid
         let db_path = temp_dir.path().join("default-db");
         assert!(db_path.join(META_FILE).exists());
-
-        remove_monodex_home();
-    }
-
-    #[test]
-    #[serial(monodex_home)]
-    fn test_missing_config_file() {
-        let _guard = MONODEX_HOME_MUTEX.lock().unwrap();
-        clear_tool_home_cache();
-        let temp_dir = TempDir::new().unwrap();
-
-        set_monodex_home(temp_dir.path());
-
-        // Do NOT create config file
-        let config_path = temp_dir.path().join("config.json");
-
-        let result = run_init_db();
-        let err = result.unwrap_err();
-
-        // Exact match on error message
-        assert_eq!(err.to_string(), err_config_missing(&config_path));
 
         remove_monodex_home();
     }
@@ -409,7 +378,10 @@ mod tests {
         let config_path = temp_dir.path().join("config.json");
         write_config_with_db_path(&config_path, db_path_str);
 
-        let result = run_init_db();
+        // Load config (simulating main.rs behavior)
+        let config = load_config(&config_path).expect("Config should load");
+
+        let result = run_init_db(&config);
         let err = result.unwrap_err();
 
         // Exact match on error message
@@ -439,7 +411,10 @@ mod tests {
         let config_path = temp_dir.path().join("config.json");
         write_config_with_db_path(&config_path, db_path.to_str().unwrap());
 
-        let result = run_init_db();
+        // Load config (simulating main.rs behavior)
+        let config = load_config(&config_path).expect("Config should load");
+
+        let result = run_init_db(&config);
         let err = result.unwrap_err();
 
         // Exact match on error message
@@ -461,7 +436,10 @@ mod tests {
         let config_path = temp_dir.path().join("config.json");
         write_minimal_config(&config_path);
 
-        let result = run_init_db();
+        // Load config (simulating main.rs behavior)
+        let config = load_config(&config_path).expect("Config should load");
+
+        let result = run_init_db(&config);
         assert!(result.is_ok(), "Initial init-db should succeed");
 
         // Corrupt the meta file
@@ -472,7 +450,7 @@ mod tests {
 
         // Try to run init-db again
         clear_tool_home_cache(); // Clear cache for second run
-        let result = run_init_db();
+        let result = run_init_db(&config);
         let err = result.unwrap_err();
 
         // Exact match on error message

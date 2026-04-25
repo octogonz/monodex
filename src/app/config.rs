@@ -185,9 +185,22 @@ pub struct Config {
 
 /// Load config from a file path.
 /// Validates catalog names and types after parsing.
+///
+/// Error messages:
+/// - File not found: "No config found at <path>. See the README for instructions on creating a config file."
+/// - Other IO errors: preserved with context
+/// - Parse/validation errors: preserved
 pub fn load_config(path: &PathBuf) -> anyhow::Result<Config> {
-    let content = std::fs::read_to_string(path)
-        .map_err(|e| anyhow!("Failed to read config file {}: {}", path.display(), e))?;
+    let content = std::fs::read_to_string(path).map_err(|e| {
+        if e.kind() == std::io::ErrorKind::NotFound {
+            anyhow!(
+                "No config found at {}. See the README for instructions on creating a config file.",
+                path.display()
+            )
+        } else {
+            anyhow!("Failed to read config file {}: {}", path.display(), e)
+        }
+    })?;
 
     // Parse JSON (for now - will add JSONC support later)
     let config: Config = serde_json::from_str(&content)
@@ -632,6 +645,34 @@ mod tests {
         assert!(
             err.contains("unknown field"),
             "Expected error about unknown field, got: {}",
+            err
+        );
+    }
+
+    #[test]
+    fn test_load_config_missing_file_centralized_error() {
+        // Test that the "config file not found" error uses the centralized wording
+        let nonexistent_path = PathBuf::from("/nonexistent/path/to/config.json");
+        let result = load_config(&nonexistent_path);
+
+        assert!(result.is_err());
+        let err = result.unwrap_err().to_string();
+
+        // Exact match on the centralized error message format
+        assert!(
+            err.starts_with("No config found at"),
+            "Expected error to start with 'No config found at', got: {}",
+            err
+        );
+        assert!(
+            err.contains("See the README for instructions on creating a config file."),
+            "Expected error to contain README hint, got: {}",
+            err
+        );
+        // Verify the path is included
+        assert!(
+            err.contains("/nonexistent/path/to/config.json"),
+            "Expected error to contain the path, got: {}",
             err
         );
     }

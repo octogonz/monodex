@@ -208,10 +208,6 @@ async fn create_database(db_path: &Path) -> Result<()> {
         return Ok(());
     }
 
-    // Create tables directory (LanceDB expects this)
-    let tables_dir = db_path.join("tables");
-    fs::create_dir_all(&tables_dir)?;
-
     // Open LanceDB connection
     let conn = lancedb::connect(db_path.to_str().unwrap())
         .execute()
@@ -345,7 +341,6 @@ mod tests {
             db_path.join(META_FILE).exists(),
             "monodex-meta.json should exist"
         );
-        assert!(db_path.join("tables").exists(), "tables/ should exist");
 
         // Cleanup env
         remove_monodex_home();

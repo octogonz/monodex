@@ -126,8 +126,6 @@ mod tests {
     ) {
         // Create database directory
         fs::create_dir_all(db_path).unwrap();
-        let tables_dir = db_path.join("tables");
-        fs::create_dir_all(&tables_dir).unwrap();
 
         // Create LanceDB tables
         let conn = connect(db_path.to_str().unwrap())

@@ -120,10 +120,11 @@ The database is stored at `~/.monodex/default-db/` by default (configurable via 
 ```
 default-db/
 ├── monodex-meta.json      # Schema version and creation metadata
-└── tables/
-    ├── chunks/            # LanceDB table for code chunks
-    └── label_metadata/    # LanceDB table for label metadata
+├── chunks.lance/          # LanceDB table for code chunks
+└── label_metadata.lance/  # LanceDB table for label metadata
 ```
+
+**Note:** Each `.lance/` directory is a fully self-contained LanceDB table with its own data files, transaction log, and version history. The `.lance` suffix is self-identifying — anything matching `*.lance/` is a LanceDB table.
 
 **`monodex-meta.json`** contains:
 ```json

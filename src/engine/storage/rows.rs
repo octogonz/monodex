@@ -87,6 +87,36 @@ impl ChunkRow {
             ));
         }
 
+        // Validate chunk_ordinal bounds (must be >= 1 and <= chunk_count)
+        // Order matters: validate >= 1 before any `as usize` cast to avoid negative i32
+        // becoming a huge usize.
+        if self.chunk_ordinal < 1 {
+            return Err(anyhow!(
+                "ChunkRow has invalid chunk_ordinal {}: must be >= 1",
+                self.chunk_ordinal
+            ));
+        }
+        if self.chunk_ordinal > self.chunk_count {
+            return Err(anyhow!(
+                "ChunkRow has invalid chunk_ordinal {} > chunk_count {}",
+                self.chunk_ordinal,
+                self.chunk_count
+            ));
+        }
+
+        // Validate point_id matches computed value from file_id and chunk_ordinal
+        let expected_point_id =
+            crate::engine::util::compute_point_id(&self.file_id, self.chunk_ordinal as usize);
+        if self.point_id != expected_point_id {
+            return Err(anyhow!(
+                "ChunkRow point_id '{}' does not match expected '{}' for file_id '{}' and chunk_ordinal {}",
+                self.point_id,
+                expected_point_id,
+                self.file_id,
+                self.chunk_ordinal
+            ));
+        }
+
         Ok(())
     }
 }

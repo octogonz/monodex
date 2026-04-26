@@ -474,6 +474,11 @@ impl ChunkStorage {
             ));
         }
 
+        // Validate all rows before writing
+        for row in rows {
+            row.validate()?;
+        }
+
         let schema = self.table.schema().await?;
 
         // Process in batches internally
@@ -689,13 +694,17 @@ impl ChunkStorage {
     ///
     /// Uses LanceDB's update() with SQL expression for in-place modification.
     pub async fn update_active_labels(&self, point_id: &str, new_labels: &[String]) -> Result<()> {
+        // Reject empty label list - a chunk must belong to at least one label.
+        // Callers should use delete_by_point_ids to remove chunks, not clear their labels.
+        if new_labels.is_empty() {
+            return Err(anyhow!(
+                "Cannot update active_label_ids to empty list - a chunk must belong to at least one label"
+            ));
+        }
+
         // Build SQL array literal like "['label1', 'label2']"
-        let labels_sql = if new_labels.is_empty() {
-            "[]".to_string()
-        } else {
-            let quoted: Vec<String> = new_labels.iter().map(|l| format!("'{}'", l)).collect();
-            format!("[{}]", quoted.join(", "))
-        };
+        let quoted: Vec<String> = new_labels.iter().map(|l| format!("'{}'", l)).collect();
+        let labels_sql = format!("[{}]", quoted.join(", "));
 
         let predicate = format!("point_id = '{}'", point_id);
 

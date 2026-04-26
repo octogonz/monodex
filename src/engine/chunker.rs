@@ -44,10 +44,6 @@ pub struct Chunk {
     pub breadcrumb: String,
 
     // --- Phase 2: Label-aware indexing fields ---
-    /// The initiating label for this chunk.
-    /// Note: This field is only used to seed `active_label_ids`, not stored as a column.
-    pub label_id: String,
-
     /// All labels this chunk belongs to (authoritative)
     pub active_label_ids: Vec<String>,
 
@@ -232,7 +228,6 @@ impl Chunk {
             chunk_kind: p.chunk_kind,
             breadcrumb: p.breadcrumb,
             // Phase 2 fields
-            label_id: ctx.label_id.clone(),
             active_label_ids: vec![ctx.label_id.clone()],
             embedder_id: EMBEDDER_ID.to_string(),
             chunker_id: CHUNKER_ID.to_string(),
@@ -264,7 +259,6 @@ impl From<PartitionedChunk> for Chunk {
             chunk_kind: p.chunk_kind,
             breadcrumb: p.breadcrumb,
             // Phase 2 fields - must be filled in by caller
-            label_id: String::new(),
             active_label_ids: Vec::new(),
             embedder_id: EMBEDDER_ID.to_string(),
             chunker_id: CHUNKER_ID.to_string(),
@@ -334,7 +328,6 @@ fn chunk_by_lines(
                 chunk_kind: "content".to_string(),
                 breadcrumb: encoded_file_name.clone(),
                 // Phase 2 fields
-                label_id: ctx.label_id.clone(),
                 active_label_ids: vec![ctx.label_id.clone()],
                 embedder_id: EMBEDDER_ID.to_string(),
                 chunker_id: CHUNKER_ID.to_string(),

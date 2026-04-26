@@ -50,7 +50,6 @@ fn test_chunk(
     Chunk {
         text: text.to_string(),
         catalog: catalog.to_string(),
-        label_id: format!("{}:{}", catalog, label),
         active_label_ids: vec![format!("{}:{}", catalog, label)],
         embedder_id: "test-embedder:v1".to_string(),
         chunker_id: "test-chunker:v1".to_string(),

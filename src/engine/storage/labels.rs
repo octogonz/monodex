@@ -132,6 +132,9 @@ impl LabelStorage {
 
     /// Upsert a single label metadata row by label_id.
     pub async fn upsert(&self, row: &LabelMetadataRow) -> Result<()> {
+        // Validate row before writing
+        row.validate()?;
+
         let schema = self.table.schema().await?;
         let batch = label_metadata_rows_to_record_batch(std::iter::once(row), schema.clone())?;
 
@@ -220,14 +223,22 @@ impl LabelStorage {
     pub async fn delete_by_catalog(&self, catalog: &str) -> Result<u64> {
         let predicate = format!("catalog = '{}'", catalog);
 
-        let count_before = self.table.count_rows(None).await.unwrap_or(0);
+        let count_before = self
+            .table
+            .count_rows(None)
+            .await
+            .map_err(|e| anyhow!("Failed to count rows before delete: {}", e))?;
 
         self.table
             .delete(&predicate)
             .await
             .map_err(|e| anyhow!("Failed to delete label metadata by catalog: {}", e))?;
 
-        let count_after = self.table.count_rows(None).await.unwrap_or(0);
+        let count_after = self
+            .table
+            .count_rows(None)
+            .await
+            .map_err(|e| anyhow!("Failed to count rows after delete: {}", e))?;
 
         Ok(count_before.saturating_sub(count_after) as u64)
     }

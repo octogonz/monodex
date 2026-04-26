@@ -6,7 +6,7 @@
 //!   schema definitions (see engine/schema.rs), config loading (app/config.rs).
 
 use anyhow::{Result, anyhow, bail};
-use std::fs::{self, File};
+use std::fs::{self, File, OpenOptions};
 use std::path::Path;
 
 use crate::app::config::{Config, resolve_database_path};
@@ -55,6 +55,22 @@ fn log_already_initialized(db_path: &Path, schema_version: u32) -> String {
 }
 
 // ============================================================================
+// Lock guard for init-db
+// ============================================================================
+
+/// Guard that holds the lockfile handle. Drop releases the OS-level lock.
+/// The lockfile itself is NOT removed - it is permanent database state.
+struct LockGuard {
+    file: File,
+}
+
+impl Drop for LockGuard {
+    fn drop(&mut self) {
+        let _ = fs4::fs_std::FileExt::unlock(&self.file);
+    }
+}
+
+// ============================================================================
 // Command entry point
 // ============================================================================
 
@@ -79,32 +95,36 @@ async fn init_db_inner(config: &Config) -> Result<()> {
     // This must happen BEFORE any directory creation.
     validate_parent_directory(&db_path)?;
 
-    // Step 3: Create the database root directory
-    // At this point the parent is known to exist, so this only creates db_path itself.
-    fs::create_dir_all(&db_path)?;
+    // Step 3: Create the database root directory (if it doesn't exist)
+    // For default-db, we can create tool_home if needed. For custom paths, parent must exist.
+    let tool_home = paths::tool_home()?;
+    let default_db_path = tool_home.join("default-db");
+
+    if db_path == default_db_path {
+        // default-db: ensure tool_home exists, then create default-db if needed
+        fs::create_dir_all(&tool_home)?;
+        if !db_path.exists() {
+            fs::create_dir(&db_path)?;
+        }
+    } else if !db_path.exists() {
+        // Custom path: parent must exist (validated above), create only db_path
+        fs::create_dir(&db_path)?;
+    }
 
     // Step 4: Acquire exclusive lock
+    // The lockfile is permanent and never removed. The OS-level lock is released on Drop.
     let lock_path = db_path.join(".monodex.lock");
-    let lock_file = File::create(&lock_path)?;
+    let lock_file = OpenOptions::new()
+        .create(true)
+        .truncate(true)
+        .read(true)
+        .write(true)
+        .open(&lock_path)?;
     fs4::fs_std::FileExt::lock_exclusive(&lock_file)?;
 
-    // Use a scopeguard-like pattern to ensure cleanup on all exit paths
-    struct LockGuard {
-        file: File,
-        path: std::path::PathBuf,
-    }
-
-    impl Drop for LockGuard {
-        fn drop(&mut self) {
-            let _ = fs4::fs_std::FileExt::unlock(&self.file);
-            let _ = fs::remove_file(&self.path);
-        }
-    }
-
-    let _guard = LockGuard {
-        file: lock_file,
-        path: lock_path,
-    };
+    // Hold the lock for the duration of init. Drop releases the OS-level lock.
+    // Do NOT remove the lockfile - it is expected database state.
+    let _guard = LockGuard { file: lock_file };
 
     // Step 5: Check if already initialized (under the lock)
     if let Some(meta) = check_existing_database(&db_path)? {

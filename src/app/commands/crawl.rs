@@ -166,7 +166,6 @@ async fn run_crawl_label_async(
 
     let mut new_files: Vec<(String, String)> = Vec::new(); // (relative_path, blob_id)
     let mut existing_files_needing_label: HashSet<String> = HashSet::new();
-    let mut existing_files_already_labeled: HashSet<String> = HashSet::new();
     let mut new_count = 0;
     let mut existing_count = 0;
 
@@ -200,12 +199,11 @@ async fn run_crawl_label_async(
                     new_count += 1;
                     continue;
                 }
-                // File already indexed - check if it already has this label
-                if chunk.active_label_ids.contains(&label_id.to_string()) {
-                    existing_files_already_labeled.insert(file_id);
-                } else {
-                    existing_files_needing_label.insert(file_id);
-                }
+                // File already indexed - add to existing files list.
+                // We do NOT short-circuit based on sentinel's active_label_ids because
+                // partial label coverage is possible (some chunks may be missing the label).
+                // The label-add phase will visit all chunks and update as needed.
+                existing_files_needing_label.insert(file_id);
                 existing_count += 1;
             }
             Ok(None) => {
@@ -225,12 +223,6 @@ async fn run_crawl_label_async(
 
     println!("  New files to index: {}", new_count);
     println!("  Existing files (label update only): {}", existing_count);
-    if !existing_files_already_labeled.is_empty() {
-        println!(
-            "  Existing files already labeled: {} (skipping)",
-            existing_files_already_labeled.len()
-        );
-    }
     println!();
 
     // Step 5: Add label to existing files that need it
@@ -245,11 +237,17 @@ async fn run_crawl_label_async(
             // Get all chunks for this file and add the label
             match chunk_storage.get_chunks_by_file_id(file_id).await {
                 Ok(chunks) => {
+                    let mut file_had_failures = false;
                     for chunk in &chunks {
-                        let mut new_labels = chunk.active_label_ids.clone();
-                        if !new_labels.contains(&label_id.to_string()) {
-                            new_labels.push(label_id.to_string());
+                        // Skip chunks that already have this label
+                        if chunk.active_label_ids.contains(&label_id.to_string()) {
+                            continue;
                         }
+                        let new_labels = {
+                            let mut labels = chunk.active_label_ids.clone();
+                            labels.push(label_id.to_string());
+                            labels
+                        };
                         if let Err(e) = chunk_storage
                             .update_active_labels(&chunk.point_id, &new_labels)
                             .await
@@ -259,9 +257,12 @@ async fn run_crawl_label_async(
                                 chunk.point_id, e
                             );
                             existing_file_label_add_failures.push(format!("{}: {}", file_id, e));
+                            file_had_failures = true;
                         }
                     }
-                    label_add_success_files.insert(file_id.clone());
+                    if !file_had_failures {
+                        label_add_success_files.insert(file_id.clone());
+                    }
                 }
                 Err(e) => {
                     eprintln!("  ❌ Failed to get chunks for file {}: {}", file_id, e);
@@ -278,10 +279,9 @@ async fn run_crawl_label_async(
         }
         println!();
     }
-    let existing_files: HashSet<String> = label_add_success_files
-        .union(&existing_files_already_labeled)
-        .cloned()
-        .collect();
+    // existing_files now equals label_add_success_files since we no longer
+    // short-circuit files that already have the label on the sentinel
+    let existing_files = label_add_success_files;
 
     // Step 6: Index new files
     let mut all_chunks: Vec<crate::engine::Chunk> = Vec::new();
@@ -674,7 +674,6 @@ async fn run_crawl_working_dir_async(
 
     let mut new_files: Vec<(String, String)> = Vec::new(); // (relative_path, blob_id)
     let mut existing_files_needing_label: HashSet<String> = HashSet::new();
-    let mut existing_files_already_labeled: HashSet<String> = HashSet::new();
     let mut new_count = 0;
     let mut existing_count = 0;
 
@@ -707,12 +706,11 @@ async fn run_crawl_working_dir_async(
                     new_count += 1;
                     continue;
                 }
-                // File already indexed - check if it already has this label
-                if chunk.active_label_ids.contains(&label_id.to_string()) {
-                    existing_files_already_labeled.insert(file_id);
-                } else {
-                    existing_files_needing_label.insert(file_id);
-                }
+                // File already indexed - add to existing files list.
+                // We do NOT short-circuit based on sentinel's active_label_ids because
+                // partial label coverage is possible (some chunks may be missing the label).
+                // The label-add phase will visit all chunks and update as needed.
+                existing_files_needing_label.insert(file_id);
                 existing_count += 1;
             }
             Ok(None) => {
@@ -732,12 +730,6 @@ async fn run_crawl_working_dir_async(
 
     println!("  New files to index: {}", new_count);
     println!("  Existing files (label update only): {}", existing_count);
-    if !existing_files_already_labeled.is_empty() {
-        println!(
-            "  Existing files already labeled: {} (skipping)",
-            existing_files_already_labeled.len()
-        );
-    }
     println!();
 
     // Add label to existing files that need it
@@ -749,13 +741,20 @@ async fn run_crawl_working_dir_async(
             existing_files_needing_label.len()
         );
         for file_id in &existing_files_needing_label {
+            // Get all chunks for this file and add the label
             match chunk_storage.get_chunks_by_file_id(file_id).await {
                 Ok(chunks) => {
+                    let mut file_had_failures = false;
                     for chunk in &chunks {
-                        let mut new_labels = chunk.active_label_ids.clone();
-                        if !new_labels.contains(&label_id.to_string()) {
-                            new_labels.push(label_id.to_string());
+                        // Skip chunks that already have this label
+                        if chunk.active_label_ids.contains(&label_id.to_string()) {
+                            continue;
                         }
+                        let new_labels = {
+                            let mut labels = chunk.active_label_ids.clone();
+                            labels.push(label_id.to_string());
+                            labels
+                        };
                         if let Err(e) = chunk_storage
                             .update_active_labels(&chunk.point_id, &new_labels)
                             .await
@@ -765,9 +764,12 @@ async fn run_crawl_working_dir_async(
                                 chunk.point_id, e
                             );
                             existing_file_label_add_failures.push(format!("{}: {}", file_id, e));
+                            file_had_failures = true;
                         }
                     }
-                    label_add_success_files.insert(file_id.clone());
+                    if !file_had_failures {
+                        label_add_success_files.insert(file_id.clone());
+                    }
                 }
                 Err(e) => {
                     eprintln!("  ❌ Failed to get chunks for file {}: {}", file_id, e);
@@ -784,10 +786,9 @@ async fn run_crawl_working_dir_async(
         }
         println!();
     }
-    let existing_files: HashSet<String> = label_add_success_files
-        .union(&existing_files_already_labeled)
-        .cloned()
-        .collect();
+    // existing_files now equals label_add_success_files since we no longer
+    // short-circuit files that already have the label on the sentinel
+    let existing_files = label_add_success_files;
 
     // Index new files
     let mut all_chunks: Vec<crate::engine::Chunk> = Vec::new();

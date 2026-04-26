@@ -296,15 +296,11 @@ async fn test_upsert_overwrites() {
 }
 
 /// Helper to create a test chunk row with custom label.
-fn test_chunk_row_with_label(
-    point_id: &str,
-    file_id: &str,
-    ordinal: i32,
-    label_id: &str,
-) -> ChunkRow {
+fn test_chunk_row_with_label(file_id: &str, ordinal: i32, label_id: &str) -> ChunkRow {
+    let point_id = format!("{}:{}", file_id, ordinal);
     ChunkRow {
-        point_id: point_id.to_string(),
-        text: format!("Test content for {}", point_id),
+        point_id,
+        text: format!("Test content for {}", file_id),
         catalog: label_id
             .split(':')
             .next()
@@ -350,14 +346,14 @@ async fn test_vector_search_with_filter() {
     v2[1] = 1.0;
 
     // Insert row with label "catalog-a:label-a"
-    let row1 = test_chunk_row_with_label("p1", "file1", 1, "catalog-a:label-a");
+    let row1 = test_chunk_row_with_label("file1", 1, "catalog-a:label-a");
     storage
         .upsert_with_vectors(std::slice::from_ref(&row1), std::slice::from_ref(&v1))
         .await
         .unwrap();
 
     // Insert row with label "catalog-b:label-b"
-    let row2 = test_chunk_row_with_label("p2", "file2", 1, "catalog-b:label-b");
+    let row2 = test_chunk_row_with_label("file2", 1, "catalog-b:label-b");
     storage
         .upsert_with_vectors(std::slice::from_ref(&row2), std::slice::from_ref(&v2))
         .await
@@ -383,7 +379,7 @@ async fn test_vector_search_with_filter() {
         .unwrap();
 
     assert_eq!(results.len(), 1, "Should find 1 result for label-a");
-    assert_eq!(results[0].chunk.point_id, "p1");
+    assert_eq!(results[0].chunk.point_id, "file1:1");
 
     // Search with query vector matching v1, filtered to label-b
     // Should return p2 (has label-b, even though vector doesn't match as well)
@@ -395,7 +391,7 @@ async fn test_vector_search_with_filter() {
     // This proves the filter works: we searched with v1 but got p2 because
     // the filter restricted us to label-b, which only p2 has
     assert_eq!(results.len(), 1, "Should find 1 result for label-b");
-    assert_eq!(results[0].chunk.point_id, "p2");
+    assert_eq!(results[0].chunk.point_id, "file2:1");
 
     // Search with a non-existent label should return nothing
     let results = storage
@@ -448,8 +444,8 @@ async fn test_vector_search_correctness() {
 
     // Pad to VECTOR_DIMENSION and insert rows
     for (i, small_vec) in small_vectors.iter().enumerate() {
-        let point_id = format!("v{}", i);
-        let row = test_chunk_row_with_label(&point_id, &format!("file{}", i), 1, "test:label");
+        let file_id = format!("file{}", i);
+        let row = test_chunk_row_with_label(&file_id, 1, "test:label");
 
         // Pad the small vector to VECTOR_DIMENSION with zeros
         let mut padded = small_vec.clone();
@@ -478,21 +474,21 @@ async fn test_vector_search_correctness() {
         .await
         .unwrap();
 
-    // v0 should be first (distance ~0, cosine similarity = 1)
+    // file0:1 should be first (distance ~0, cosine similarity = 1)
     assert_eq!(
         results.first().map(|r| r.chunk.point_id.as_str()),
-        Some("v0"),
-        "v0 should be ranked first for query [1,0,0,0]"
+        Some("file0:1"),
+        "file0:1 should be ranked first for query [1,0,0,0]"
     );
 
-    // v4 should be last (distance ~2, cosine similarity = -1)
+    // file4:1 should be last (distance ~2, cosine similarity = -1)
     assert_eq!(
         results.last().map(|r| r.chunk.point_id.as_str()),
-        Some("v4"),
-        "v4 should be ranked last for query [1,0,0,0]"
+        Some("file4:1"),
+        "file4:1 should be ranked last for query [1,0,0,0]"
     );
 
-    // Test 2: Query with [0.707, 0.707, 0, 0] - v8 should be first
+    // Test 2: Query with [0.707, 0.707, 0, 0] - file8:1 should be first
     let mut query = vec![0.0f32; VECTOR_DIMENSION];
     query[0] = 0.707;
     query[1] = 0.707;
@@ -502,25 +498,25 @@ async fn test_vector_search_correctness() {
         .await
         .unwrap();
 
-    // v8 should be first (exact match, cosine = 1)
+    // file8:1 should be first (exact match, cosine = 1)
     assert_eq!(
         results.first().map(|r| r.chunk.point_id.as_str()),
-        Some("v8"),
-        "v8 should be ranked first for query at 45° between axes 0 and 1"
+        Some("file8:1"),
+        "file8:1 should be ranked first for query at 45° between axes 0 and 1"
     );
 
-    // v0 and v1 should be in top 4 (both have cosine = 0.707 with the query)
+    // file0:1 and file1:1 should be in top 4 (both have cosine = 0.707 with the query)
     let top_4: Vec<&str> = results
         .iter()
         .take(4)
         .map(|r| r.chunk.point_id.as_str())
         .collect();
     assert!(
-        top_4.contains(&"v0") && top_4.contains(&"v1"),
-        "v0 and v1 should both be in top 4 for query at 45° between axes 0 and 1"
+        top_4.contains(&"file0:1") && top_4.contains(&"file1:1"),
+        "file0:1 and file1:1 should both be in top 4 for query at 45° between axes 0 and 1"
     );
 
-    // Test 3: Query with [1, 1, 1, 1] - v9 should be first
+    // Test 3: Query with [1, 1, 1, 1] - file9:1 should be first
     let mut query = vec![0.0f32; VECTOR_DIMENSION];
     query[0] = 1.0;
     query[1] = 1.0;
@@ -532,10 +528,10 @@ async fn test_vector_search_correctness() {
         .await
         .unwrap();
 
-    // v9 should be first (all components equal, normalized)
+    // file9:1 should be first (all components equal, normalized)
     assert_eq!(
         results.first().map(|r| r.chunk.point_id.as_str()),
-        Some("v9"),
-        "v9 should be ranked first for query [1,1,1,1] (equal components)"
+        Some("file9:1"),
+        "file9:1 should be ranked first for query [1,1,1,1] (equal components)"
     );
 }

@@ -124,6 +124,16 @@ impl Database {
             );
         }
 
+        // Check that table directories exist
+        let chunks_path = path.join(format!("{}.lance", CHUNKS_TABLE));
+        let labels_path = path.join(format!("{}.lance", LABEL_METADATA_TABLE));
+        if !chunks_path.exists() || !labels_path.exists() {
+            bail!(
+                "Database at '{}' is missing table directories. Manual cleanup required.",
+                path.display()
+            );
+        }
+
         // Open LanceDB connection
         let conn = lancedb::connect(path.to_str().unwrap())
             .execute()

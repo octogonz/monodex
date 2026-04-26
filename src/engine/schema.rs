@@ -38,16 +38,10 @@ pub const LABEL_METADATA_TABLE: &str = "label_metadata";
 
 /// Returns the Arrow schema for the `chunks` table.
 ///
-/// Columns translate from the Qdrant-era `PointPayload` struct, with these changes:
-/// - `source_type` column removed (no longer needed - separate tables)
-/// - `point_id` added as string primary key: `"{file_id}:{chunk_ordinal}"`
-/// - `vector` added as `FixedSizeList<Float32, 768>`
-/// - `active_label_ids` is `List<Utf8>` (non-nullable; a chunk must belong to at least one label)
-///
-/// Column ordering follows the logical grouping from PointPayload:
-/// 1. Primary key
+/// Column ordering follows a logical grouping:
+/// 1. Primary key (point_id)
 /// 2. Content (text, vector)
-/// 3. Label membership
+/// 3. Label membership (catalog, active_label_ids)
 /// 4. Implementation identity
 /// 5. Provenance
 /// 6. File identity
@@ -109,10 +103,8 @@ pub fn chunks_schema() -> SchemaRef {
 
 /// Returns the Arrow schema for the `label_metadata` table.
 ///
-/// Columns translate from the Qdrant-era `LabelMetadata` struct, with these changes:
-/// - `source_type` column removed (no longer needed - separate tables)
-/// - No vector column (label metadata is not searched by similarity)
-/// - `label_id` is the primary key: `"{catalog}:{label}"`
+/// The `label_id` is the primary key: `"{catalog}:{label}"`. This table has no vector
+/// column because label metadata is not searched by similarity.
 pub fn label_metadata_schema() -> SchemaRef {
     Arc::new(Schema::new(vec![
         // Primary key

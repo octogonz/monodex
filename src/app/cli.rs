@@ -64,13 +64,13 @@ pub enum Commands {
         incremental_warnings: bool,
     },
 
-    /// Purge all chunks from a catalog or entire collection
+    /// Purge all chunks from a catalog, or the entire database
     Purge {
-        /// Catalog name to purge (if not specified, purges entire collection)
+        /// Catalog name to purge (if not specified, purges the entire database)
         #[arg(long)]
         catalog: Option<String>,
 
-        /// Purge all catalogs (entire collection)
+        /// Purge the entire database (all catalogs)
         #[arg(long)]
         all: bool,
     },

@@ -12,10 +12,8 @@ use crate::engine::identifier::{LabelId, validate_catalog};
 
 /// A row in the `chunks` table.
 ///
-/// Columns translate from the Qdrant-era `PointPayload` struct, with these changes:
-/// - `source_type` removed (no longer needed - separate tables)
-/// - `point_id` added as string primary key: `"{file_id}:{chunk_ordinal}"`
-/// - `vector` stored separately (not in this struct)
+/// This struct represents the Rust view of a chunk row. The `vector` column is stored
+/// separately in LanceDB and not included in this struct.
 #[derive(Debug, Clone, PartialEq)]
 pub struct ChunkRow {
     // Primary key
@@ -123,9 +121,8 @@ impl ChunkRow {
 
 /// A row in the `label_metadata` table.
 ///
-/// Columns translate from the Qdrant-era `LabelMetadata` struct, with these changes:
-/// - `source_type` removed (no longer needed - separate tables)
-/// - No vector column (label metadata is not searched by similarity)
+/// This struct represents the Rust view of label metadata. There is no vector column
+/// because label metadata is not searched by similarity.
 #[derive(Debug, Clone, PartialEq)]
 pub struct LabelMetadataRow {
     // Primary key

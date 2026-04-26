@@ -215,7 +215,7 @@ pub struct LabelMetadata {
 
 **Primary key:** The `label_id` string is the primary key for the table.
 
-**Why separate table:** LanceDB does not require vectors on all tables, so label metadata lives in its own table without the zero-vector workaround that was needed for Qdrant. This cleanly separates the two logical entities (chunks and label metadata).
+**Why separate table:** LanceDB does not require vectors on all tables, so label metadata lives in its own table. This cleanly separates the two logical entities (chunks and label metadata).
 
 ### Point IDs for Chunks
 
@@ -599,11 +599,11 @@ The `try_for_each(...)?` pattern exits early without flushing remaining chunks. 
 
 ### Upload Failures Treated as Success
 
-`upload_batch()` errors are only logged, not propagated. Need retry or abort logic.
+[OBSOLETE — was Qdrant-specific] `upload_batch()` errors are only logged, not propagated. Need retry or abort logic.
 
 ### Unbounded Write Batching
 
-Crawl accumulates points for 60 seconds with no size limit. Need batch constraints.
+[OBSOLETE — was Qdrant-specific] Crawl accumulates points for 60 seconds with no size limit. Need batch constraints.
 
 ### Files Deleted Before Replacement Indexing Succeeds
 

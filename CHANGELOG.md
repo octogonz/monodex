@@ -23,7 +23,7 @@ PUBLISHING PROCEDURE:
 4. After publishing, the next PR author will add a new "## Unreleased" section
 -->
 
-## Unreleased
+## 0.5.0 (2026-04-26)
 
 ### Changed
 
@@ -52,7 +52,7 @@ PUBLISHING PROCEDURE:
 
 - **Example config catalog names**: The example `config.json` now uses valid kebab-case catalog names (`my-monorepo`, `another-monorepo`) instead of invalid underscored names that would fail validation.
 
-## 0.4.0 (2025-01-17)
+## 0.4.0 (2026-04-18)
 
 ### Changed
 
@@ -68,9 +68,7 @@ PUBLISHING PROCEDURE:
 - **Cgroup-aware memory warning**: Fixed a bug where memory warnings in containerized environments would compare against host-level available RAM instead of cgroup-limited available RAM. This caused the warning to never fire even when the container was at risk of OOM.
 - **Config field mapping**: The `embeddingModel` field in `config.json` is now correctly mapped to the Rust struct via `#[serde(rename = "embeddingModel")]`. Previously, this field was silently ignored due to snake_case/camelCase mismatch.
 
-## 0.3.0
-
-_Released on April 16, 2026 (UTC)_
+## 0.3.0 (2026-04-16)
 
 ### Changed
 
@@ -84,9 +82,7 @@ _Released on April 16, 2026 (UTC)_
 
 - **Working directory blob IDs now match Git blob IDs**: `--working-dir` mode now uses Git CLI batch commands (`git ls-files`, `git status`, `git hash-object`) to compute blob IDs that respect `.gitattributes`, clean filters, and other repo-specific settings. This ensures identical content produces the same `file_id` in both `--commit` and `--working-dir` modes, enabling proper incremental skipping.
 
-## 0.2.0
-
-_Released on April 14, 2026 (UTC)_
+## 0.2.0 (2026-04-14)
 
 ### Updates
 
@@ -95,9 +91,7 @@ _Released on April 14, 2026 (UTC)_
 - Implement rewind upload algorithm for large batch splitting to avoid Qdrant payload limits
 - Improve upload error handling: preserve chunks on failure, report clear error messages
 
-## 0.1.0
-
-_Released on April 10, 2026 (UTC)_
+## 0.1.0 (2026-04-10)
 
 ### Minor changes
 
@@ -118,8 +112,6 @@ _Released on April 10, 2026 (UTC)_
 - Fix race condition in crawl checkpointing
 - Increase HTTP timeout for wait=true operations
 
-## 0.0.1
-
-_Released on April 8, 2026 (UTC)_
+## 0.0.1 (2026-04-08)
 
 - Initial release

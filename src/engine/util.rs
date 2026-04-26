@@ -52,15 +52,6 @@ pub fn compute_file_id(
 /// # Arguments
 /// * `file_id` - The file's semantic identity (16-char hex string)
 /// * `chunk_ordinal` - 1-indexed position of the chunk in the file
-///
-/// Compute point ID for a specific chunk within a file.
-///
-/// The point ID uniquely identifies a chunk by combining the file ID
-/// with the chunk's ordinal position.
-///
-/// # Arguments
-/// * `file_id` - The file's semantic identity (16-char hex string)
-/// * `chunk_ordinal` - 1-indexed position of the chunk in the file
 pub fn compute_point_id(file_id: &str, chunk_ordinal: usize) -> String {
     format!("{}:{}", file_id, chunk_ordinal)
 }

@@ -610,7 +610,7 @@ impl ChunkStorage {
     }
 
     /// Vector search: given a query vector, a label filter, and a limit,
-    /// return the top-N chunks by cosine similarity that belong to the label.
+    /// return the top-N chunks by cosine distance that belong to the label.
     ///
     /// Brute-force scan; no ANN index.
     pub async fn vector_search(

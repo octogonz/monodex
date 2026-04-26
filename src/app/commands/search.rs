@@ -42,7 +42,7 @@ pub fn run_search(
     for result in &results {
         let chunk = &result.chunk;
 
-        // Line 1: file_id:chunk_ordinal  score  breadcrumb [chunk_kind] (part N/M)
+        // Line 1: file_id:chunk_ordinal  distance  breadcrumb [chunk_kind] (part N/M)
         // E.1: Sanitize breadcrumb to prevent terminal injection
         let breadcrumb = sanitize_for_terminal(chunk.breadcrumb.as_deref().unwrap_or("unknown"));
 

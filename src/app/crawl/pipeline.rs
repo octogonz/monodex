@@ -366,12 +366,6 @@ async fn upsert_chunks_with_vectors(
         return Ok(());
     }
 
-    // For now, we use the storage's upsert method which handles the RecordBatch construction.
-    // The storage module will need to be updated to accept vectors separately.
-    //
-    // Actually, looking at the storage module, it creates placeholder vectors.
-    // We need a different approach: create the RecordBatch with real vectors here.
-
-    // Let's use a helper that the storage module can provide
+    // Persist chunks and their embedding vectors through the storage layer.
     storage.upsert_with_vectors(rows, vectors).await
 }

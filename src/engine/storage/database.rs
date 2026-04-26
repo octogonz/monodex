@@ -54,7 +54,9 @@ impl MetaFile {
     pub fn new() -> Self {
         Self {
             monodex_schema_version: MONODEX_SCHEMA_VERSION,
-            created_at: chrono::Utc::now().to_rfc3339(),
+            created_at: time::OffsetDateTime::now_utc()
+                .format(&time::format_description::well_known::Rfc3339)
+                .expect("RFC 3339 formatting is infallible"),
             created_by_binary_version: env!("CARGO_PKG_VERSION").to_string(),
             lance_format_version: LANCEDB_CRATE_VERSION.to_string(),
         }

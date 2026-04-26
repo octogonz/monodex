@@ -295,10 +295,17 @@ pub fn resolve_embedding_config(config: &EmbeddingModelConfig) -> ResolvedEmbedd
                 }
                 Err(e) => {
                     eprintln!("Warning: Failed to auto-detect embedding config: {}", e);
-                    eprintln!("Using fallback: 1 instance × {} threads", num_cpus::get());
+                    eprintln!(
+                        "Using fallback: 1 instance × {} threads",
+                        std::thread::available_parallelism()
+                            .map(|n| n.get())
+                            .unwrap_or(1)
+                    );
                     ResolvedEmbeddingConfig {
                         model_instances: 1,
-                        threads_per_instance: num_cpus::get(),
+                        threads_per_instance: std::thread::available_parallelism()
+                            .map(|n| n.get())
+                            .unwrap_or(1),
                         total_ram: 0,
                         available_ram: 0,
                         estimated_ram_usage: estimate_ram_usage(1),
@@ -322,7 +329,7 @@ pub fn resolve_embedding_config(config: &EmbeddingModelConfig) -> ResolvedEmbedd
                 }
                 Err(e) => {
                     eprintln!("Warning: Failed to auto-detect embedding config: {}", e);
-                    eprintln!("Using fallback: 1 instance × {} threads", threads);
+                    eprintln!("Using fallback: 1 instance × {} threads", *threads);
                     ResolvedEmbeddingConfig {
                         model_instances: 1,
                         threads_per_instance: *threads,

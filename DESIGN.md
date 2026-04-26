@@ -13,6 +13,19 @@ monodex is a semantic search indexer for Rush monorepos, using LanceDB as an emb
 
 ## Core Concepts
 
+### Vocabulary
+
+Monodex organizes indexed content into a hierarchy:
+
+- **database**: The on-disk store. One directory containing everything monodex tracks — today that's LanceDB tables (`chunks` and `label_metadata`); future milestones will add adjacent stores (e.g., a Tantivy full-text index). Users typically have one database. The default location is `~/.monodex/default-db`.
+- **catalog**: A named monorepo registered in config. One database holds many catalogs. Each catalog has its own namespace for labels.
+- **label**: A named fileset inside a catalog (typically a branch or commit). One catalog has many labels. Searches are scoped to a single label.
+- **chunk**: A unit of indexed content with its embedding. Chunks belong to one or more labels via the `active_label_ids` field.
+
+Containment: **database** › **catalog** › **label** › **chunk**
+
+The database is the umbrella term; its internal tables are implementation details users rarely interact with directly.
+
 ### Label-Based Indexing
 
 A **label** is a named, queryable fileset within a catalog. Examples:

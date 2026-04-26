@@ -32,6 +32,17 @@ See [CHANGELOG.md](./CHANGELOG.md) for release history.
 - **Intelligent deduplication**: Identical content at same path across labels shares chunks
 - **Rush-optimized**: Smart exclusion rules for Rush monorepo patterns
 
+### Vocabulary
+
+Monodex uses a few terms to describe the containment hierarchy:
+
+- A **database** is the on-disk store — by default `~/.monodex/default-db`. Everything lives here.
+- A **catalog** is a named monorepo registered in your config. You might have one catalog per codebase.
+- A **label** is a named fileset within a catalog — typically a branch or commit. Searches are scoped to a label.
+- A **chunk** is a unit of indexed content (function, class, section) with its embedding.
+
+Hierarchy: **database** › **catalog** › **label** › **chunk**
+
 ## Agent Usage Guide
 
 This tool is designed for AI assistants. The indexed database provides a complete, internally consistent snapshot of the codebase as it existed at crawl time — independent of any local file changes, branches, or whether the repo is even cloned. This makes it more than a replacement for grep; it can be the primary way an agent learns about a codebase.

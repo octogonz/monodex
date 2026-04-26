@@ -22,7 +22,7 @@ use crate::engine::system_info::{
 pub struct DatabaseConfig {
     /// Optional path to the database directory.
     /// If not specified, defaults to <tool_home>/default-db.
-    /// Supports tilde expansion (~) and relative paths.
+    /// Must be an absolute path; tilde (~) and environment variables ($VAR) are not supported.
     pub path: Option<String>,
 }
 
@@ -219,9 +219,40 @@ pub fn load_config(path: &PathBuf) -> anyhow::Result<Config> {
     Ok(config)
 }
 
+/// Validate that a config-file path setting is an absolute, literal path.
+///
+/// Rejects tilde expansion ('~'), environment variable substitution ('$'),
+/// and relative paths so config values mean the same thing regardless of
+/// the user's shell, working directory, or platform.
+pub fn validate_config_path(field_name: &str, value: &str) -> anyhow::Result<PathBuf> {
+    if value.starts_with('~') {
+        anyhow::bail!(
+            "Invalid {} '{}': '~' is not supported. Provide an absolute path.",
+            field_name,
+            value
+        );
+    }
+    if value.contains('$') {
+        anyhow::bail!(
+            "Invalid {} '{}': environment variable substitution is not supported. Provide an absolute path.",
+            field_name,
+            value
+        );
+    }
+    let path = PathBuf::from(value);
+    if !path.is_absolute() {
+        anyhow::bail!(
+            "Invalid {} '{}': must be an absolute path.",
+            field_name,
+            value
+        );
+    }
+    Ok(path)
+}
+
 /// Resolve the database path from config.
 ///
-/// - If `database.path` is specified in config, performs tilde expansion and returns it.
+/// - If `database.path` is specified in config, validates it as an absolute path and returns it.
 /// - Otherwise returns `<tool_home>/default-db`.
 ///
 /// Note: This uses `crate::paths::tool_home()` which handles MONODEX_HOME.
@@ -231,17 +262,7 @@ pub fn resolve_database_path(config: Option<&Config>) -> anyhow::Result<PathBuf>
         && let Some(db_config) = &config.database
         && let Some(path) = &db_config.path
     {
-        // Perform tilde expansion
-        let expanded = shellexpand::tilde(path);
-        let path_buf = PathBuf::from(expanded.as_ref());
-
-        // If relative, convert to absolute using current working directory
-        if path_buf.is_relative() {
-            let cwd = std::env::current_dir()?;
-            return Ok(cwd.join(&path_buf));
-        }
-
-        return Ok(path_buf);
+        return validate_config_path("database.path", path);
     }
 
     // Default: <tool_home>/default-db
@@ -549,7 +570,100 @@ mod tests {
     }
 
     #[test]
-    fn test_resolve_database_path_uses_config_path() {
+    fn test_resolve_database_path_rejects_tilde() {
+        let dir = tempdir().unwrap();
+        let config_path = dir.path().join("config.json");
+        let mut file = std::fs::File::create(&config_path).unwrap();
+
+        writeln!(
+            file,
+            r#"{{
+                "catalogs": {{}},
+                "database": {{ "path": "~/my-db" }}
+            }}"#
+        )
+        .unwrap();
+
+        let config = load_config(&config_path).unwrap();
+        let result = resolve_database_path(Some(&config));
+        assert!(result.is_err());
+        let err = result.unwrap_err().to_string();
+        assert!(
+            err.contains("'~' is not supported"),
+            "Expected error about tilde, got: {}",
+            err
+        );
+        assert!(
+            err.contains("database.path"),
+            "Expected error to mention field name, got: {}",
+            err
+        );
+    }
+
+    #[test]
+    fn test_resolve_database_path_rejects_env_var() {
+        let dir = tempdir().unwrap();
+        let config_path = dir.path().join("config.json");
+        let mut file = std::fs::File::create(&config_path).unwrap();
+
+        writeln!(
+            file,
+            r#"{{
+                "catalogs": {{}},
+                "database": {{ "path": "$HOME/my-db" }}
+            }}"#
+        )
+        .unwrap();
+
+        let config = load_config(&config_path).unwrap();
+        let result = resolve_database_path(Some(&config));
+        assert!(result.is_err());
+        let err = result.unwrap_err().to_string();
+        assert!(
+            err.contains("environment variable substitution is not supported"),
+            "Expected error about env var, got: {}",
+            err
+        );
+        assert!(
+            err.contains("database.path"),
+            "Expected error to mention field name, got: {}",
+            err
+        );
+    }
+
+    #[test]
+    fn test_resolve_database_path_rejects_relative_path() {
+        let dir = tempdir().unwrap();
+        let config_path = dir.path().join("config.json");
+        let mut file = std::fs::File::create(&config_path).unwrap();
+
+        writeln!(
+            file,
+            r#"{{
+                "catalogs": {{}},
+                "database": {{ "path": "./my-db" }}
+            }}"#
+        )
+        .unwrap();
+
+        let config = load_config(&config_path).unwrap();
+        let result = resolve_database_path(Some(&config));
+        assert!(result.is_err());
+        let err = result.unwrap_err().to_string();
+        assert!(
+            err.contains("must be an absolute path"),
+            "Expected error about absolute path, got: {}",
+            err
+        );
+        assert!(
+            err.contains("database.path"),
+            "Expected error to mention field name, got: {}",
+            err
+        );
+    }
+
+    #[test]
+    fn test_resolve_database_path_accepts_absolute_path() {
         let dir = tempdir().unwrap();
         let config_path = dir.path().join("config.json");
         let mut file = std::fs::File::create(&config_path).unwrap();
@@ -566,29 +680,6 @@ mod tests {
         let config = load_config(&config_path).unwrap();
         let path = resolve_database_path(Some(&config)).unwrap();
         assert_eq!(path, PathBuf::from("/custom/db"));
-    }
-
-    #[test]
-    fn test_resolve_database_path_expands_tilde() {
-        let dir = tempdir().unwrap();
-        let config_path = dir.path().join("config.json");
-        let mut file = std::fs::File::create(&config_path).unwrap();
-
-        writeln!(
-            file,
-            r#"{{
-                "catalogs": {{}},
-                "database": {{ "path": "~/my-db" }}
-            }}"#
-        )
-        .unwrap();
-
-        let config = load_config(&config_path).unwrap();
-        let path = resolve_database_path(Some(&config)).unwrap();
-
-        // Should be expanded to home directory
-        let home = dirs::home_dir().expect("home_dir should work in test");
-        assert_eq!(path, home.join("my-db"));
     }
 
     #[test]

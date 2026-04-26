@@ -111,9 +111,9 @@ Create `~/.monodex/config.json`:
 
 ```json
 {
-  // Database configuration (optional, defaults shown)
+  // Database configuration (optional, defaults to ~/.monodex/default-db)
   // "database": {
-  //   "path": "~/.monodex/default-db"
+  //   "path": "/absolute/path/to/your/db"
   // },
 
   // Catalog definitions (required)
@@ -144,7 +144,7 @@ Create `~/.monodex/config.json`:
 | ----------------------------------- | -------- | ----------------------------------------------------------------------------------- |
 | `catalogs.<name>.type`              | Yes      | Catalog type: `"monorepo"`                                                          |
 | `catalogs.<name>.path`              | Yes      | Absolute path to the repository root                                                |
-| `database.path`                     | No       | Custom database path (default: `~/.monodex/default-db`)                             |
+| `database.path`                     | No       | Custom database path (default: `~/.monodex/default-db`). If set, it must be an absolute path. Tilde (`~`), environment variables (`$VAR`), and relative paths are not supported. |
 | `embeddingModel.modelInstances`     | No       | Number of ONNX model instances (default: `"auto"`). Primary driver of memory usage. |
 | `embeddingModel.threadsPerInstance` | No       | Threads per model instance (default: `"auto"`). CPU tuning only.                    |
 

@@ -14,7 +14,7 @@ pub mod util;
 pub use cli::{Cli, Commands, CrawlSourceArgs};
 pub use config::{
     CatalogConfig, Config, EmbeddingModelConfig, EmbeddingSizeValue, load_config,
-    print_memory_warning, resolve_database_path, resolve_embedding_config,
+    print_memory_warning, resolve_database_path, resolve_embedding_config, validate_config_path,
 };
 pub use context::{
     DefaultContext, load_default_context, resolve_label_context, save_default_context,

@@ -65,7 +65,7 @@ pub fn chunks_schema() -> SchemaRef {
         Field::new(
             "vector",
             DataType::FixedSizeList(
-                Arc::new(Field::new("item", DataType::Float32, false)),
+                Arc::new(Field::new("item", DataType::Float32, true)),
                 VECTOR_DIMENSION as i32,
             ),
             false, // vectors are mandatory: every chunk has an embedding

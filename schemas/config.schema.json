@@ -13,8 +13,8 @@
       "properties": {
         "path": {
           "type": "string",
-          "description": "Path to the database directory (default: ~/.monodex/default-db)",
-          "examples": ["~/.monodex/default-db", "/custom/path/to/db"]
+          "description": "Path to the database directory. Must be an absolute path; tilde (~), environment variables ($VAR), and relative paths are not supported. Omit to use the default location.",
+          "examples": ["/absolute/path/to/db"]
         }
       }
     },
@@ -23,8 +23,7 @@
       "description": "Named catalog configurations. Keys are catalog names (kebab-case, 1-64 chars, e.g., my-repo, frontend-app). The schema pattern is intentionally permissive; full syntax is validated at runtime with detailed error messages.",
       "additionalProperties": {
         "$ref": "#/definitions/CatalogConfig"
-      },
-      "minProperties": 1
+      }
     },
     "embeddingModel": {
       "type": "object",
@@ -67,8 +66,8 @@
         },
         "path": {
           "type": "string",
-          "description": "Path to the catalog root directory",
-          "examples": ["/path/to/monorepo", "~/projects/my-app"]
+          "description": "Path to the catalog root directory. Must be an absolute path; tilde (~), environment variables ($VAR), and relative paths are not supported.",
+          "examples": ["/path/to/monorepo"]
         }
       }
     }

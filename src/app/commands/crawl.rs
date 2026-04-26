@@ -10,7 +10,7 @@ use std::sync::Arc;
 
 use crate::app::{
     Config, format_duration, load_warning_state, resolve_database_path, run_embed_upload_pipeline,
-    save_warning_state,
+    save_warning_state, validate_config_path,
 };
 use crate::engine::{
     chunker::{ChunkContext, chunk_content},
@@ -45,9 +45,8 @@ pub fn run_crawl_label(
         .get(catalog_name)
         .ok_or_else(|| anyhow::anyhow!("Catalog '{}' not found in config", catalog_name))?;
 
-    // Expand tilde in catalog path
-    let expanded_path = shellexpand::tilde(&catalog_config.path);
-    let repo_path = std::path::Path::new(expanded_path.as_ref());
+    // Validate catalog path (must be absolute, no ~ or $VAR)
+    let repo_path = validate_config_path("catalog path", &catalog_config.path)?;
     println!("Repository: {}", repo_path.display());
     println!("Type: {}", catalog_config.r#type);
     println!("Commit: {}", commit);
@@ -57,7 +56,7 @@ pub fn run_crawl_label(
     let label_id = LabelId::new(catalog_name, label).map_err(|e| anyhow::anyhow!("{}", e))?;
 
     // Load repo-specific crawl configuration
-    let crawl_config = load_compiled_crawl_config(Some(repo_path))?;
+    let crawl_config = load_compiled_crawl_config(Some(&repo_path))?;
     println!("Loaded crawl configuration for repository");
 
     // Resolve database path (needed for warning state file location)
@@ -81,7 +80,7 @@ pub fn run_crawl_label(
         label,
         commit,
         incremental_warnings,
-        repo_path,
+        &repo_path,
         &label_id,
         &crawl_config,
         &prior_warning_files,
@@ -558,9 +557,8 @@ pub fn run_crawl_working_dir(
         .get(catalog_name)
         .ok_or_else(|| anyhow::anyhow!("Catalog '{}' not found in config", catalog_name))?;
 
-    // Expand tilde in catalog path
-    let expanded_path = shellexpand::tilde(&catalog_config.path);
-    let repo_path = std::path::Path::new(expanded_path.as_ref());
+    // Validate catalog path (must be absolute, no ~ or $VAR)
+    let repo_path = validate_config_path("catalog path", &catalog_config.path)?;
     println!("Repository: {}", repo_path.display());
     println!("Type: {}", catalog_config.r#type);
     println!("Source: working directory (uncommitted changes)");
@@ -570,7 +568,7 @@ pub fn run_crawl_working_dir(
     let label_id = LabelId::new(catalog_name, label).map_err(|e| anyhow::anyhow!("{}", e))?;
 
     // Load repo-specific crawl configuration
-    let crawl_config = load_compiled_crawl_config(Some(repo_path))?;
+    let crawl_config = load_compiled_crawl_config(Some(&repo_path))?;
     println!("Loaded crawl configuration for repository");
 
     // Resolve database path (needed for warning state file location)
@@ -593,7 +591,7 @@ pub fn run_crawl_working_dir(
         catalog_name,
         label,
         incremental_warnings,
-        repo_path,
+        &repo_path,
         &label_id,
         &crawl_config,
         &prior_warning_files,

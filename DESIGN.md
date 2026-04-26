@@ -144,8 +144,8 @@ default-db/
 {
   "monodex_schema_version": 1,
   "created_at": "2024-01-15T10:30:00Z",
-  "created_by_binary_version": "0.3.0",
-  "lance_format_version": 2
+  "created_by_binary_version": "0.4.0",
+  "lance_format_version": "0.27"
 }
 ```
 
@@ -164,8 +164,7 @@ pub struct ChunkRow {
     
     // Label membership
     pub catalog: String,
-    pub label_id: String,             // Transitional: the initiating label. Prefer active_label_ids.
-    pub active_label_ids: Vec<String>, // All labels this chunk belongs to (authoritative)
+    pub active_label_ids: Vec<String>, // All labels this chunk belongs to
     
     // Implementation identity
     pub embedder_id: String,          // e.g., "jina-embeddings-v2-base-code:v1"
@@ -184,10 +183,10 @@ pub struct ChunkRow {
     pub source_uri: String,           // Useful for locating in Git/GitHub, but NOT a key
     
     // Chunk metadata
-    pub chunk_ordinal: usize,         // 1-indexed position in file
-    pub chunk_count: usize,
-    pub start_line: usize,
-    pub end_line: usize,
+    pub chunk_ordinal: i32,           // 1-indexed position in file
+    pub chunk_count: i32,
+    pub start_line: i32,
+    pub end_line: i32,
     
     // Semantic context
     pub symbol_name: Option<String>,
@@ -195,11 +194,12 @@ pub struct ChunkRow {
     pub chunk_kind: String,           // content, imports, changelog, config
     pub breadcrumb: Option<String>,   // Human-readable: package:File.ts:Symbol
     
+    // Split metadata (for oversized chunks split into parts)
+    pub split_part_ordinal: Option<i32>,
+    pub split_part_count: Option<i32>,
+    
     // Sentinel for incremental crawl
     pub file_complete: bool,          // Only true on chunk_ordinal=1
-    
-    // Vector embedding (768 dimensions)
-    pub vector: Vec<f32>,
 }
 ```
 
@@ -207,8 +207,7 @@ pub struct ChunkRow {
 - `source_uri`: Best-effort display/debug locator for Git/GitHub links. Not guaranteed stable or canonical. Not a key.
 - `chunk_ordinal`: Renamed from `chunk_number` for clarity. Always use `chunk_ordinal`.
 - `file_id`: Semantic file identity for grouping chunks. Used for sentinel checks and file-level operations.
-- `label_id`: Transitional field. Prefer `active_label_ids` for label membership queries.
-- `vector`: 768-dimensional embedding vector from jina-embeddings-v2-base-code.
+- `split_part_ordinal` / `split_part_count`: Present only when an oversized function was split into multiple parts at statement boundaries.
 
 ### Label Metadata
 
@@ -222,7 +221,7 @@ pub struct LabelMetadata {
     pub commit_oid: String,           // Resolved commit SHA
     pub source_kind: String,          // "git-commit" or "working-directory"
     pub crawl_complete: bool,
-    pub updated_at_unix_secs: u64,
+    pub updated_at_unix_secs: i64,
 }
 ```
 
@@ -300,7 +299,7 @@ Useful for provenance, diagnostics, and future optimization opportunities. But n
 ### Sentinel-Based Incremental Check
 
 The **sentinel** is chunk 1 of a file:
-- Point ID = hash of (file_id, chunk_ordinal=1)
+- Point ID = `format!("{}:{}", file_id, 1)` (the chunk_ordinal is 1)
 - `file_complete = true` only on chunk 1
 - Existence check = direct lookup of sentinel point ID
 
@@ -596,11 +595,13 @@ Divide a file into chunks that fit the embedding budget (6000 chars), splitting 
 
 ---
 
-## Backlog Issues
-
-### Error-handling discipline
+## Error-Handling Discipline
 
 Config-load failures and database-open failures both go through central paths. User-facing failure messages are uniform across commands. Future `monodex init` and `monodex init-db` resolve the failures these messages point at, rather than tailoring per-command error wording.
+
+---
+
+## Backlog Issues
 
 ### Early Exit on Embedding Error Skips Flush
 

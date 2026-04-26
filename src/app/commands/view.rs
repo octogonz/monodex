@@ -281,8 +281,8 @@ mod tests {
     use tempfile::TempDir;
 
     use crate::app::commands::test_helpers::{
-        MONODEX_HOME_MUTEX, create_test_db_with_chunks, remove_monodex_home, set_monodex_home,
-        test_chunk_row, test_label_metadata_row, write_minimal_config,
+        create_test_db_with_chunks, remove_monodex_home, set_monodex_home, test_chunk_row,
+        test_label_metadata_row, write_minimal_config,
     };
 
     // =========================================================================
@@ -374,7 +374,6 @@ mod tests {
     #[test]
     #[serial(monodex_home)]
     fn test_view_missing_database() {
-        let _guard = MONODEX_HOME_MUTEX.lock().unwrap();
         clear_tool_home_cache();
         let temp_dir = TempDir::new().unwrap();
 
@@ -413,7 +412,6 @@ mod tests {
     #[test]
     #[serial(monodex_home)]
     fn test_view_no_ids_provided() {
-        let _guard = MONODEX_HOME_MUTEX.lock().unwrap();
         clear_tool_home_cache();
         let temp_dir = TempDir::new().unwrap();
 
@@ -446,7 +444,6 @@ mod tests {
     #[test]
     #[serial(monodex_home)]
     fn test_view_chunk_not_found() {
-        let _guard = MONODEX_HOME_MUTEX.lock().unwrap();
         clear_tool_home_cache();
         let temp_dir = TempDir::new().unwrap();
 
@@ -500,7 +497,6 @@ mod tests {
     #[test]
     #[serial(monodex_home)]
     fn test_view_missing_label_context() {
-        let _guard = MONODEX_HOME_MUTEX.lock().unwrap();
         clear_tool_home_cache();
         let temp_dir = TempDir::new().unwrap();
 

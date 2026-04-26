@@ -15,18 +15,15 @@ use monodex::engine::{
     storage::{ChunkRow, ChunkStorage},
 };
 
-// Mutex to serialize tests that use MONODEX_HOME
-static MONODEX_HOME_MUTEX: std::sync::Mutex<()> = std::sync::Mutex::new(());
-
 fn set_monodex_home(tmp_dir: &Path) {
-    // SAFETY: Test code, serialized via mutex
+    // SAFETY: Tests are serialized via #[serial_test::serial(monodex_home)] attribute
     unsafe {
         std::env::set_var("MONODEX_HOME", tmp_dir);
     }
 }
 
 fn remove_monodex_home() {
-    // SAFETY: Test code, serialized via mutex
+    // SAFETY: Tests are serialized via #[serial_test::serial(monodex_home)] attribute
     unsafe {
         std::env::remove_var("MONODEX_HOME");
     }
@@ -102,7 +99,6 @@ async fn test_label_add_makes_chunks_searchable() {
     // Use a blocking scope to set up the test environment, then drop the lock
     // before any async operations
     let (_monodex_home, _tmp_dir) = {
-        let _guard = MONODEX_HOME_MUTEX.lock().unwrap();
         let tmp_dir = tempfile::TempDir::new().unwrap();
         let monodex_home = tmp_dir.path().to_path_buf();
         set_monodex_home(&monodex_home);
@@ -226,7 +222,6 @@ async fn test_incomplete_file_is_recrawled() {
     // Use a blocking scope to set up the test environment, then drop the lock
     // before any async operations
     let (_monodex_home, _tmp_dir) = {
-        let _guard = MONODEX_HOME_MUTEX.lock().unwrap();
         let tmp_dir = tempfile::TempDir::new().unwrap();
         let monodex_home = tmp_dir.path().to_path_buf();
         set_monodex_home(&monodex_home);

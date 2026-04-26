@@ -65,14 +65,13 @@ mod tests {
     use tempfile::TempDir;
 
     use crate::app::commands::test_helpers::{
-        MONODEX_HOME_MUTEX, create_test_db_with_chunks, remove_monodex_home, set_monodex_home,
+        create_test_db_with_chunks, remove_monodex_home, set_monodex_home,
         test_chunk_row_with_catalog, test_label_metadata_row_with_parts, write_minimal_config,
     };
 
     #[test]
     #[serial(monodex_home)]
     fn test_purge_missing_database() {
-        let _guard = MONODEX_HOME_MUTEX.lock().unwrap();
         clear_tool_home_cache();
         let temp_dir = TempDir::new().unwrap();
 
@@ -103,7 +102,6 @@ mod tests {
     #[test]
     #[serial(monodex_home)]
     fn test_purge_neither_catalog_nor_all() {
-        let _guard = MONODEX_HOME_MUTEX.lock().unwrap();
         clear_tool_home_cache();
         let temp_dir = TempDir::new().unwrap();
 
@@ -136,7 +134,6 @@ mod tests {
     #[test]
     #[serial(monodex_home)]
     fn test_purge_all_truncates_tables() {
-        let _guard = MONODEX_HOME_MUTEX.lock().unwrap();
         clear_tool_home_cache();
         let temp_dir = TempDir::new().unwrap();
 
@@ -198,7 +195,6 @@ mod tests {
     #[test]
     #[serial(monodex_home)]
     fn test_purge_catalog_deletes_only_that_catalog() {
-        let _guard = MONODEX_HOME_MUTEX.lock().unwrap();
         clear_tool_home_cache();
         let temp_dir = TempDir::new().unwrap();
 
@@ -255,7 +251,6 @@ mod tests {
     #[test]
     #[serial(monodex_home)]
     fn test_purge_nonexistent_catalog_succeeds() {
-        let _guard = MONODEX_HOME_MUTEX.lock().unwrap();
         clear_tool_home_cache();
         let temp_dir = TempDir::new().unwrap();
 

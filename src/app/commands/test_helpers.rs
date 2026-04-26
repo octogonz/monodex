@@ -6,19 +6,15 @@
 
 use std::fs::{self, File};
 use std::io::Write;
-use std::sync::Mutex;
 
 use lancedb::connect;
 
 use crate::engine::schema::{VECTOR_DIMENSION, chunks_schema, label_metadata_schema};
 use crate::engine::storage::{ChunkRow, Database, LabelMetadataRow, META_FILE, MetaFile};
 
-/// Mutex to serialize tests that use MONODEX_HOME environment variable.
-pub static MONODEX_HOME_MUTEX: Mutex<()> = Mutex::new(());
-
 /// Helper to safely set MONODEX_HOME.
 pub fn set_monodex_home(path: &std::path::Path) {
-    // SAFETY: We hold MONODEX_HOME_MUTEX to ensure no concurrent access.
+    // SAFETY: Tests are serialized via #[serial_test::serial(monodex_home)] attribute.
     unsafe {
         std::env::set_var("MONODEX_HOME", path);
     }
@@ -26,7 +22,7 @@ pub fn set_monodex_home(path: &std::path::Path) {
 
 /// Helper to safely remove MONODEX_HOME.
 pub fn remove_monodex_home() {
-    // SAFETY: We hold MONODEX_HOME_MUTEX to ensure no concurrent access.
+    // SAFETY: Tests are serialized via #[serial_test::serial(monodex_home)] attribute.
     unsafe {
         std::env::remove_var("MONODEX_HOME");
     }

@@ -259,28 +259,14 @@ async fn create_database(db_path: &Path) -> Result<()> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::app::commands::test_helpers::{
+        remove_monodex_home, set_monodex_home, write_minimal_config,
+    };
     use crate::app::config::load_config;
     use crate::paths::clear_tool_home_cache;
     use serial_test::serial;
     use std::io::Write;
-    use std::sync::Mutex;
     use tempfile::TempDir;
-
-    /// Mutex to serialize tests that use MONODEX_HOME environment variable.
-    /// MONODEX_HOME is process-global, so tests that modify it cannot run in parallel.
-    static MONODEX_HOME_MUTEX: Mutex<()> = Mutex::new(());
-
-    /// Helper to create a minimal config file in the given directory.
-    fn write_minimal_config(config_path: &Path) {
-        let mut file = File::create(config_path).unwrap();
-        writeln!(
-            file,
-            r#"{{
-  "catalogs": {{}}
-}}"#
-        )
-        .unwrap();
-    }
 
     /// Helper to create a config file with a custom database path.
     fn write_config_with_db_path(config_path: &Path, db_path: &str) {
@@ -296,26 +282,9 @@ mod tests {
         .unwrap();
     }
 
-    /// Helper to safely set MONODEX_HOME (unsafe required in Rust 2024 edition).
-    fn set_monodex_home(path: &Path) {
-        // SAFETY: We hold MONODEX_HOME_MUTEX to ensure no concurrent access.
-        unsafe {
-            std::env::set_var("MONODEX_HOME", path);
-        }
-    }
-
-    /// Helper to safely remove MONODEX_HOME (unsafe required in Rust 2024 edition).
-    fn remove_monodex_home() {
-        // SAFETY: We hold MONODEX_HOME_MUTEX to ensure no concurrent access.
-        unsafe {
-            std::env::remove_var("MONODEX_HOME");
-        }
-    }
-
     #[test]
     #[serial(monodex_home)]
     fn test_happy_path_creates_database() {
-        let _guard = MONODEX_HOME_MUTEX.lock().unwrap();
         clear_tool_home_cache();
         let temp_dir = TempDir::new().unwrap();
 
@@ -350,7 +319,6 @@ mod tests {
     #[test]
     #[serial(monodex_home)]
     fn test_idempotent_second_run_succeeds() {
-        let _guard = MONODEX_HOME_MUTEX.lock().unwrap();
         clear_tool_home_cache();
         let temp_dir = TempDir::new().unwrap();
 
@@ -381,7 +349,6 @@ mod tests {
     #[test]
     #[serial(monodex_home)]
     fn test_parent_missing_non_default_db() {
-        let _guard = MONODEX_HOME_MUTEX.lock().unwrap();
         clear_tool_home_cache();
         let temp_dir = TempDir::new().unwrap();
 
@@ -408,7 +375,6 @@ mod tests {
     #[test]
     #[serial(monodex_home)]
     fn test_path_exists_but_not_monodex_database() {
-        let _guard = MONODEX_HOME_MUTEX.lock().unwrap();
         clear_tool_home_cache();
         let temp_dir = TempDir::new().unwrap();
 
@@ -440,7 +406,6 @@ mod tests {
     #[test]
     #[serial(monodex_home)]
     fn test_corrupt_meta_file() {
-        let _guard = MONODEX_HOME_MUTEX.lock().unwrap();
         clear_tool_home_cache();
         let temp_dir = TempDir::new().unwrap();
 
@@ -476,7 +441,6 @@ mod tests {
     #[test]
     #[serial(monodex_home)]
     fn test_schema_version_mismatch() {
-        let _guard = MONODEX_HOME_MUTEX.lock().unwrap();
         clear_tool_home_cache();
         let temp_dir = TempDir::new().unwrap();
 
@@ -512,7 +476,6 @@ mod tests {
     #[test]
     #[serial(monodex_home)]
     fn test_meta_exists_tables_missing() {
-        let _guard = MONODEX_HOME_MUTEX.lock().unwrap();
         clear_tool_home_cache();
         let temp_dir = TempDir::new().unwrap();
 
@@ -541,7 +504,6 @@ mod tests {
     #[test]
     #[serial(monodex_home)]
     fn test_tables_exist_meta_missing() {
-        let _guard = MONODEX_HOME_MUTEX.lock().unwrap();
         clear_tool_home_cache();
         let temp_dir = TempDir::new().unwrap();
 

@@ -7,7 +7,7 @@
 use clap::{Args, Parser, Subcommand};
 use std::path::PathBuf;
 
-/// Rush semantic search crawler using LanceDB
+/// Fast, accurate code search for large Rush monorepos
 /// https://www.rushstack.io
 #[derive(Parser)]
 #[command(name = "monodex", version, about)]
@@ -39,11 +39,11 @@ pub enum Commands {
     },
 
     /// Initialize a new monodex database at the configured path.
-    /// Creates LanceDB tables for chunks and label metadata.
+    /// Creates database tables for chunks and label metadata.
     /// Idempotent: safe to run on an existing database.
     InitDb,
 
-    /// Crawl source and index into LanceDB (incremental sync).
+    /// Crawl source and index chunks (incremental sync).
     /// Reports warnings when AST chunking fails and fallback is used.
     /// These warnings indicate partitioner defects to investigate.
     Crawl {

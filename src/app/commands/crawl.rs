@@ -492,6 +492,10 @@ async fn run_crawl_label_async(
         }
     }
 
+    if had_failures || cleanup_failed {
+        anyhow::bail!("Crawl completed with errors (see above). Label marked incomplete.");
+    }
+
     Ok(())
 }
 
@@ -989,6 +993,10 @@ async fn run_crawl_working_dir_async(
         if sorted_summary.len() > 20 {
             println!("  ... and {} more", sorted_summary.len() - 20);
         }
+    }
+
+    if had_failures || cleanup_failed {
+        anyhow::bail!("Crawl completed with errors (see above). Label marked incomplete.");
     }
 
     Ok(())

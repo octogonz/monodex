@@ -27,15 +27,30 @@ PUBLISHING PROCEDURE:
 
 ### Changed
 
-- **Config files now support JSONC (JSON with comments)**: Config files can now include `//` line comments, per Rush Stack convention. This makes the example config in the README directly usable.
-- **Example config catalog names fixed**: The example `config.json` now uses valid kebab-case catalog names (`my-monorepo`, `another-monorepo`) instead of invalid underscored names.
-- **Documentation updates**: README now shows Configuration before First-Time Setup, correct Rust version (1.93+), and updated debug flag description. DESIGN.md has corrected search examples and a new error-handling discipline section.
+- **Breaking: switched vector storage from Qdrant to LanceDB**: Monodex now uses LanceDB as an embedded, in-process vector database instead of a separate Qdrant server.
+  - No external service to install, run, or configure. The database is a directory on disk.
+  - The on-disk format is incompatible with prior versions. Existing users must delete their old Qdrant collection and re-crawl.
+  - Removes the `qdrant` section (`url`, `collection`, `maxUploadBytes`) from `config.json`. An old config containing a `qdrant` section will be rejected.
 
-- **Tool home moved to `~/.monodex/`**: All monodex state files now live under `~/.monodex/` instead of `~/.config/monodex/`. This provides a consistent location across all platforms (Linux, macOS, Windows) and follows the convention of developer tools like `cargo`, `rustup`, and `npm`. Set the `MONODEX_HOME` environment variable to override the default location. On first run, if old config files are found at the previous location, monodex prints a warning suggesting migration.
+- **Breaking: new `init-db` command, required before first crawl**: Run `monodex init-db` once to create the database. This replaces the old step of provisioning a Qdrant collection.
+
+- **Database location is configurable**: Defaults to `~/.monodex/default-db/`. Set `database.path` in `config.json` to override. The path must be absolute. Tilde expansion (`~`), environment variables (`$VAR`), and relative paths are not supported.
+
+- **Search output now reports distance instead of score**: Lower numbers are better. Output format is `dist=N.NNN`.
+
+- **Tool home moved to `~/.monodex/`**: All monodex state files now live under `~/.monodex/` instead of `~/.config/monodex/`. This provides a consistent location across all platforms (Linux, macOS, Windows). Set the `MONODEX_HOME` environment variable to override the default location. On first run, if old config files are found at the previous location, monodex prints a warning suggesting migration.
 
 ### Added
 
-- **Chunking warning persistence**: Files that require fallback line-based splitting (when AST chunking fails) are now tracked and persisted to `~/.config/monodex/warnings-<catalog>.json`. The crawl command reports these files with their relative paths and shows a warning count during progress.
+- **Chunking warning persistence**: Files that require fallback line-based splitting (when AST chunking fails) are now tracked and persisted to `<database>/warnings-<catalog>.json`. The crawl command reports these files with their relative paths and shows a warning count during progress.
+
+- **Documentation updates**: README now shows Configuration before First-Time Setup, correct Rust version (1.93+), and updated debug flag description. DESIGN.md has a new vocabulary orientation, corrected schema documentation, and a current-state error-handling section.
+
+### Fixed
+
+- **Config files now support JSONC (JSON with comments)**: Config files can include `//` line comments, per Rush Stack convention.
+
+- **Example config catalog names**: The example `config.json` now uses valid kebab-case catalog names (`my-monorepo`, `another-monorepo`) instead of invalid underscored names that would fail validation.
 
 ## 0.4.0 (2025-01-17)
 
